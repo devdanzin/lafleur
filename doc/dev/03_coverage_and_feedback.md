@@ -13,12 +13,10 @@ The entire feedback process begins by capturing the verbose debug output from CP
 An excerpt from a raw JIT log might look like this:
 
 ```text
-[f1] lltrace: 100       _LOAD_FAST_1
-[f1] lltrace: 100       _LOAD_CONST_INLINE_BORROW
+[f1] STRATEGY: Targeted Uop Fuzzing (['_STORE_ATTR', '_CONTAINS_OP_DICT', '_BINARY_OP_SUB_FLOAT', '_UNPACK_SEQUENCE_LIST', '_COMPARE_OP_EQ_INT'])
 ...
-[f1] OPTIMIZED: _BINARY_OP_ADD_INT
-...
-[f1] lltrace: 120       _DEOPT
+  63 ADD_TO_TRACE: _SET_IP (0, target=2255, operand0=0x55ac896b7abe, operand1=0)
+  64 ADD_TO_TRACE: _LOAD_FAST_BORROW (2, target=2255, operand0=0, operand1=0)...
 ...
 Bailing on recursive call in function foo
 ```

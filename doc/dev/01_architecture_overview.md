@@ -24,9 +24,9 @@ The diagram below illustrates the main components of the `lafleur` fuzzer and th
 ```mermaid
 flowchart TD
     subgraph LafleurOrchestrator
-    A[1. Select Parent] --> B(2. Mutate);
-    B --> C{3. Execute Child};
-    C --> D[4. Analyze Log];
+    A[1.Select Parent] --> B(2.Mutate);
+    B --> C{3.Execute Child};
+    C --> D[4.Analyze Log];
     D --> E{Interesting?};
     end
 

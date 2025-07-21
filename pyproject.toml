@@ -21,7 +21,6 @@ classifiers = [
     "Operating System :: OS Independent",
     'Intended Audience :: Developers',
     'Environment :: Console',
-    'License :: OSI Approved :: GNU General Public License (GPL)',
     'Operating System :: OS Independent',
     'Natural Language :: English',
 ]

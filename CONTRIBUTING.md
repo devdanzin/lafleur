@@ -16,7 +16,7 @@ A great way to contribute to `lafleur` is triaging and/or tackling already repor
 
 Trying to reproduce bugs (that is, making sure the bug happens when you follow the instructions in the issue) is a great help, be sure to report your success or failure in the corresponding issue.
 
-If you are a beginner at either contributing to GitHub or to Python projects, we try to have issues tagged `good-first-issue` and will help you pick an issue, understand it, create a PR, improve it and land your contribution.
+If you are a beginner at either contributing to GitHub or to Python projects, we try to have issues tagged [**good first issue**](https://github.com/devdanzin/lafleur/issues?q=state%3Aopen%20label%3A%22good%20first%20issue%22) and will help you pick an issue, understand it, create a PR, improve it and land your contribution.
 
 ## Filing lafleur Issues
 

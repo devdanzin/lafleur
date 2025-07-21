@@ -11,7 +11,7 @@ authors = [
 description = "A feedback-driven JIT fuzzer for CPython."
 requires-python = ">=3.11"
 readme = "README.md"
-license = { text = "GPL-2.0-only" } # Use the standard SPDX identifier
+license = "GPL-2.0-only" # Use the standard SPDX identifier
 license-files = ["LICEN[CS]E.*"]
 keywords = ["fuzzing", "fuzzer", "cpython", "jit", "ast"]
 classifiers = [

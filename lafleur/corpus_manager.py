@@ -6,7 +6,6 @@ corpus, including selecting parent test cases, adding new files, generating
 initial seeds, and synchronizing the fuzzer's state with the files on disk.
 """
 
-import argparse
 import hashlib
 import os
 import random

@@ -413,9 +413,3 @@ class CorpusManager:
                 mutation_seed=analysis_data["mutation_seed"],
                 build_lineage_func=orchestrator_build_lineage_func,
             )
-
-
-# Example usage at the module level (if this file is run directly)
-if __name__ == "__main__":
-    args = parse_args()
-    print(f"Timeout set to: {args.timeout} seconds")

@@ -98,12 +98,14 @@ class CorpusManager:
         run_stats: dict[str, Any],
         fusil_path: str,
         get_boilerplate_func: Callable[..., str],
+        execution_timeout: int = 10,
     ):
         """Initialize the CorpusManager."""
         self.coverage_state = coverage_state
         self.run_stats = run_stats
         self.fusil_path = fusil_path
         self.get_boilerplate = get_boilerplate_func
+        self.execution_timeout = execution_timeout
 
         self.scheduler = CorpusScheduler(self.coverage_state)
         self.known_hashes: set[str] = set()
@@ -118,6 +120,8 @@ class CorpusManager:
 
         CORPUS_DIR.mkdir(parents=True, exist_ok=True)
         TMP_DIR.mkdir(parents=True, exist_ok=True)
+        
+        print(f"[*] Using execution timeout of {self.execution_timeout} seconds")
 
     def synchronize(
         self, orchestrator_analyze_run_func: Callable, orchestrator_build_lineage_func: Callable
@@ -192,7 +196,7 @@ class CorpusManager:
         for filename in sorted(list(files_to_analyze)):
             source_path = CORPUS_DIR / filename
             log_path = TMP_DIR / f"sync_{source_path.stem}.log"
-            print(f"  -> Analyzing {filename}...")
+            print(f"  -> Analyzing {filename} (timeout: {self.execution_timeout}s)...")
             try:
                 with open(log_path, "w") as log_file:
                     start_time = time.monotonic()
@@ -200,7 +204,7 @@ class CorpusManager:
                         ["python3", str(source_path)],
                         stdout=log_file,
                         stderr=subprocess.STDOUT,
-                        timeout=10,
+                        timeout=self.execution_timeout,  # Use configurable timeout
                         env=ENV,
                     )
                     end_time = time.monotonic()
@@ -229,6 +233,8 @@ class CorpusManager:
                         build_lineage_func=orchestrator_build_lineage_func,
                     )
 
+            except subprocess.TimeoutExpired:
+                print(f"  [!] Timeout ({self.execution_timeout}s) expired for seed file {filename}", file=sys.stderr)
             except Exception as e:
                 print(f"  [!] Failed to analyze seed file {filename}: {e}", file=sys.stderr)
 
@@ -368,11 +374,19 @@ class CorpusManager:
         print(f"[*] Generating new seed with command: {' '.join(command)}")
         subprocess.run(command, capture_output=True)
 
-        # Execute it to get a log
-        with open(tmp_log, "w") as log_file:
-            result = subprocess.run(
-                ["python3", tmp_source], stdout=log_file, stderr=subprocess.STDOUT, env=ENV
-            )
+        # Execute it to get a log (also using the configurable timeout)
+        try:
+            with open(tmp_log, "w") as log_file:
+                result = subprocess.run(
+                    ["python3", tmp_source], 
+                    stdout=log_file, 
+                    stderr=subprocess.STDOUT, 
+                    timeout=self.execution_timeout,  # Use configurable timeout here too
+                    env=ENV
+                )
+        except subprocess.TimeoutExpired:
+            print(f"[!] Timeout ({self.execution_timeout}s) expired during seed generation", file=sys.stderr)
+            return
 
         # Analyze it for coverage
         execution_time_ms = 0  # This is a placeholder, as we don't time this run

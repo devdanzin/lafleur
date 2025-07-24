@@ -1,3 +1,4 @@
+
 """
 This module contains the main LafleurOrchestrator class.
 
@@ -78,20 +79,21 @@ class LafleurOrchestrator:
     """
 
     def __init__(
-        self, fusil_path: str, min_corpus_files: int = 1, differential_testing: bool = False
+        self, fusil_path: str, min_corpus_files: int = 1, differential_testing: bool = False, timeout: int = 10
     ):
         """Initialize the orchestrator and the corpus manager."""
         self.differential_testing = differential_testing
         self.fusil_path = fusil_path
         self.ast_mutator = ASTMutator()
         self.boilerplate_code = None
+        self.timeout = timeout  # Store the timeout value
 
         self.coverage_state = load_coverage_state()
         self.run_stats = load_run_stats()
 
         self.min_corpus_files = min_corpus_files
         self.corpus_manager = CorpusManager(
-            self.coverage_state, self.run_stats, fusil_path, self.get_boilerplate
+            self.coverage_state, self.run_stats, fusil_path, self.get_boilerplate,self.timeout
         )
         # Synchronize the corpus and state at startup.
         self.corpus_manager.synchronize(self.analyze_run, self._build_lineage_profile)
@@ -510,7 +512,7 @@ except Exception:
                     ["python3", str(child_source_path)],
                     stdout=log_file,
                     stderr=subprocess.STDOUT,
-                    timeout=10,
+                    timeout=self.timeout,  # Use the configurable timeout here
                     env=ENV,
                 )
                 end_time = time.monotonic()
@@ -982,7 +984,7 @@ except Exception:
                     ["python3", str(test_file_path)],
                     stdout=log_file,
                     stderr=subprocess.STDOUT,
-                    timeout=10,
+                    timeout=self.timeout,  # Use the configurable timeout here
                     env=ENV,
                 )
 
@@ -1031,6 +1033,12 @@ def main():
         action="store_true",
         help="Enable differential testing mode to find correctness bugs.",
     )
+    parser.add_argument(
+        "--timeout",
+        type=int,
+        default=10,  # Default timeout of 10 seconds
+        help="Timeout in seconds for script execution.",
+    )
     args = parser.parse_args()
 
     LOGS_DIR.mkdir(exist_ok=True)
@@ -1059,14 +1067,15 @@ def main():
 ================================================================================
 LAFLEUR FUZZER RUN
 ================================================================================
-- Hostname:         {socket.gethostname()}
-- Platform:         {platform.platform()}
-- Process ID:       {os.getpid()}
-- Python Version:   {sys.version.replace(chr(10), " ")}
-- Working Dir:      {Path.cwd()}
-- Log File:         {orchestrator_log_path}
-- Start Time:       {timestamp_iso}
-- Command:          {" ".join(sys.argv)}
+- Hostname:          {socket.gethostname()}
+- Platform:          {platform.platform()}
+- Process ID:        {os.getpid()}
+- Python Version:    {sys.version.replace(chr(10), " ")}
+- Working Dir:       {Path.cwd()}
+- Log File:          {orchestrator_log_path}
+- Start Time:        {timestamp_iso}
+- Command:           {" ".join(sys.argv)}
+- Script Timeout:    {args.timeout} seconds
 --------------------------------------------------------------------------------
 Initial Stats:
 {json.dumps(start_stats, indent=4)}
@@ -1080,6 +1089,7 @@ Initial Stats:
             fusil_path=args.fusil_path,
             min_corpus_files=args.min_corpus_files,
             differential_testing=args.differential_testing,
+            timeout=args.timeout,  # Pass the timeout argument
         )
         orchestrator.run_evolutionary_loop()
     except KeyboardInterrupt:
@@ -1115,13 +1125,13 @@ Initial Stats:
         exec_per_sec = mutations_this_run / duration_secs if duration_secs > 0 else 0
 
         summary = f"""
-- Termination:      {termination_reason}
-- End Time:         {end_time.isoformat()}
-- Total Duration:   {str(duration)}
+- Termination:       {termination_reason}
+- End Time:          {end_time.isoformat()}
+- Total Duration:    {str(duration)}
 
 --- Discoveries This Run ---
-- New Coverage:     {finds_this_run}
-- New Crashes:      {crashes_this_run}
+- New Coverage:      {finds_this_run}
+- New Crashes:       {crashes_this_run}
 
 --- Performance This Run ---
 - Total Executions: {mutations_this_run}

@@ -32,18 +32,6 @@ ENV.update(
 )
 
 
-def parse_args():
-    """Parse command-line arguments."""
-    parser = argparse.ArgumentParser(description="Fuzzing corpus manager")
-    parser.add_argument(
-        "--timeout",
-        type=int,
-        default=10,
-        help="Timeout in seconds for script execution (default: 10)"
-    )
-    return parser.parse_args()
-
-
 class CorpusScheduler:
     """Calculate a "fuzzing score" for each item in the corpus."""
 

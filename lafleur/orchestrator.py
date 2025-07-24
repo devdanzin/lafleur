@@ -93,7 +93,7 @@ class LafleurOrchestrator:
 
         self.min_corpus_files = min_corpus_files
         self.corpus_manager = CorpusManager(
-            self.coverage_state, self.run_stats, fusil_path, self.get_boilerplate
+            self.coverage_state, self.run_stats, fusil_path, self.get_boilerplate,self.timeout
         )
         # Synchronize the corpus and state at startup.
         self.corpus_manager.synchronize(self.analyze_run, self._build_lineage_profile)

@@ -16,6 +16,10 @@ import sys
 from collections import defaultdict, Counter
 from pathlib import Path
 from typing import Any
+import logging  # Added import
+
+# Set up logging for this module
+logger = logging.getLogger(__name__)  # Added logger instance
 
 # Regex to find our harness markers, e.g., "[f1]", "[f12]", etc.
 HARNESS_MARKER_REGEX = re.compile(r"\[(f\d+)\]")
@@ -56,7 +60,7 @@ def parse_log_for_edge_coverage(log_path: Path) -> dict[str, dict[str, Counter[s
     own coverage profile.
     """
     if not log_path.is_file():
-        print(f"Error: Log file not found at {log_path}", file=sys.stderr)
+        logger.error(f"Error: Log file not found at {log_path}")  # Replaced print
         return {}
 
     # The new data structure uses Counters for hit tracking.
@@ -118,9 +122,8 @@ def load_coverage_state() -> dict[str, Any]:
             state.setdefault("per_file_coverage", {})
             return state
     except (pickle.UnpicklingError, IOError, EOFError) as e:
-        print(
-            f"Warning: Could not load coverage state file. Starting fresh. Error: {e}",
-            file=sys.stderr,
+        logger.warning(  # Replaced print
+            f"Warning: Could not load coverage state file. Starting fresh. Error: {e}"
         )
         return {
             "global_coverage": {"uops": {}, "edges": {}, "rare_events": {}},
@@ -140,15 +143,14 @@ def save_coverage_state(state: dict[str, Any]) -> None:
         # The write was successful, now atomically rename the file.
         os.rename(tmp_path, COVERAGE_STATE_FILE)
     except (IOError, OSError, pickle.PicklingError) as e:
-        print(f"[!] Error during atomic save of coverage state: {e}", file=sys.stderr)
+        logger.error(f"[!] Error during atomic save of coverage state: {e}")  # Replaced print
         # If an error occurred, try to clean up the temporary file.
         if tmp_path.exists():
             try:
                 tmp_path.unlink()
             except OSError as e_unlink:
-                print(
-                    f"[!] Warning: Could not remove temporary state file {tmp_path}: {e_unlink}",
-                    file=sys.stderr,
+                logger.warning(  # Replaced print
+                    f"[!] Warning: Could not remove temporary state file {tmp_path}: {e_unlink}"
                 )
 
 
@@ -160,10 +162,13 @@ def main() -> None:
     parser.add_argument("log_file", type=Path, help="Path to the JIT log file to be parsed.")
     args = parser.parse_args()
 
+    # Configure basic logging here for command-line execution
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
+
     # 1. Parse the current log for per-harness coverage.
     per_harness_coverage = parse_log_for_edge_coverage(args.log_file)
     if not per_harness_coverage:
-        print("No per-harness coverage found in the log file.", file=sys.stderr)
+        logger.info("No per-harness coverage found in the log file.")  # Replaced print
         return
 
     # 2. Load the persistent global coverage state.
@@ -175,9 +180,8 @@ def main() -> None:
         # Update uops
         for uop, count in data["uops"].items():
             if uop not in global_coverage_state["uops"]:
-                print(
-                    f"[NEW UOP] Discovered new uop in harness '{harness_id}': {uop}",
-                    file=sys.stderr,
+                logger.info(  # Replaced print
+                    f"[NEW UOP] Discovered new uop in harness '{harness_id}': {uop}"
                 )
                 newly_discovered = True
                 global_coverage_state["uops"][uop] = 0
@@ -186,9 +190,8 @@ def main() -> None:
         # Update edges
         for edge, count in data["edges"].items():
             if edge not in global_coverage_state["edges"]:
-                print(
-                    f"[NEW EDGE] Discovered new edge in harness '{harness_id}': {edge}",
-                    file=sys.stderr,
+                logger.info(  # Replaced print
+                    f"[NEW EDGE] Discovered new edge in harness '{harness_id}': {edge}"
                 )
                 newly_discovered = True
                 global_coverage_state["edges"][edge] = 0
@@ -197,20 +200,19 @@ def main() -> None:
         # Update rare events
         for event, count in data["rare_events"].items():
             if event not in global_coverage_state["rare_events"]:
-                print(
-                    f"[NEW RARE EVENT] Discovered new rare event in harness '{harness_id}': {event}",
-                    file=sys.stderr,
+                logger.info(  # Replaced print
+                    f"[NEW RARE EVENT] Discovered new rare event in harness '{harness_id}': {event}"
                 )
                 newly_discovered = True
                 global_coverage_state["rare_events"][event] = 0
             global_coverage_state["rare_events"][event] += count
 
     if not newly_discovered:
-        print("No new coverage found in this run.", file=sys.stderr)
+        logger.info("No new coverage found in this run.")  # Replaced print
 
     # 4. Save the updated state back to the file.
     save_coverage_state(global_coverage_state)
-    print(f"Global coverage state updated: {COVERAGE_STATE_FILE}", file=sys.stderr)
+    logger.info(f"Global coverage state updated: {COVERAGE_STATE_FILE}")  # Replaced print
 
 
 if __name__ == "__main__":

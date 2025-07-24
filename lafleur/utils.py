@@ -1,16 +1,13 @@
-"""
-This module contains generic, reusable helper functions and classes for the lafleur fuzzer.
-
-It includes utilities for logging, managing run statistics, and structuring data.
-"""
-
 import json
+import logging
 import sys
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from io import TextIOWrapper
 from pathlib import Path
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 RUN_STATS_FILE = Path("fuzz_run_stats.json")
 
@@ -39,7 +36,6 @@ def load_run_stats() -> dict[str, Any]:
     try:
         with open(RUN_STATS_FILE, "r", encoding="utf-8") as f:
             stats: dict[str, Any] = json.load(f)
-            # Add new fields if loading an older stats file
             stats.setdefault("sum_of_mutations_per_find", 0)
             stats.setdefault("average_mutations_per_find", 0.0)
             stats.setdefault("global_seed_counter", 0)
@@ -47,10 +43,7 @@ def load_run_stats() -> dict[str, Any]:
             stats.setdefault("divergences_found", 0)
             return stats
     except (json.JSONDecodeError, IOError) as e:
-        print(
-            f"Warning: Could not load run stats file. Starting fresh. Error: {e}", file=sys.stderr
-        )
-        # Return a default structure on error
+        logger.warning(f"Could not load run stats file. Starting fresh. Error: {e}")
         return load_run_stats()
 
 
@@ -80,7 +73,7 @@ class TeeLogger:
         self.flush()
 
     def flush(self) -> None:
-        """Flushe both the original stream and the log file."""
+        """Flush both the original stream and the log file."""
         self.original_stream.flush()
         self.log_file.flush()
 

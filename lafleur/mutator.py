@@ -16,6 +16,10 @@ import random
 import copy
 import sys
 from textwrap import dedent
+import logging
+
+# Set up logging for this module
+logger = logging.getLogger(__name__)
 
 
 class OperatorSwapper(ast.NodeTransformer):
@@ -205,8 +209,6 @@ class VariableRenamer(ast.NodeTransformer):
 # Stress Pattern Injection Engine
 # ==============================================================================
 
-# Note: These functions are adapted from ASTPatternGenerator and made generic.
-
 
 def _create_type_corruption_node(target_var: str, **kwargs) -> list[ast.stmt]:
     """Generate an AST node to corrupt the type of a variable (e.g., `x = 'string'`)."""
@@ -367,9 +369,8 @@ class StressPatternInjector(ast.NodeTransformer):
             else:
                 action = random.choice(single_target_actions)
 
-            print(
-                f"    -> Injecting stress pattern '{action.__name__}' targeting '{target_var}'",
-                file=sys.stderr,
+            logger.info(
+                f"    -> Injecting stress pattern '{action.__name__}' targeting '{target_var}'"
             )
 
             # 3. Generate the evil snippet's AST nodes.
@@ -418,9 +419,8 @@ class TypeInstabilityInjector(ast.NodeTransformer):
         target_var_name = random.choice(list(assigned_vars))
         loop_var_name = node.target.id
 
-        print(
-            f"    -> Injecting type instability pattern targeting '{target_var_name}' in loop",
-            file=sys.stderr,
+        logger.info(
+            f"    -> Injecting type instability pattern targeting '{target_var_name}' in loop"
         )
 
         # 1. Create the poison assignment: target_var = "corrupted"
@@ -480,7 +480,7 @@ class GuardExhaustionGenerator(ast.NodeTransformer):
             return node
 
         if random.random() < 0.1:  # Low probability of injecting
-            print(f"    -> Injecting guard exhaustion pattern into '{node.name}'", file=sys.stderr)
+            logger.info(f"    -> Injecting guard exhaustion pattern into '{node.name}'")
 
             # 1. Create the setup code as an AST
             setup_code = dedent("""
@@ -542,13 +542,11 @@ class InlineCachePolluter(ast.NodeTransformer):
             return node
 
         if random.random() < 0.1:  # Low probability of injecting
-            print(
-                f"    -> Injecting inline cache pollution pattern into '{node.name}'",
-                file=sys.stderr,
-            )
+            logger.info(f"    -> Injecting inline cache pollution pattern into '{node.name}'")
+
+            p_prefix = f"p_{random.randint(1000, 9999)}"
 
             # 1. Create the class definitions and instance list as an AST
-            p_prefix = f"p_{random.randint(1000, 9999)}"
             setup_code = dedent(f"""
                 class Polluter_A_{p_prefix}:
                     def do_it(self): return 1
@@ -634,7 +632,7 @@ class SideEffectInjector(ast.NodeTransformer):
         if not local_vars:
             return node
 
-        print(f"    -> Injecting __del__ side-effect pattern into '{node.name}'", file=sys.stderr)
+        logger.info(f"    -> Injecting __del__ side-effect pattern into '{node.name}'")
 
         # --- 2. Choose a target and a payload ---
         prefix = f"{node.name}_{random.randint(1000, 9999)}"
@@ -673,7 +671,7 @@ class SideEffectInjector(ast.NodeTransformer):
 
             # The trigger
             if {loop_var} == {trigger_iteration}:
-                print('[{prefix}] Triggering __del__ side effect for {target_var}...', file=sys.stderr)
+                logger.info('[{prefix}] Triggering __del__ side effect for {target_var}...')
                 del {fm_instance_name}
                 # gc.collect() is not available here, but the del is often sufficient
 
@@ -723,7 +721,7 @@ class ForLoopInjector(ast.NodeTransformer):
     def _try_inject_loop(self, node: ast.stmt) -> ast.stmt | ast.For:
         # Low probability for this mutation
         if random.random() < 0.05 and _is_simple_statement(node):
-            print("    -> Injecting for loop around a statement.", file=sys.stderr)
+            logger.info("    -> Injecting for loop around a statement.")
 
             # Choose a random iterable for the loop
             loop_var_name = f"i_loop_{random.randint(1000, 9999)}"
@@ -786,9 +784,7 @@ class GlobalInvalidator(ast.NodeTransformer):
             if not node.body:  # Don't inject into an empty function
                 return node
 
-            print(
-                f"    -> Injecting global invalidation pattern into '{node.name}'", file=sys.stderr
-            )
+            logger.info(f"    -> Injecting global invalidation pattern into '{node.name}'")
 
             # 1. Create the AST for: globals()['fuzzer_...'] = None
             key_name = f"fuzzer_invalidation_key_{random.randint(1000, 99999)}"
@@ -831,10 +827,7 @@ class LoadAttrPolluter(ast.NodeTransformer):
 
         # Low probability for this complex injection
         if random.random() < 0.1:
-            print(
-                f"    -> Injecting LOAD_ATTR cache pollution pattern into '{node.name}'",
-                file=sys.stderr,
-            )
+            logger.info(f"    -> Injecting LOAD_ATTR cache pollution pattern into '{node.name}'")
 
             p_prefix = f"la_{random.randint(1000, 9999)}"
 
@@ -842,7 +835,7 @@ class LoadAttrPolluter(ast.NodeTransformer):
             # This is easier and cleaner than building each class with AST calls.
             scenario_code = dedent(f"""
                 # --- LOAD_ATTR Cache Pollution Scenario ---
-                print('[{p_prefix}] Running LOAD_ATTR cache pollution scenario...', file=sys.stderr)
+                logger.info('[{p_prefix}] Running LOAD_ATTR cache pollution scenario...')
 
                 # a) Define classes with conflicting 'payload' attributes.
                 class ShapeA_{p_prefix}:
@@ -902,7 +895,7 @@ class ManyVarsInjector(ast.NodeTransformer):
 
         # Low probability for this mutation as it adds a lot of code.
         if random.random() < 0.05:
-            print(f"    -> Injecting many local variables into '{node.name}'", file=sys.stderr)
+            logger.info(f"    -> Injecting many local variables into '{node.name}'")
 
             num_vars_to_add = 260  # More than 256 to force EXTENDED_ARG
             p_prefix = f"mv_{random.randint(1000, 9999)}"
@@ -936,7 +929,7 @@ class TypeIntrospectionMutator(ast.NodeTransformer):
         Generate a self-contained loop where a variable is rapidly
         reassigned to objects of different types before an isinstance call.
         """
-        print("    -> Injecting isinstance (polymorphic) attack...", file=sys.stderr)
+        logger.info("    -> Injecting isinstance (polymorphic) attack...")
         type_to_check_node = original_call.args[1]
         type_to_check_str = ast.unparse(type_to_check_node)
 
@@ -959,7 +952,7 @@ class TypeIntrospectionMutator(ast.NodeTransformer):
         Generate a train-then-invalidate scenario where an object's
         __class__ is changed after a hot loop.
         """
-        print("    -> Injecting isinstance (invalidation) attack...", file=sys.stderr)
+        logger.info("    -> Injecting isinstance (invalidation) attack...")
         type_to_check_node = original_call.args[1]
         type_to_check_str = ast.unparse(type_to_check_node)
 
@@ -992,7 +985,7 @@ class TypeIntrospectionMutator(ast.NodeTransformer):
         Generate a loop that repeatedly adds and removes an attribute
         from an object's type to stress hasattr caches.
         """
-        print("    -> Injecting hasattr (invalidation) attack...", file=sys.stderr)
+        logger.info("    -> Injecting hasattr (invalidation) attack...")
         if not isinstance(original_call.args[0], ast.Name):
             return []  # Can't easily determine the object to attack
 
@@ -1139,7 +1132,7 @@ class MagicMethodMutator(ast.NodeTransformer):
         """Find a for loop and replaces its iterable with a stateful one."""
         for i, stmt in enumerate(node.body):
             if isinstance(stmt, ast.For):
-                print(f"    -> Mutating for loop iterator in '{node.name}'", file=sys.stderr)
+                logger.info(f"    -> Mutating for loop iterator in '{node.name}'")
                 p_prefix = f"iter_{random.randint(1000, 9999)}"
                 # 1. Get the evil class definition
                 class_def_str = genStatefulIterObject(p_prefix)
@@ -1164,6 +1157,9 @@ class MagicMethodMutator(ast.NodeTransformer):
                 _create_len_attack,
                 _create_hash_attack,
                 _create_pow_attack,
+                self._create_tuple_attack,
+                self._create_all_any_attack,
+                self._create_min_max_attack,
                 self._mutate_for_loop_iter,  # This one is different
             ]
             chosen_attack = random.choice(attack_functions)
@@ -1174,9 +1170,8 @@ class MagicMethodMutator(ast.NodeTransformer):
                 if self._mutate_for_loop_iter(node):
                     ast.fix_missing_locations(node)
             else:
-                print(
-                    f"    -> Injecting data model attack '{chosen_attack.__name__}' into '{node.name}'",
-                    file=sys.stderr,
+                logger.info(
+                    f"    -> Injecting data model attack '{chosen_attack.__name__}' into '{node.name}'"
                 )
                 prefix = f"{node.name}_{random.randint(1000, 9999)}"
                 nodes_to_inject = chosen_attack(prefix)
@@ -1201,7 +1196,7 @@ class NumericMutator(ast.NodeTransformer):
 
     def _mutate_pow_args(self, node: ast.Call) -> ast.Call:
         """Replace arguments to pow() with pairs known to produce different types."""
-        print("    -> Mutating pow() arguments", file=sys.stderr)
+        logger.info("    -> Mutating pow() arguments")
         tricky_pairs = [
             (10, -2),  # Returns float
             (-10, 0.5),  # Returns complex
@@ -1214,7 +1209,7 @@ class NumericMutator(ast.NodeTransformer):
 
     def _mutate_chr_args(self, node: ast.Call) -> ast.Call:
         """Replace the argument to chr() with values that test error handling."""
-        print("    -> Mutating chr() arguments", file=sys.stderr)
+        logger.info("    -> Mutating chr() arguments")
         tricky_values = [-1, 1114112, 0xD800]  # ValueError, ValueError, TypeError
         node.args = [ast.Constant(value=random.choice(tricky_values))]
         node.keywords = []
@@ -1222,7 +1217,7 @@ class NumericMutator(ast.NodeTransformer):
 
     def _mutate_ord_args(self, node: ast.Call) -> ast.Call:
         """Replace the argument to ord() with values that test error handling."""
-        print("    -> Mutating ord() arguments", file=sys.stderr)
+        logger.info("    -> Mutating ord() arguments")
         tricky_values = ["", "ab", b"c"]  # TypeError, TypeError, TypeError
         node.args = [ast.Constant(value=random.choice(tricky_values))]
         node.keywords = []
@@ -1251,7 +1246,7 @@ class NumericMutator(ast.NodeTransformer):
         """Generate a scenario that attacks abs() with a stateful object."""
         attack_code = dedent(f"""
             # abs() attack injected by fuzzer
-            print('[{prefix}] Running abs() attack scenario...', file=sys.stderr)
+            logger.info('[{prefix}] Running abs() attack scenario...')
             class StatefulAbs_{prefix}:
                 def __init__(self):
                     self.count = 0
@@ -1279,7 +1274,7 @@ class NumericMutator(ast.NodeTransformer):
 
         # Low probability for this injection
         if random.random() < 0.05:
-            print(f"    -> Injecting numeric attack scenario into '{node.name}'", file=sys.stderr)
+            logger.info(f"    -> Injecting numeric attack scenario into '{node.name}'")
 
             # For now, we only have one scenario, but this can be expanded.
             attack_generators = [self._create_abs_attack_scenario]
@@ -1306,12 +1301,12 @@ class IterableMutator(ast.NodeTransformer):
 
     def _create_tuple_attack(self, prefix: str) -> list[ast.stmt]:
         """Generate a scenario attacking tuple() with an unstable-type iterator."""
-        print("    -> Injecting tuple() attack scenario...", file=sys.stderr)
+        logger.info("    -> Injecting tuple() attack scenario...")
         # For this attack, we can reuse the StatefulIterObject
         class_def_str = genStatefulIterObject(prefix)
         attack_code = dedent(f"""
 # tuple() attack injected by fuzzer
-print('[{prefix}] Running tuple() attack scenario...', file=sys.stderr)
+logger.info('[{prefix}] Running tuple() attack scenario...')
 {class_def_str}
 evil_iterable = StatefulIter_{prefix}()
 try:
@@ -1326,10 +1321,10 @@ except Exception:
 
     def _create_all_any_attack(self, prefix: str) -> list[ast.stmt]:
         """Generate a scenario attacking all()/any() short-circuiting."""
-        print("    -> Injecting all()/any() attack scenario...", file=sys.stderr)
+        logger.info("    -> Injecting all()/any() attack scenario...")
         attack_code = dedent(f"""
             # all()/any() short-circuit attack injected by fuzzer
-            print('[{prefix}] Running all()/any() attack scenario...', file=sys.stderr)
+            logger.info('[{prefix}] Running all()/any() attack scenario...')
             side_effect_counter_{prefix} = 0
             class SideEffectIterator_{prefix}:
                 def __init__(self, iterable):
@@ -1349,7 +1344,7 @@ except Exception:
                 # will result in the counter being 3.
                 if side_effect_counter_{prefix} != 3:
                     # This is not a JIT bug per se, but indicates non-standard behavior.
-                    print(f"[{prefix}] Side effect counter has unexpected value: {{side_effect_counter_{prefix}}}", file=sys.stderr)
+                    logger.info(f"[{prefix}] Side effect counter has unexpected value: {{side_effect_counter_{prefix}}}")
             except Exception:
                 pass
         """)
@@ -1357,10 +1352,10 @@ except Exception:
 
     def _create_min_max_attack(self, prefix: str) -> list[ast.stmt]:
         """Generate a scenario attacking min()/max() with incompatible types."""
-        print("    -> Injecting min()/max() attack scenario...", file=sys.stderr)
+        logger.info("    -> Injecting min()/max() attack scenario...")
         attack_code = dedent(f"""
             # min()/max() type-confusion attack injected by fuzzer
-            print('[{prefix}] Running min()/max() attack scenario...', file=sys.stderr)
+            logger.info('[{prefix}] Running min()/max() attack scenario...')
             class IncompatibleTypeIterator_{prefix}:
                 def __init__(self):
                     self.count = 0
@@ -1399,7 +1394,7 @@ except Exception:
                 break
 
         if for_node:
-            print(f"    -> Mutating for loop iterator in '{func_node.name}'", file=sys.stderr)
+            logger.info(f"    -> Mutating for loop iterator in '{func_node.name}'")
             prefix = f"iter_{random.randint(1000, 9999)}"
             class_def_str = genStatefulIterObject(prefix)
             class_def_node = ast.parse(class_def_str).body[0]
@@ -1559,13 +1554,13 @@ def genLyingEqualityObject(var_name: str) -> str:
                 self.eq_count += 1
                 if self.eq_count < 70:
                     if not self.eq_count % 20:
-                        print("[EVIL] LyingEquality __eq__ called, returning True", file=sys.stderr)
+                        logger.info("[EVIL] LyingEquality __eq__ called, returning True")
                     return True
             def __ne__(self, other):
                 self.ne_count += 1
                 if self.ne_count < 70:
                     if not self.ne_count % 20:
-                        print("[EVIL] LyingEquality __ne__ called, returning True", file=sys.stderr)
+                        logger.info("[EVIL] LyingEquality __ne__ called, returning True")
                     return True
         {var_name} = {class_name}()
     """)
@@ -1582,7 +1577,7 @@ def genStatefulLenObject(var_name: str) -> str:
             def __len__(self):
                 _len = 0 if self.len_count < 70 else 99
                 if not self.len_count % 20:
-                    print(f"[EVIL] StatefulLen __len__ called, returning {{_len}}", file=sys.stderr)
+                    logger.info(f"[EVIL] StatefulLen __len__ called, returning {{_len}}")
                 self.len_count += 1
                 return _len
         {var_name} = {class_name}()
@@ -1599,9 +1594,9 @@ def genUnstableHashObject(var_name: str) -> str:
             def __hash__(self):
                 # Violates the rule that hash must be constant for the object's lifetime.
                 self.hash_count += 1
-                new_hash = 5 if self.hash_count < 70 else randint(0, 2**64 - 1)
+                new_hash = 5 if self.hash_count < 70 else random.randint(0, 2**64 - 1)
                 if not self.hash_count % 20:
-                    print(f"[EVIL] UnstableHash __hash__ called, returning {{new_hash}}", file=sys.stderr)
+                    logger.info(f"[EVIL] UnstableHash __hash__ called, returning {{new_hash}}")
                 return new_hash
         {var_name} = {class_name}()
     """)
@@ -1623,18 +1618,18 @@ def genStatefulStrReprObject(var_name: str) -> str:
             def __str__(self):
                 val = "a" if self._str_count < 67 else b'a'
                 if not self._str_count % 20:
-                    print(f"[EVIL] StatefulStrRepr __str__ called, returning '{{val}}'", file=sys.stderr)
+                    logger.info(f"[EVIL] StatefulStrRepr __str__ called, returning '{{val}}'")
                 self._str_count += 1
                 return val
             def __repr__(self):
                 self._repr_count += 1
                 if self._repr_count > 70:
                     if not self._repr_count % 20:
-                        print("[EVIL] StatefulStrRepr __repr__ called, returning NON-STRING type 123", file=sys.stderr)
+                        logger.info("[EVIL] StatefulStrRepr __repr__ called, returning NON-STRING type 123")
                     return 123  # Violates contract, should raise TypeError
                 val = f"<StatefulRepr run #{{self._repr_count}}>"
                 if not self._repr_count % 20:
-                    print(f"[EVIL] StatefulStrRepr __repr__ called, returning '{{val}}'", file=sys.stderr)
+                    logger.info(f"[EVIL] StatefulStrRepr __repr__ called, returning '{{val}}'")
                 return val
         {var_name} = {class_name}()
     """)
@@ -1652,10 +1647,10 @@ def genStatefulGetitemObject(var_name: str) -> str:
                 self._getitem_count += 1
                 if self._getitem_count > 67:
                     if not self._getitem_count % 20:
-                        print(f"[EVIL] StatefulGetitem __getitem__ returning float", file=sys.stderr)
+                        logger.info(f"[EVIL] StatefulGetitem __getitem__ returning float")
                     return 99.9
                 if not self._getitem_count % 20:
-                    print(f"[EVIL] StatefulGetitem __getitem__ returning int", file=sys.stderr)
+                    logger.info(f"[EVIL] StatefulGetitem __getitem__ returning int")
                 return 5
         {var_name} = {class_name}()
     """)
@@ -1675,10 +1670,10 @@ def genStatefulGetattrObject(var_name: str) -> str:
                 self._getattr_count += 1
                 if self._getattr_count > 67:
                     if not self._getattr_count % 20:
-                        print(f"[EVIL] StatefulGetattr __getattr__ for '{{name}}' returning 'evil_attribute'", file=sys.stderr)
+                        logger.info(f"[EVIL] StatefulGetattr __getattr__ for '{{name}}' returning 'evil_attribute'")
                     return b'evil_attribute'
                 if not self._getattr_count % 20:
-                    print(f"[EVIL] StatefulGetattr __getattr__ for '{{name}}' returning 'normal_attribute'", file=sys.stderr)
+                    logger.info(f"[EVIL] StatefulGetattr __getattr__ for '{{name}}' returning 'normal_attribute'")
                 return 'normal_attribute'
         {var_name} = {class_name}()
     """)
@@ -1698,10 +1693,10 @@ def genStatefulBoolObject(var_name: str) -> str:
                 self._bool_count += 1
                 if self._bool_count > 70:
                     if not self._bool_count % 20:
-                        print("[EVIL] StatefulBool __bool__ flipping to False", file=sys.stderr)
+                        logger.info("[EVIL] StatefulBool __bool__ flipping to False")
                     return False
                 if not self._bool_count % 20:
-                    print("[EVIL] StatefulBool __bool__ returning True", file=sys.stderr)
+                    logger.info("[EVIL] StatefulBool __bool__ returning True")
                 return True
         {var_name} = {class_name}()
     """)
@@ -1720,7 +1715,7 @@ def genStatefulIterObject(var_name: str) -> str:
                 self._iterable = [1, 2, 3]
             def __iter__(self):
                 if not self._iter_count % 20:
-                    print(f"[EVIL] StatefulIter __iter__ yielding from {{self._iterable!r}}", file=sys.stderr)
+                    logger.info(f"[EVIL] StatefulIter __iter__ yielding from {{self._iterable!r}}")
                 self._iter_count += 1
                 if self._iter_count > 67:
                     return iter((None,))
@@ -1743,10 +1738,10 @@ def genStatefulIndexObject(var_name: str) -> str:
                 self._index_count += 1
                 if self._index_count > 70:
                     if not self._index_count % 20:
-                        print("[EVIL] StatefulIndex __index__ returning 99", file=sys.stderr)
+                        logger.info("[EVIL] StatefulIndex __index__ returning 99")
                     return 99 # A different, potentially out-of-bounds index
                 if not self._index_count % 20:
-                    print("[EVIL] StatefulIndex __index__ returning 0", file=sys.stderr)
+                    logger.info("[EVIL] StatefulIndex __index__ returning 0")
                 return 0
         {var_name} = {class_name}()
     """)

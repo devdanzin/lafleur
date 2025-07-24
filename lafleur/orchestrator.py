@@ -26,6 +26,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 from textwrap import dedent, indent
 from typing import Any
+import logging
+
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+)
+
+logger = logging.getLogger(__name__)
 
 from lafleur.corpus_manager import CorpusManager
 from lafleur.coverage import parse_log_for_edge_coverage, load_coverage_state
@@ -99,7 +106,7 @@ class LafleurOrchestrator:
         self.mutations_since_last_find = 0
         self.global_seed_counter = self.run_stats.get("global_seed_counter", 0)
 
-        # Ensure temporary and corpus directories exist
+        # Ensure temporary aand corpus directories exist
         TMP_DIR.mkdir(exist_ok=True)
         CRASHES_DIR.mkdir(exist_ok=True)
         TIMEOUTS_DIR.mkdir(exist_ok=True)
@@ -110,7 +117,7 @@ class LafleurOrchestrator:
         # Sanitize timestamp for use in filename
         safe_timestamp = run_timestamp.replace(":", "-").replace("+", "Z")
         self.timeseries_log_path = LOGS_DIR / f"timeseries_{safe_timestamp}.jsonl"
-        print(
+        logger.info(  # Replaced print
             f"[+] Time-series analytics for this run will be saved to: {self.timeseries_log_path}"
         )
 
@@ -125,11 +132,10 @@ class LafleurOrchestrator:
             end_index = source_code.index(BOILERPLATE_END_MARKER)
             # The boilerplate includes the start marker itself.
             self.boilerplate_code = source_code[start_index:end_index]
-            print("[+] Boilerplate code extracted and cached.")
+            logger.info("[+] Boilerplate code extracted and cached.")  # Replaced print
         except ValueError:
-            print(
-                "[!] Warning: Could not find boilerplate markers in the initial seed file.",
-                file=sys.stderr,
+            logger.warning(  # Replaced print
+                "[!] Warning: Could not find boilerplate markers in the initial seed file."
             )
             # Fallback to using an empty boilerplate
             self.boilerplate_code = ""
@@ -157,61 +163,64 @@ class LafleurOrchestrator:
         needed = self.min_corpus_files - current_corpus_size
 
         if needed > 0:
-            print(
+            logger.info(  # Replaced print
                 f"[*] Corpus size ({current_corpus_size}) is less than minimum ({self.min_corpus_files}). Need to generate {needed} more file(s)."
             )
 
             if not self.corpus_manager.fusil_path_is_valid:
-                print("[!] WARNING: Cannot generate new seed files.", file=sys.stderr)
+                logger.warning("[!] WARNING: Cannot generate new seed files.")  # Replaced print
                 if self.fusil_path:
-                    print(
-                        f"    Reason: Provided --fusil-path '{self.fusil_path}' is not a valid executable file.",
-                        file=sys.stderr,
+                    logger.warning(  # Replaced print
+                        f"    Reason: Provided --fusil-path '{self.fusil_path}' is not a valid executable file."
                     )
                 else:
-                    print(
-                        "    Reason: The --fusil-path argument was not provided.", file=sys.stderr
+                    logger.warning(  # Replaced print
+                        "    Reason: The --fusil-path argument was not provided."
                     )
 
                 if current_corpus_size > 0:
-                    print(
-                        f"[*] Proceeding with the {current_corpus_size} existing file(s). To enforce the minimum, please provide a valid path.",
-                        file=sys.stderr,
+                    logger.warning(  # Replaced print
+                        f"[*] Proceeding with the {current_corpus_size} existing file(s). To enforce the minimum, please provide a valid path."
                     )
                 else:
-                    print(
-                        "[!!!] CRITICAL: The corpus is empty and no valid seeder is available. Halting.",
-                        file=sys.stderr,
+                    logger.critical(  # Replaced print
+                        "[!!!] CRITICAL: The corpus is empty and no valid seeder is available. Halting."
                     )
                     sys.exit(1)  # Unrecoverable state
             else:
                 # Seeder is available, generate the needed files
-                print("[*] Starting corpus generation phase...")
+                logger.info("[*] Starting corpus generation phase...")  # Replaced print
                 for _ in range(needed):
                     self.corpus_manager.generate_new_seed(
                         self.analyze_run, self._build_lineage_profile
                     )
-                print(
+                logger.info(  # Replaced print
                     f"[+] Corpus generation complete. New size: {len(self.coverage_state['per_file_coverage'])}."
                 )
 
-        print("[+] Starting Deep Fuzzer Evolutionary Loop. Press Ctrl+C to stop.")
+        logger.info(
+            "[+] Starting Deep Fuzzer Evolutionary Loop. Press Ctrl+C to stop."
+        )  # Replaced print
         try:
             while True:
                 self.run_stats["total_sessions"] = self.run_stats.get("total_sessions", 0) + 1
                 session_num = self.run_stats["total_sessions"]
-                print(f"\n--- Fuzzing Session #{self.run_stats['total_sessions']} ---")
+                logger.info(
+                    f"\n--- Fuzzing Session #{self.run_stats['total_sessions']} ---"
+                )  # Replaced print
 
                 # 1. Selection
                 selection = self.corpus_manager.select_parent()
 
                 # This should now only happen if min_corpus_files is 0 and corpus is empty.
                 if selection is None:
-                    print("[!] Corpus is empty and no minimum size was set. Halting.")
+                    logger.info(
+                        "[!] Corpus is empty and no minimum size was set. Halting."
+                    )  # Replaced print
                     return
                 else:
                     parent_path, parent_score = selection
-                    print(
+                    logger.info(  # Replaced print
                         f"[+] Selected parent for mutation: {parent_path.name} (Score: {parent_score:.2f})"
                     )
                     self.execute_mutation_and_analysis_cycle(
@@ -221,10 +230,12 @@ class LafleurOrchestrator:
                 # Update dynamic stats after each session
                 self.update_and_save_run_stats()
                 if session_num % 10 == 0:
-                    print(f"[*] Logging time-series data point at session {session_num}...")
+                    logger.info(
+                        f"[*] Logging time-series data point at session {session_num}..."
+                    )  # Replaced print
                     self._log_timeseries_datapoint()
         finally:
-            print("\n[+] Fuzzing loop terminating. Saving final stats...")
+            logger.info("\n[+] Fuzzing loop terminating. Saving final stats...")  # Replaced print
             self.update_and_save_run_stats()
             self._log_timeseries_datapoint()  # Log one final data point on exit
 
@@ -260,7 +271,7 @@ class LafleurOrchestrator:
 
     def _run_havoc_stage(self, base_ast: ast.AST, **kwargs) -> tuple[ast.AST, dict[str, Any]]:
         """Apply a random stack of many different mutations to the AST."""
-        print("  [~] Running HAVOC stage...", file=sys.stderr)
+        logger.info("  [~] Running HAVOC stage...")  # Replaced print
         tree = base_ast  # Start with the copied tree from the dispatcher
         num_havoc_mutations = RANDOM.randint(15, 50)
         transformers_applied = []
@@ -276,13 +287,13 @@ class LafleurOrchestrator:
 
     def _run_spam_stage(self, base_ast: ast.AST, **kwargs) -> tuple[ast.AST, dict[str, Any]]:
         """Repeatedly apply the same type of mutation to the AST."""
-        print("  [~] Running SPAM stage...", file=sys.stderr)
+        logger.info("  [~] Running SPAM stage...")  # Replaced print
         tree = base_ast
         num_spam_mutations = RANDOM.randint(20, 50)
 
         # Choose one single type of mutation to spam
         chosen_transformer_class = RANDOM.choice(self.ast_mutator.transformers)
-        print(f"    -> Spamming with: {chosen_transformer_class.__name__}", file=sys.stderr)
+        logger.info(f"    -> Spamming with: {chosen_transformer_class.__name__}")  # Replaced print
 
         for _ in range(num_spam_mutations):
             # Apply a new instance of the same transformer each time
@@ -313,7 +324,7 @@ class LafleurOrchestrator:
 
     def _run_splicing_stage(self, base_core_ast: ast.AST, **kwargs) -> ast.AST:
         """Perform a crossover by splicing the harness from a second parent."""
-        print("  [~] Attempting SPLICING stage...", file=sys.stderr)
+        logger.info("  [~] Attempting SPLICING stage...")  # Replaced print
 
         selection = self.corpus_manager.select_parent()
         if not selection:
@@ -361,9 +372,8 @@ class LafleurOrchestrator:
                 remapping_dict[required_var] = compatible_var
                 available_vars_a[required_type].remove(compatible_var)
             else:
-                print(
-                    f"    -> Splice failed: No var of type '{required_type}' for '{required_var}'",
-                    file=sys.stderr,
+                logger.info(  # Replaced print
+                    f"    -> Splice failed: No var of type '{required_type}' for '{required_var}'"
                 )
                 is_possible = False
                 break
@@ -371,7 +381,7 @@ class LafleurOrchestrator:
         if not is_possible:
             return base_core_ast
 
-        print(f"    -> Remapping successful: {remapping_dict}")
+        logger.info(f"    -> Remapping successful: {remapping_dict}")  # Replaced print
 
         # --- Phase 3: Transformation and Assembly ---
         renamer = VariableRenamer(remapping_dict)
@@ -427,9 +437,8 @@ class LafleurOrchestrator:
             )
             return mutated_harness_node, mutation_info
         except RecursionError:
-            print(
-                "  [!] Warning: Skipping mutation due to RecursionError during AST transformation.",
-                file=sys.stderr,
+            logger.warning(  # Replaced print
+                "  [!] Warning: Skipping mutation due to RecursionError during AST transformation."
             )
             return None, None
 
@@ -489,9 +498,8 @@ except Exception:
                 mutated_core_code = ast.unparse(child_core_tree)
                 return f"{self.boilerplate_code}\n{mutated_core_code}"
         except RecursionError:
-            print(
-                "  [!] Warning: Skipping mutation due to RecursionError during ast.unparse.",
-                file=sys.stderr,
+            logger.warning(  # Replaced print
+                "  [!] Warning: Skipping mutation due to RecursionError during ast.unparse."
             )
             return None
 
@@ -523,7 +531,7 @@ except Exception:
             )
         except subprocess.TimeoutExpired:
             self.run_stats["timeouts_found"] = self.run_stats.get("timeouts_found", 0) + 1
-            print("  [!!!] TIMEOUT DETECTED! Saving test case.", file=sys.stderr)
+            logger.info("  [!!!] TIMEOUT DETECTED! Saving test case.")  # Replaced print
             timeout_path = (
                 TIMEOUTS_DIR / f"timeout_{session_id}_{mutation_index}_{child_source_path.name}"
             )
@@ -531,7 +539,7 @@ except Exception:
             shutil.copy(child_log_path, timeout_path.with_suffix(".log"))
             return None
         except Exception as e:
-            print(f"  [!] Error during child execution: {e}", file=sys.stderr)
+            logger.error(f"  [!] Error during child execution: {e}")  # Replaced print
             return None
 
     def _handle_analysis_data(
@@ -541,7 +549,7 @@ except Exception:
         if analysis_data["status"] == "DIVERGENCE":
             self.run_stats["divergences_found"] = self.run_stats.get("divergences_found", 0) + 1
             self.mutations_since_last_find = 0
-            print(
+            logger.info(  # Replaced print
                 f"  [***] SUCCESS! Mutation #{i + 1} found a correctness divergence. Moving to next parent."
             )
             return "BREAK"  # A divergence is a major find, move to the next parent
@@ -552,7 +560,9 @@ except Exception:
             self.run_stats["new_coverage_finds"] += 1
             self.run_stats["sum_of_mutations_per_find"] += self.mutations_since_last_find
             self.mutations_since_last_find = 0
-            print(f"  [***] SUCCESS! Mutation #{i + 1} found new coverage. Moving to next parent.")
+            logger.info(
+                f"  [***] SUCCESS! Mutation #{i + 1} found new coverage. Moving to next parent."
+            )  # Replaced print
             parent_metadata["total_finds"] = parent_metadata.get("total_finds", 0) + 1
             parent_metadata["mutations_since_last_find"] = 0
             self.corpus_manager.add_new_file(
@@ -585,7 +595,9 @@ except Exception:
             parent_core_code = self._get_core_code(parent_source)
             parent_core_tree = ast.parse(parent_core_code)
         except (IOError, SyntaxError) as e:
-            print(f"[!] Error processing parent file {parent_path.name}: {e}", file=sys.stderr)
+            logger.error(
+                f"[!] Error processing parent file {parent_path.name}: {e}"
+            )  # Replaced print
             return None, None, None
 
         base_harness_node = None
@@ -597,8 +609,8 @@ except Exception:
                 # Collect setup nodes that appear before the harness function
                 setup_nodes.append(node)
         if not base_harness_node:
-            print(
-                f"[-] No harness function found in {parent_path.name}. Skipping.", file=sys.stderr
+            logger.warning(  # Replaced print
+                f"[-] No harness function found in {parent_path.name}. Skipping."
             )
             return None, None, None
         return base_harness_node, parent_core_tree, setup_nodes
@@ -616,7 +628,7 @@ except Exception:
         # Clamp the multiplier to a reasonable range (e.g., 0.25x to 3.0x)
         final_multiplier = max(0.25, min(3.0, dynamic_multiplier))
         max_mutations = int(base_mutations * final_multiplier)
-        print(
+        logger.info(  # Replaced print
             f"[+] Dynamically adjusting mutation count based on score. Base: {base_mutations}, "
             f"Multiplier: {final_multiplier:.2f}, Final Count: {max_mutations}"
         )
@@ -645,7 +657,7 @@ except Exception:
             self.mutations_since_last_find += 1
             self.global_seed_counter += 1
             current_seed = self.global_seed_counter
-            print(
+            logger.info(  # Replaced print
                 f"  \\-> Running mutation #{i + 1} (Seed: {current_seed}) for {parent_path.name}..."
             )
 
@@ -658,9 +670,8 @@ except Exception:
                 # self.debug_mutation_differences(core_logic_to_mutate, mutated_body_ast, current_seed)
 
             except RecursionError:
-                print(
-                    "  [!] Warning: Skipping mutation due to RecursionError during AST transformation.",
-                    file=sys.stderr,
+                logger.warning(  # Replaced print
+                    "  [!] Warning: Skipping mutation due to RecursionError during AST transformation."
                 )
                 continue
 
@@ -679,9 +690,8 @@ except Exception:
                 if not child_source:
                     continue
             except RecursionError:
-                print(
-                    "  [!] Warning: Skipping mutation due to RecursionError during ast.unparse.",
-                    file=sys.stderr,
+                logger.warning(  # Replaced print
+                    "  [!] Warning: Skipping mutation due to RecursionError during ast.unparse."
                 )
                 continue
             try:
@@ -702,7 +712,7 @@ except Exception:
                     continue
             except subprocess.TimeoutExpired:
                 self.run_stats["timeouts_found"] = self.run_stats.get("timeouts_found", 0) + 1
-                print("  [!!!] TIMEOUT DETECTED! Saving test case.", file=sys.stderr)
+                logger.info("  [!!!] TIMEOUT DETECTED! Saving test case.")  # Replaced print
                 timeout_source_path = (
                     TIMEOUTS_DIR / f"timeout_{session_id}_{i + 1}_{parent_path.name}"
                 )
@@ -711,7 +721,7 @@ except Exception:
                 shutil.copy(child_log_path, timeout_log_path)
                 continue
             except Exception as e:
-                print(f"  [!] Error executing child process: {e}", file=sys.stderr)
+                logger.error(f"  [!] Error executing child process: {e}")  # Replaced print
                 continue  # Move to the next mutation
             finally:
                 try:
@@ -721,12 +731,14 @@ except Exception:
                     if child_log_path.exists():
                         child_log_path.unlink()
                 except OSError as e:
-                    print(f"  [!] Warning: Could not delete temp file: {e}", file=sys.stderr)
+                    logger.warning(
+                        f"  [!] Warning: Could not delete temp file: {e}"
+                    )  # Replaced print
 
     def _check_for_divergence(self, log_content: str, source_path: Path, log_path: Path) -> bool:
         """Check for correctness divergences and save artifacts."""
         if "JITCorrectnessError" in log_content:
-            print("  [!!!] DIVERGENCE DETECTED! Saving test case and log.", file=sys.stderr)
+            logger.info("  [!!!] DIVERGENCE DETECTED! Saving test case and log.")  # Replaced print
             divergence_path = DIVERGENCES_DIR / f"divergence_{source_path.name}"
             shutil.copy(source_path, divergence_path)
             shutil.copy(log_path, divergence_path.with_suffix(".log"))
@@ -738,15 +750,17 @@ except Exception:
     ) -> bool:
         """Check for crashes and save artifacts."""
         if return_code != 0:
-            print(f"  [!!!] CRASH DETECTED! Exit code: {return_code}. Saving...", file=sys.stderr)
+            logger.info(
+                f"  [!!!] CRASH DETECTED! Exit code: {return_code}. Saving..."
+            )  # Replaced print
             crash_path = CRASHES_DIR / f"crash_retcode_{source_path.name}"
             shutil.copy(source_path, crash_path)
             shutil.copy(log_path, crash_path.with_suffix(".log"))
             return True
         for keyword in CRASH_KEYWORDS:
             if keyword.lower() in log_content.lower():
-                print(
-                    f"  [!!!] CRASH DETECTED! Found keyword '{keyword}'. Saving...", file=sys.stderr
+                logger.info(  # Replaced print
+                    f"  [!!!] CRASH DETECTED! Found keyword '{keyword}'. Saving..."
                 )
                 crash_path = CRASHES_DIR / f"crash_keyword_{source_path.name}"
                 shutil.copy(source_path, crash_path)
@@ -775,15 +789,13 @@ except Exception:
                 global_set = self.coverage_state["global_coverage"].get(cov_type, {})
                 for item in child_data.get(cov_type, {}):
                     if item not in global_set:
-                        print(
-                            f"[NEW GLOBAL {cov_type.upper()[:-1]}] '{item}' in harness '{harness_id}'",
-                            file=sys.stderr,
+                        logger.info(  # Replaced print
+                            f"[NEW GLOBAL {cov_type.upper()[:-1]}] '{item}' in harness '{harness_id}'"
                         )
                         is_interesting = True
                     elif parent_id is not None and item not in lineage_set:
-                        print(
-                            f"[NEW RELATIVE {cov_type.upper()[:-1]}] '{item}' in harness '{harness_id}'",
-                            file=sys.stderr,
+                        logger.info(  # Replaced print
+                            f"[NEW RELATIVE {cov_type.upper()[:-1]}] '{item}' in harness '{harness_id}'"
                         )
                         is_interesting = True
             if is_interesting and parent_id is not None:
@@ -795,7 +807,7 @@ except Exception:
             if child_coverage or is_generative_seed:
                 is_interesting = True
             elif not is_interesting:
-                print("  [~] Seed file produced no JIT coverage. Skipping.", file=sys.stderr)
+                logger.info("  [~] Seed file produced no JIT coverage. Skipping.")  # Replaced print
 
         return is_interesting
 
@@ -823,7 +835,9 @@ except Exception:
         try:
             log_content = exec_result.log_path.read_text()
         except IOError as e:
-            print(f"  [!] Warning: Could not read log file for analysis: {e}", file=sys.stderr)
+            logger.warning(
+                f"  [!] Warning: Could not read log file for analysis: {e}"
+            )  # Replaced print
 
         if is_differential_mode and self._check_for_divergence(
             log_content, exec_result.source_path, exec_result.log_path
@@ -845,9 +859,8 @@ except Exception:
             content_hash = hashlib.sha256(core_code_to_save.encode("utf-8")).hexdigest()
 
             if content_hash in self.corpus_manager.known_hashes:
-                print(
-                    f"  [~] New coverage found, but content is a known duplicate (Hash: {content_hash[:10]}...). Skipping.",
-                    file=sys.stderr,
+                logger.info(  # Replaced print
+                    f"  [~] New coverage found, but content is a known duplicate (Hash: {content_hash[:10]}...). Skipping."
                 )
                 return {"status": "NO_CHANGE"}
 
@@ -878,7 +891,9 @@ except Exception:
             with open(self.timeseries_log_path, "a", encoding="utf-8") as f:
                 f.write(json.dumps(datapoint) + "\n")
         except IOError as e:
-            print(f"[!] Warning: Could not write to time-series log file: {e}", file=sys.stderr)
+            logger.warning(
+                f"[!] Warning: Could not write to time-series log file: {e}"
+            )  # Replaced print
 
     def _build_lineage_profile(
         self, parent_lineage_profile: dict, child_baseline_profile: dict
@@ -951,27 +966,31 @@ except Exception:
         mutated_str = ast.unparse(mutated_ast)
 
         if original_str == mutated_str:
-            print(f"  [WARNING] Mutation with seed {seed} produced identical code!")
+            logger.warning(
+                f"  [WARNING] Mutation with seed {seed} produced identical code!"
+            )  # Replaced print
             return False
 
         # Compute hashes to see if different ASTs produce same unparsed code
         original_hash = hashlib.sha256(original_str.encode("utf-8")).hexdigest()[:10]
         mutated_hash = hashlib.sha256(mutated_str.encode("utf-8")).hexdigest()[:10]
 
-        print(
+        logger.debug(  # Replaced print
             f"  [DEBUG] Seed {seed}: Original hash: {original_hash}, Mutated hash: {mutated_hash}"
         )
 
         # Show a diff summary (just line counts for brevity)
         original_lines = original_str.count("\n")
         mutated_lines = mutated_str.count("\n")
-        print(f"  [DEBUG] Line count change: {original_lines} -> {mutated_lines}")
+        logger.debug(
+            f"  [DEBUG] Line count change: {original_lines} -> {mutated_lines}"
+        )  # Replaced print
 
         return True
 
     def verify_jit_determinism(self, test_file_path: Path, num_runs: int = 5):
         """Run the same file multiple times to check if coverage is deterministic."""
-        print(f"\n[*] Testing JIT determinism for {test_file_path.name}...")
+        logger.info(f"\n[*] Testing JIT determinism for {test_file_path.name}...")  # Replaced print
 
         coverage_sets = []
         for run in range(num_runs):
@@ -994,19 +1013,21 @@ except Exception:
                 all_edges.update(harness_data.get("edges", {}).keys())
 
             coverage_sets.append(all_edges)
-            print(f"  Run {run + 1}: {len(all_edges)} unique edges")
+            logger.info(f"  Run {run + 1}: {len(all_edges)} unique edges")  # Replaced print
 
         # Check if all runs produced identical coverage
         if all(s == coverage_sets[0] for s in coverage_sets):
-            print("  [✓] Coverage is deterministic across all runs")
+            logger.info("  [✓] Coverage is deterministic across all runs")  # Replaced print
         else:
-            print("  [!] Coverage is NON-DETERMINISTIC!")
+            logger.warning("  [!] Coverage is NON-DETERMINISTIC!")  # Replaced print
             # Show which edges are inconsistent
             all_edges_union = set().union(*coverage_sets)
             for edge in all_edges_union:
                 appearances = sum(1 for s in coverage_sets if edge in s)
                 if appearances != num_runs:
-                    print(f"    Edge '{edge}' appeared in {appearances}/{num_runs} runs")
+                    logger.warning(
+                        f"    Edge '{edge}' appeared in {appearances}/{num_runs} runs"
+                    )  # Replaced print
 
 
 def main():
@@ -1040,15 +1061,18 @@ def main():
     safe_timestamp = timestamp_iso.replace(":", "-").replace("+", "Z")
     orchestrator_log_path = LOGS_DIR / f"deep_fuzzer_run_{safe_timestamp}.log"
 
-    original_stdout = sys.stdout
-    original_stderr = sys.stderr
+    # Configure logging at the root level for the entire application
+    logging.basicConfig(
+        level=logging.INFO,  # Default logging level
+        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+        handlers=[
+            logging.FileHandler(orchestrator_log_path),  # Log to file
+            logging.StreamHandler(sys.stdout),  # Log to console
+        ],
+    )
 
-    # This initial print goes only to the console
-    print(f"[+] Starting deep fuzzer. Full log will be at: {orchestrator_log_path}")
-
-    tee_logger = TeeLogger(orchestrator_log_path, original_stdout)
-    sys.stdout = tee_logger
-    sys.stderr = tee_logger
+    # This initial print goes only to the console, before TeeLogger takes over stdout
+    # Removed initial print as logging is now configured to handle stdout
 
     termination_reason = "Completed"  # Default reason
     start_stats = load_run_stats()  # Capture stats at the start
@@ -1073,7 +1097,7 @@ Initial Stats:
 ================================================================================
 
 """
-        print(dedent(header))
+        logger.info(dedent(header))  # Replaced print with logger.info
         # --- End of Header ---
 
         orchestrator = LafleurOrchestrator(
@@ -1083,22 +1107,18 @@ Initial Stats:
         )
         orchestrator.run_evolutionary_loop()
     except KeyboardInterrupt:
-        print("\n[!] Fuzzing stopped by user.")
+        logger.info("\n[!] Fuzzing stopped by user.")  # Replaced print with logger.info
         termination_reason = "KeyboardInterrupt"
     except Exception as e:
         termination_reason = f"Error: {e}"
-        # Use original stderr for the final error message so it's always visible.
-        print(
-            f"\n[!!!] An unexpected error occurred in the orchestrator: {e}", file=original_stderr
-        )
-        import traceback
-
-        traceback.print_exc(file=original_stderr)
+        logger.exception(
+            "\n[!!!] An unexpected error occurred in the orchestrator: %s", e
+        )  # Use logger.exception for traceback
     finally:
         # --- Create and Write the Summary Footer ---
-        print("\n" + "=" * 80)
-        print("FUZZING RUN SUMMARY")
-        print("=" * 80)
+        logger.info("\n" + "=" * 80)  # Replaced print with logger.info
+        logger.info("FUZZING RUN SUMMARY")  # Replaced print with logger.info
+        logger.info("=" * 80)  # Replaced print with logger.info
 
         end_time = datetime.now()
         duration = end_time - run_start_time
@@ -1131,13 +1151,14 @@ Initial Stats:
 {json.dumps(end_stats, indent=4)}
 ================================================================================
 """
-        print(dedent(summary))
+        logger.info(dedent(summary))  # Replaced print with logger.info
 
         # Cleanly close the log file and restore streams.
-        tee_logger.close()
-        sys.stdout = original_stdout
-        sys.stderr = original_stderr
-        print(f"[+] Fuzzing session finished. Full log saved to: {orchestrator_log_path}")
+        # TeeLogger is no longer needed if logging is configured to handle stdout
+        # sys.stdout and sys.stderr are managed by logging.basicConfig handlers now.
+        logger.info(
+            f"[+] Fuzzing session finished. Full log saved to: {orchestrator_log_path}"
+        )  # Replaced print with logger.info
 
 
 if __name__ == "__main__":

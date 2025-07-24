@@ -10,6 +10,10 @@ This is useful for creating a dedicated CPython build for fuzzing.
 import re
 import argparse
 from pathlib import Path
+import logging  # Added import
+
+# Set up logging for this module
+logger = logging.getLogger(__name__)  # Added logger instance
 
 # A comprehensive dictionary of JIT parameters to tweak for fuzzing.
 # Values are set to be more aggressive than the defaults.
@@ -46,19 +50,23 @@ def apply_jit_tweaks(cpython_path: Path, dry_run: bool = False) -> None:
         cpython_path: The root path of the CPython source code checkout.
         dry_run: If True, print changes without modifying files.
     """
-    print(f"[*] Starting JIT parameter tweaks for CPython at: {cpython_path.resolve()}")
+    logger.info(
+        f"[*] Starting JIT parameter tweaks for CPython at: {cpython_path.resolve()}"
+    )  # Replaced print
 
     if not cpython_path.is_dir():
-        print(f"[!] Error: CPython source directory not found at '{cpython_path}'")
+        logger.error(
+            f"[!] Error: CPython source directory not found at '{cpython_path}'"
+        )  # Replaced print
         return
 
     for rel_path, tweaks in JIT_TWEAKS.items():
         file_path = cpython_path / rel_path
         if not file_path.exists():
-            print(f"[-] Warning: File not found, skipping: {file_path}")
+            logger.warning(f"[-] Warning: File not found, skipping: {file_path}")  # Replaced print
             continue
 
-        print(f"[*] Processing file: {file_path}")
+        logger.info(f"[*] Processing file: {file_path}")  # Replaced print
         try:
             content = file_path.read_text()
             original_content = content
@@ -71,22 +79,28 @@ def apply_jit_tweaks(cpython_path: Path, dry_run: bool = False) -> None:
                 def replacer(match: re.Match) -> str:
                     prefix = match.group(1)
                     old_value = match.group(2)
-                    print(f"  - Changing '{param_name}': from '{old_value}' to '{new_value}'")
+                    logger.info(
+                        f"  - Changing '{param_name}': from '{old_value}' to '{new_value}'"
+                    )  # Replaced print
                     return f"{prefix}{new_value}"
 
                 content, num_subs = pattern.subn(replacer, content)
 
                 if num_subs == 0:
-                    print(f"  - Warning: Could not find and replace '{param_name}'")
+                    logger.warning(
+                        f"  - Warning: Could not find and replace '{param_name}'"
+                    )  # Replaced print
 
             if content != original_content and not dry_run:
-                print(f"[*] Writing changes to: {file_path}")
+                logger.info(f"[*] Writing changes to: {file_path}")  # Replaced print
                 file_path.write_text(content)
             elif dry_run and content != original_content:
-                print(f"[*] Dry run: Changes for {file_path} were not written.")
+                logger.info(
+                    f"[*] Dry run: Changes for {file_path} were not written."
+                )  # Replaced print
 
         except Exception as e:
-            print(f"[!] Error processing {file_path}: {e}")
+            logger.error(f"[!] Error processing {file_path}: {e}")  # Replaced print
 
 
 def main() -> None:
@@ -106,9 +120,12 @@ def main() -> None:
     )
     args = parser.parse_args()
 
+    # Configure basic logging here for command-line execution
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
+
     cpython_src_path = Path(args.cpython_dir)
     apply_jit_tweaks(cpython_src_path, args.dry_run)
-    print("[*] Done.")
+    logger.info("[*] Done.")  # Replaced print
 
 
 if __name__ == "__main__":

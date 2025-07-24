@@ -7,7 +7,7 @@ def bump_version(new_version):
     # Update pyproject.toml
     pyproject = Path("pyproject.toml")
     content = pyproject.read_text()
-    content = re.sub(r'version = "[^"]+"', f'version = "{new_version}"', content)
+    content = re.sub(r'^version = ".+"$', f'version = "{new_version}"', content, flags=re.MULTILINE)
     pyproject.write_text(content)
 
     # Optionally, update __init__.py if version is stored there

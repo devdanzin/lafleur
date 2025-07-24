@@ -4,7 +4,11 @@ All notable changes to this project should be documented in this file.
 
 ## [0.0.2] - Unreleased
 
-### Added - TBD
+### Added
+
+- A `bump_version.py` script to automate version update, by @smiyashaji.
+- A `--timeout` CLI option for configurable script running timeouts, by @ShrayJP.
+
 
 ## [0.0.1] - 2024-11-20
 

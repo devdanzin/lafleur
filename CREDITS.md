@@ -4,6 +4,12 @@ This section acknowledges the primary authors and architects of the `lafleur` pr
 
 * **Daniel Diniz (@devdanzin):** Main developer of the `lafleur` evolutionary fuzzing engine.
 
+## Contributors
+
+This section names developers that helped improve `lafleur`.
+
+* **@ShrayJP**
+
 ## Acknowledgements
 
 This project builds upon the foundational work of others and has benefited greatly from expert guidance and feedback.

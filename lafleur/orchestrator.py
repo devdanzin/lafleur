@@ -23,6 +23,7 @@ import socket
 import sys
 import time
 from collections import defaultdict
+from compression import zstd
 from datetime import datetime, timezone
 from pathlib import Path
 from textwrap import dedent, indent
@@ -42,8 +43,7 @@ CRASHES_DIR = Path("crashes")
 TIMEOUTS_DIR = Path("timeouts")
 DIVERGENCES_DIR = Path("divergences")
 LOGS_DIR = Path("logs")
-COVERAGE_DIR = Path("coverage")
-COVERAGE_STATE_FILE = COVERAGE_DIR / "coverage_state.pkl"
+TIMEOUT_LOG_COMPRESSION_THRESHOLD = 1_048_576  # 1 MB
 
 CRASH_KEYWORDS = [
     "Segmentation fault",
@@ -526,11 +526,27 @@ except Exception:
         except subprocess.TimeoutExpired:
             self.run_stats["timeouts_found"] = self.run_stats.get("timeouts_found", 0) + 1
             print("  [!!!] TIMEOUT DETECTED! Saving test case.", file=sys.stderr)
-            timeout_path = (
-                TIMEOUTS_DIR / f"timeout_{session_id}_{mutation_index}_{child_source_path.name}"
-            )
-            shutil.copy(child_source_path, timeout_path)
-            shutil.copy(child_log_path, timeout_path.with_suffix(".log"))
+            log_to_save = child_log_path
+            try:
+                if child_log_path.stat().st_size > TIMEOUT_LOG_COMPRESSION_THRESHOLD:
+                    print(f"  [*] Timeout log is large, compressing with zstd...", file=sys.stderr)
+                    compressed_log_path = child_log_path.with_suffix(".log.zst")
+
+                    log_content = child_log_path.read_bytes()
+                    compressed_content = zstd.compress(log_content)
+                    compressed_log_path.write_bytes(compressed_content)
+
+                    log_to_save = compressed_log_path
+                    # Clean up the original large log file
+                    child_log_path.unlink()
+            except Exception as e:
+                print(f"  [!] Warning: Could not compress timeout log: {e}", file=sys.stderr)
+
+            timeout_source_path = TIMEOUTS_DIR / f"timeout_{session_id}_{mutation_index}_{child_source_path.name}"
+            timeout_log_path = timeout_source_path.with_suffix(log_to_save.suffix)  # Use the correct suffix
+
+            shutil.copy(child_source_path, timeout_source_path)
+            shutil.copy(log_to_save, timeout_log_path)  # Copy the (potentially compressed) log
             return None
         except Exception as e:
             print(f"  [!] Error during child execution: {e}", file=sys.stderr)

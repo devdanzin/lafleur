@@ -79,12 +79,13 @@ class LafleurOrchestrator:
     """
 
     def __init__(
-        self, fusil_path: str, min_corpus_files: int = 1, differential_testing: bool = False, timeout: int = 10,  num_runs: int = 1,
+        self, fusil_path: str, min_corpus_files: int = 1, differential_testing: bool = False, timeout: int = 10,  num_runs: int = 1, use_dynamic_runs: bool = False,
     ):
         """Initialize the orchestrator and the corpus manager."""
         self.differential_testing = differential_testing
         self.fusil_path = fusil_path
-        self.num_runs = num_runs
+        self.base_runs = num_runs
+        self.use_dynamic_runs = use_dynamic_runs
         self.ast_mutator = ASTMutator()
         self.boilerplate_code = None
         self.timeout = timeout  # Store the timeout value
@@ -668,6 +669,16 @@ except Exception:
         prefix = base_harness_node.name.replace("uop_harness_", "")
 
         runtime_seed = self.global_seed_counter + 2  # Initialize runtime_seed as it will be in first loop
+
+        if self.use_dynamic_runs:
+            # Use a logarithmic scale to model diminishing returns.
+            # A score of ~60 results in 3 runs, ~120 in 4 runs, etc.
+            num_runs = 2 + int(math.floor(math.log(max(1.0, parent_score / 15))))
+            num_runs = min(num_runs, 10)  # Cap at 10 runs to avoid excessive execution
+            print(f"    -> Dynamically set run count to {num_runs} for this parent.")
+        else:
+            num_runs = self.base_runs
+
         # --- Main Mutation Loop ---
         for i in range(max_mutations):
             self.run_stats["total_mutations"] = self.run_stats.get("total_mutations", 0) + 1
@@ -687,15 +698,15 @@ except Exception:
                     continue
                 # self.debug_mutation_differences(core_logic_to_mutate, mutated_body_ast, current_seed)
 
-                for run_num in range(self.num_runs):
+                for run_num in range(num_runs):
                     # Each run gets a unique, deterministic runtime_seed
                     runtime_seed = (mutation_seed + 1) * (run_num + 1)
 
                     # Update the mutation_info for accurate logging
                     mutation_info['runtime_seed'] = runtime_seed
 
-                    if self.num_runs > 1:
-                        print(f"    -> Run #{run_num + 1}/{self.num_runs} (RuntimeSeed: {runtime_seed})")
+                    if num_runs > 1:
+                        print(f"    -> Run #{run_num + 1}/{num_runs} (RuntimeSeed: {runtime_seed})")
 
                     child_source = self._prepare_child_script(
                         parent_core_tree, mutated_harness_node, setup_code, prefix,
@@ -1108,7 +1119,12 @@ def main():
         '--runs',
         type=int,
         default=1,
-        help='Run each mutated test case N times. (Default: 1)'
+        help='Run each mutated test case N times. (Default: 1)',
+    )
+    parser.add_argument(
+        '--dynamic-runs',
+        action='store_true',
+        help='Dynamically vary the number of runs based on parent score, overriding --runs.',
     )
     args = parser.parse_args()
 
@@ -1162,6 +1178,7 @@ Initial Stats:
             differential_testing=args.differential_testing,
             timeout=args.timeout,
             num_runs=args.runs,
+            use_dynamic_runs=args.dynamic_runs,
         )
         orchestrator.run_evolutionary_loop()
     except KeyboardInterrupt:

@@ -1571,6 +1571,107 @@ class DictPolluter(ast.NodeTransformer):
         return node
 
 
+class FunctionPatcher(ast.NodeTransformer):
+    """
+    Attacks JIT function versioning and inlining caches.
+
+    This mutator injects a scenario that defines a simple nested function,
+    calls it in a hot loop to get it JIT-compiled, and then overwrites the
+    function object with a new one to invalidate the JIT's assumptions.
+    """
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> ast.FunctionDef:
+        self.generic_visit(node)
+
+        if not node.name.startswith("uop_harness"):
+            return node
+
+        # Low probability for this complex injection
+        if random.random() < 0.1:
+            print(f"    -> Injecting function patching scenario into '{node.name}'", file=sys.stderr)
+
+            p_prefix = f"fp_{random.randint(1000, 9999)}"
+
+            # This template string contains the entire self-contained attack.
+            attack_preamble = dedent(f"""
+                # --- Function Patching Scenario ---
+                print('[{p_prefix}] Running function patching scenario...', file=sys.stderr)
+
+                # 1. Define a simple "victim" function inside the harness.
+                def victim_func_{p_prefix}(a=0, b=1, c=2):
+                    return a + b + c
+
+                # 2. Train the JIT by calling the victim in a hot loop.
+                #    The JIT may decide to inline this function.
+                try:
+                    for _ in range(500):
+                        res = victim_func_{p_prefix}()
+                except Exception:
+                    pass
+
+            """)
+
+            attack_1 = dedent(f"""
+                # 3. Invalidate the JIT's assumptions by redefining the function.
+                print('[{p_prefix}] Patching victim_func_{p_prefix} with lambda...', file=sys.stderr)
+                victim_func_{p_prefix} = lambda: "patched!"
+
+                # 4. Call the function again to check for a crash.
+                try:
+                    res = victim_func_{p_prefix}()
+                except Exception:
+                    pass
+            """)
+
+            attack_2 = dedent(f"""
+                # 3. Invalidate the JIT's assumptions by redefining the function's defaults.
+                print('[{p_prefix}] Patching victim_func_{p_prefix} with different values...', file=sys.stderr)
+                victim_func_{p_prefix}.__defaults__ = (2**10, 2**15, 2**32)
+
+                # 4. Call the function again to check for a crash.
+                try:
+                    res = victim_func_{p_prefix}()
+                except Exception:
+                    pass
+            """)
+
+            attack_3 = dedent(f"""
+                # 3. Invalidate the JIT's assumptions by redefining the function's defaults types.
+                print('[{p_prefix}] Patching victim_func_{p_prefix} with diffent types...', file=sys.stderr)
+                victim_func_{p_prefix}.__defaults__ = ("a", "b", "c")
+
+                # 4. Call the function again to check for a crash.
+                try:
+                    res = victim_func_{p_prefix}()
+                except Exception:
+                    pass
+            """)
+
+            attack_4 = dedent(f"""
+                # 3. Invalidate the JIT's assumptions by redefining the function's defaults with incompatible types.
+                print('[{p_prefix}] Patching victim_func_{p_prefix} with incompatible types...', file=sys.stderr)
+                victim_func_{p_prefix}.__defaults__ = ("a", "b", -2**31-1)
+
+                # 4. Call the function again to check for a crash.
+                try:
+                    res = victim_func_{p_prefix}()
+                except Exception:
+                    pass
+            """)
+
+            chosen_attack = random.choice((attack_1, attack_2, attack_3, attack_4))
+            attack_code = attack_preamble + chosen_attack
+            try:
+                scenario_nodes = ast.parse(attack_code).body
+                # Prepend the scenario to the function's body.
+                node.body = scenario_nodes + node.body
+                ast.fix_missing_locations(node)
+            except SyntaxError:
+                pass  # Should not happen with a fixed template
+
+        return node
+
+
 class ASTMutator:
     """
     An engine for structurally modifying Python code at the AST level.
@@ -1605,6 +1706,7 @@ class ASTMutator:
             IterableMutator,
             GCInjector,
             DictPolluter,
+            FunctionPatcher,
         ]
 
     def mutate_ast(

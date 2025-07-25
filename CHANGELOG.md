@@ -14,6 +14,7 @@ All notable changes to this project should be documented in this file.
 - A `GCInjector` mutator to lower GC thresholds inside the harness function, by @devdanzin.
 - A way to prepend code lowering the GC thresholds to the test case, by @devdanzin.
 - A `DictPolluter` mutator to attack global or local dict caches (dk_version), by @devdanzin.
+- A `FunctionPatcher` mutator to attack function versioning and inlining caches, by @devdanzin.
 
 
 ### Enhanced

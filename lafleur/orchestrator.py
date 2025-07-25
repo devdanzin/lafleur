@@ -427,6 +427,7 @@ class LafleurOrchestrator:
             mutated_harness_node, mutation_info = self.apply_mutation_strategy(
                 original_harness_node, seed=seed
             )
+            mutation_info['runtime_seed'] = seed + 1
             return mutated_harness_node, mutation_info
         except RecursionError:
             print(
@@ -446,6 +447,12 @@ class LafleurOrchestrator:
     ) -> str | None:
         """Reassemble the AST and generate the final Python source code for the child."""
         try:
+            runtime_seed = current_seed + 1
+            rng_setup_code = dedent(f"""
+                import random
+                fuzzer_rng = random.Random({runtime_seed})
+            """)
+
             if self.differential_testing:
                 mutated_core_code = ast.unparse(mutated_harness_node.body)
                 mutated_core_code += "\n    return locals().copy()"
@@ -458,6 +465,7 @@ import sys
 from textwrap import indent
 {self.boilerplate_code}
 {diff_boilerplate}
+{rng_setup_code}
 {setup_code}
 
 def jit_target_{prefix}():
@@ -489,7 +497,7 @@ except Exception:
                         child_core_tree.body[i] = mutated_harness_node
                         break
                 mutated_core_code = ast.unparse(child_core_tree)
-                return f"{self.boilerplate_code}\n{mutated_core_code}"
+                return f"{self.boilerplate_code}\n{rng_setup_code}\n{mutated_core_code}"
         except RecursionError:
             print(
                 "  [!] Warning: Skipping mutation due to RecursionError during ast.unparse.",

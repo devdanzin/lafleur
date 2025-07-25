@@ -1501,6 +1501,76 @@ class GCInjector(ast.NodeTransformer):
         return node
 
 
+class DictPolluter(ast.NodeTransformer):
+    """
+    Attacks JIT dictionary caches (dk_version) by injecting loops that
+    repeatedly add and delete keys from dictionaries.
+    """
+
+    def _create_global_pollution_scenario(self, prefix: str) -> list[ast.stmt]:
+        """Generates a scenario that pollutes the globals() dictionary."""
+        print("    -> Injecting globals() pollution scenario...", file=sys.stderr)
+        key_name = f"fuzzer_polluter_key_{prefix}"
+
+        attack_code = dedent(f"""
+            # Global dictionary pollution attack
+            print('[{prefix}] Running globals() pollution scenario...', file=sys.stderr)
+            for i_pollute in range(200):
+                try:
+                    # Repeatedly add and delete the key to churn the dict version
+                    if i_pollute % 2 == 0:
+                        globals()['{key_name}'] = i_pollute
+                    elif '{key_name}' in globals():
+                        del globals()['{key_name}']
+                except Exception:
+                    pass
+        """)
+        return ast.parse(attack_code).body
+
+    def _create_local_pollution_scenario(self, prefix: str) -> list[ast.stmt]:
+        """Generates a scenario that creates and pollutes a local dictionary."""
+        print("    -> Injecting local dict pollution scenario...", file=sys.stderr)
+        dict_name = f"polluter_dict_{prefix}"
+        key_name = f"fuzzer_local_key_{prefix}"
+
+        attack_code = dedent(f"""
+            # Local dictionary pollution attack
+            print('[{prefix}] Running local dict pollution scenario...', file=sys.stderr)
+            {dict_name} = {{'initial_key': 0}}
+            for i_pollute in range(200):
+                try:
+                    # Repeatedly add and delete the key to churn the dict version
+                    if i_pollute % 2 == 0:
+                        {dict_name}['{key_name}'] = i_pollute
+                    elif '{key_name}' in {dict_name}:
+                        del {dict_name}['{key_name}']
+                except Exception:
+                    pass
+        """)
+        return ast.parse(attack_code).body
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> ast.FunctionDef:
+        self.generic_visit(node)
+
+        if not node.name.startswith("uop_harness"):
+            return node
+
+        if random.random() < 0.1:  # Low probability for this invasive mutation
+            prefix = f"{node.name}_{random.randint(1000, 9999)}"
+
+            # Choose which pollution strategy to use
+            if random.random() < 0.5:
+                scenario_nodes = self._create_global_pollution_scenario(prefix)
+            else:
+                scenario_nodes = self._create_local_pollution_scenario(prefix)
+
+            # Prepend the scenario to the function's body
+            node.body = scenario_nodes + node.body
+            ast.fix_missing_locations(node)
+
+        return node
+
+
 class ASTMutator:
     """
     An engine for structurally modifying Python code at the AST level.
@@ -1534,6 +1604,7 @@ class ASTMutator:
             NumericMutator,
             IterableMutator,
             GCInjector,
+            DictPolluter,
         ]
 
     def mutate_ast(

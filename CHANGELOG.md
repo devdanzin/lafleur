@@ -13,6 +13,8 @@ All notable changes to this project should be documented in this file.
 - A `--dynamic-runs` CLI option to calculate number of runs based on parent score, by @devdanzin.
 - A `GCInjector` mutator to lower GC thresholds inside the harness function, by @devdanzin.
 - A way to prepend code lowering the GC thresholds to the test case, by @devdanzin.
+- A `DictPolluter` mutator to attack global or local dict caches (dk_version), by @devdanzin.
+
 
 ### Enhanced
 

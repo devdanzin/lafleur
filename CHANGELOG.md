@@ -8,6 +8,7 @@ All notable changes to this project should be documented in this file.
 
 - A `bump_version.py` script to automate version update, by @smiyashaji.
 - A `--timeout` CLI option for configurable script running timeouts, by @ShrayJP.
+- A coverage hash to handle duplicated files with non-deterministic results, by @devdanzin.
 
 ### Enhanced
 

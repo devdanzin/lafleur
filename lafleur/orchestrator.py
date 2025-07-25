@@ -585,6 +585,7 @@ except Exception:
                 core_code=analysis_data["core_code"],
                 baseline_coverage=analysis_data["baseline_coverage"],
                 content_hash=analysis_data["content_hash"],
+                coverage_hash=analysis_data["coverage_hash"],
                 execution_time_ms=analysis_data["execution_time_ms"],
                 parent_id=analysis_data["parent_id"],
                 mutation_info=analysis_data["mutation_info"],
@@ -835,6 +836,19 @@ except Exception:
                     global_coverage[cov_type].setdefault(item, 0)
                     global_coverage[cov_type][item] += count
 
+    def _calculate_coverage_hash(self, coverage_profile: dict) -> str:
+        """Create a deterministic SHA256 hash of a coverage profile's edges."""
+        all_edges = []
+        # We only hash the edges, as they provide the most significant signal.
+        # It's crucial to sort the items to ensure the hash is deterministic.
+        for harness_id in sorted(coverage_profile.keys()):
+            edges = sorted(coverage_profile[harness_id].get("edges", {}).keys())
+            if edges:
+                all_edges.append(f"{harness_id}:{','.join(edges)}")
+
+        canonical_string = ";".join(all_edges)
+        return hashlib.sha256(canonical_string.encode('utf-8')).hexdigest()
+
     def analyze_run(
         self,
         exec_result: ExecutionResult,
@@ -869,12 +883,12 @@ except Exception:
         if is_interesting:
             core_code_to_save = self._get_core_code(exec_result.source_path.read_text())
             content_hash = hashlib.sha256(core_code_to_save.encode("utf-8")).hexdigest()
+            coverage_hash = self._calculate_coverage_hash(child_coverage)
 
-            if content_hash in self.corpus_manager.known_hashes:
+            if (content_hash, coverage_hash) in self.corpus_manager.known_hashes:
                 print(
-                    f"  [~] New coverage found, but content is a known duplicate (Hash: {content_hash[:10]}...). Skipping.",
-                    file=sys.stderr,
-                )
+                    f"  [~] New coverage found, but this is a known duplicate behavior (ContentHash: {content_hash[:10]}, CoverageHash: {coverage_hash[:10]}). Skipping.",
+                    file=sys.stderr)
                 return {"status": "NO_CHANGE"}
 
             # This is the crucial step: if it's new and not a duplicate, we commit the coverage.
@@ -885,6 +899,7 @@ except Exception:
                 "core_code": core_code_to_save,
                 "baseline_coverage": child_coverage,
                 "content_hash": content_hash,
+                "coverage_hash": coverage_hash,
                 "execution_time_ms": exec_result.execution_time_ms,
                 "parent_id": parent_id,
                 "mutation_info": mutation_info,

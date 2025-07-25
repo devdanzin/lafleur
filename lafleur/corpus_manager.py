@@ -108,7 +108,7 @@ class CorpusManager:
         self.execution_timeout = execution_timeout
 
         self.scheduler = CorpusScheduler(self.coverage_state)
-        self.known_hashes: set[str] = set()
+        self.known_hashes: set[tuple[str, str]] = set()
         self.run_stats.get("corpus_file_counter", 0)
         self.corpus_file_counter = self.run_stats.get("corpus_file_counter", 0)
 
@@ -176,9 +176,9 @@ class CorpusManager:
 
         # Re-populate known_hashes after synchronization is complete.
         self.known_hashes = {
-            metadata.get("content_hash")
+            (metadata.get("content_hash"), metadata.get("coverage_hash"))
             for metadata in self.coverage_state.get("per_file_coverage", {}).values()
-            if "content_hash" in metadata
+            if "content_hash" in metadata and "coverage_hash" in metadata
         }
 
         # 5. Save the synchronized state.
@@ -226,6 +226,7 @@ class CorpusManager:
                         core_code=analysis_data["core_code"],
                         baseline_coverage=analysis_data["baseline_coverage"],
                         content_hash=analysis_data["content_hash"],
+                        coverage_hash=analysis_data["coverage_hash"],
                         execution_time_ms=analysis_data["execution_time_ms"],
                         parent_id=analysis_data["parent_id"],
                         mutation_info=analysis_data["mutation_info"],
@@ -298,6 +299,7 @@ class CorpusManager:
         mutation_info: dict[str, Any],
         mutation_seed: int,
         content_hash: str,
+        coverage_hash: str,
         build_lineage_func: Callable,
     ) -> str:
         """
@@ -332,9 +334,10 @@ class CorpusManager:
             "discovery_mutation": mutation_info,
             "mutation_seed": mutation_seed,
             "content_hash": content_hash,
+            "coverage_hash": coverage_hash,
         }
         self.coverage_state["per_file_coverage"][new_filename] = metadata
-        self.known_hashes.add(content_hash)
+        self.known_hashes.add((content_hash, coverage_hash))
 
         # The manager is now responsible for saving the state it modifies.
         save_coverage_state(self.coverage_state)
@@ -407,6 +410,7 @@ class CorpusManager:
                 core_code=analysis_data["core_code"],
                 baseline_coverage=analysis_data["baseline_coverage"],
                 content_hash=analysis_data["content_hash"],
+                coverage_hash=analysis_data["coverage_hash"],
                 execution_time_ms=analysis_data["execution_time_ms"],
                 parent_id=analysis_data["parent_id"],
                 mutation_info=analysis_data["mutation_info"],

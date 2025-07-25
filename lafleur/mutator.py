@@ -1452,6 +1452,55 @@ except Exception:
         return node
 
 
+class GCInjector(ast.NodeTransformer):
+    """
+    Injects a call to gc.set_threshold() with a randomized, low value
+    at the beginning of a function to increase GC pressure.
+    """
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> ast.FunctionDef:
+        self.generic_visit(node)
+
+        # Only apply to our main harness functions
+        if not node.name.startswith("uop_harness"):
+            return node
+
+        # High probability for this mutation, as it's a general stressor
+        if random.random() < 0.25:
+            print(f"    -> Injecting GC pressure into '{node.name}'", file=sys.stderr)
+
+            # 1. Choose a threshold value using a weighted distribution
+            thresholds = [1, 10, 100, None]
+            weights = [0.6, 0.1, 0.1, 0.2]
+            chosen_threshold = random.choices(thresholds, weights=weights, k=1)[0]
+
+            # If 'None' is chosen, pick a random value
+            if chosen_threshold is None:
+                chosen_threshold = random.randint(1, 150)
+
+            # 2. Create the AST nodes for 'import gc' and 'gc.set_threshold(...)'
+            import_node = ast.Import(names=[ast.alias(name='gc')])
+
+            set_threshold_node = ast.Expr(
+                value=ast.Call(
+                    func=ast.Attribute(
+                        value=ast.Name(id='gc', ctx=ast.Load()),
+                        attr='set_threshold',
+                        ctx=ast.Load()
+                    ),
+                    args=[ast.Constant(value=chosen_threshold)],
+                    keywords=[]
+                )
+            )
+
+            # 3. Prepend the new nodes to the function's body
+            node.body.insert(0, set_threshold_node)
+            node.body.insert(0, import_node)
+            ast.fix_missing_locations(node)
+
+        return node
+
+
 class ASTMutator:
     """
     An engine for structurally modifying Python code at the AST level.
@@ -1475,7 +1524,7 @@ class ASTMutator:
             GuardExhaustionGenerator,
             InlineCachePolluter,
             SideEffectInjector,
-            # StatementDuplicator,y
+            # StatementDuplicator,
             ForLoopInjector,
             GlobalInvalidator,
             LoadAttrPolluter,
@@ -1484,6 +1533,7 @@ class ASTMutator:
             MagicMethodMutator,
             NumericMutator,
             IterableMutator,
+            GCInjector,
         ]
 
     def mutate_ast(

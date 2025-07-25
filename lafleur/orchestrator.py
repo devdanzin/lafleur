@@ -450,6 +450,18 @@ class LafleurOrchestrator:
     ) -> str | None:
         """Reassemble the AST and generate the final Python source code for the child."""
         try:
+            gc_tuning_code = ""
+            if random.random() < 0.25:  # 25% chance to prepend GC tuning
+                print(f"    -> Prepending GC pressure to test case", file=sys.stderr)
+                # This logic is the same as in GCInjector
+                thresholds = [1, 10, 100, None]
+                weights = [0.6, 0.1, 0.1, 0.2]
+                chosen_threshold = random.choices(thresholds, weights=weights, k=1)[0]
+                if chosen_threshold is None:
+                    chosen_threshold = random.randint(1, 150)
+
+                gc_tuning_code = f"import gc\ngc.set_threshold({chosen_threshold})\n"
+
             rng_setup_code = dedent(f"""
                 import random
                 fuzzer_rng = random.Random({runtime_seed})
@@ -499,7 +511,7 @@ except Exception:
                         child_core_tree.body[i] = mutated_harness_node
                         break
                 mutated_core_code = ast.unparse(child_core_tree)
-                return f"{self.boilerplate_code}\n{rng_setup_code}\n{mutated_core_code}"
+                return f"{self.boilerplate_code}\n{gc_tuning_code}{rng_setup_code}\n{mutated_core_code}"
         except RecursionError:
             print(
                 "  [!] Warning: Skipping mutation due to RecursionError during ast.unparse.",

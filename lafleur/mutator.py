@@ -1672,6 +1672,71 @@ class FunctionPatcher(ast.NodeTransformer):
         return node
 
 
+class TraceBreaker(ast.NodeTransformer):
+    """
+    Attacks the JIT's ability to form long, linear traces (superblocks)
+    by injecting code that is known to be "trace-unfriendly".
+    """
+
+    def _create_dynamic_call_break(self, prefix: str) -> list[ast.stmt]:
+        """Injects a call to a function whose target is not statically known."""
+        print("    -> Injecting trace-breaking (dynamic call) scenario...", file=sys.stderr)
+        attack_code = dedent(f"""
+            # Dynamic call trace-breaking scenario
+            print('[{prefix}] Running dynamic call trace break...', file=sys.stderr)
+            def f1_{prefix}(): return 1
+            def f2_{prefix}(): return 2
+            funcs = [f1_{prefix}, f2_{prefix}]
+            for i in range(200):
+                # The JIT cannot easily predict the target of func_to_call().
+                func_to_call = funcs[i % 2]
+                try:
+                    func_to_call()
+                except Exception:
+                    pass
+        """)
+        return ast.parse(attack_code).body
+
+    def _create_exception_break(self, prefix: str) -> list[ast.stmt]:
+        """Injects a try...except...finally block into a hot loop."""
+        print("    -> Injecting trace-breaking (exception) scenario...", file=sys.stderr)
+        attack_code = dedent(f"""
+            # Exception handling trace-breaking scenario
+            print('[{prefix}] Running exception trace break...', file=sys.stderr)
+            for i in range(200):
+                try:
+                    # The JIT tracer often bails on complex exception handling.
+                    if i % 10 == 0:
+                        raise ValueError("trace break")
+                except ValueError:
+                    pass
+                finally:
+                    _ = i
+        """)
+        return ast.parse(attack_code).body
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> ast.FunctionDef:
+        self.generic_visit(node)
+
+        if not node.name.startswith("uop_harness"):
+            return node
+
+        if random.random() < 0.1:  # Low probability
+            prefix = f"{node.name}_{random.randint(1000, 9999)}"
+
+            attack_generators = [
+                self._create_dynamic_call_break,
+                self._create_exception_break,
+            ]
+            chosen_generator = random.choice(attack_generators)
+            scenario_nodes = chosen_generator(prefix)
+
+            node.body = scenario_nodes + node.body
+            ast.fix_missing_locations(node)
+
+        return node
+
+
 class ASTMutator:
     """
     An engine for structurally modifying Python code at the AST level.
@@ -1707,6 +1772,7 @@ class ASTMutator:
             GCInjector,
             DictPolluter,
             FunctionPatcher,
+            TraceBreaker,
         ]
 
     def mutate_ast(

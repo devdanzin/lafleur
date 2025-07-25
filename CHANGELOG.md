@@ -8,7 +8,9 @@ All notable changes to this project should be documented in this file.
 
 - A `bump_version.py` script to automate version update, by @smiyashaji.
 - A `--timeout` CLI option for configurable script running timeouts, by @ShrayJP.
-- A coverage hash to handle duplicated files with non-deterministic results, by @devdanzin.
+- A coverage hash to handle duplicated files with non-deterministic results, by @devdanzin. 
+- A `--runs` CLI option to determine how many times each test case is run, by @devdanzin.
+- A `--dynamic-runs` CLI option to calculate number of runs based on parent score, by @devdanzin.
 
 ### Enhanced
 

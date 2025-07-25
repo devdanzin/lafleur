@@ -82,21 +82,26 @@ class ConstantPerturbator(ast.NodeTransformer):
 
 
 class GuardInjector(ast.NodeTransformer):
-    """Wrap random statements in an 'if' block."""
+    """Wrap a random statement in a seeded, reproducible 'if' block."""
 
     def visit(self, node: ast.AST) -> ast.AST:
         # First, visit children to avoid infinite recursion
         node = super().visit(node)
-        # Only wrap nodes that are statements
-        if (
-            isinstance(node, ast.stmt)
-            and not isinstance(node, ast.FunctionDef)
-            and random.random() < 0.05
-        ):
+        # Only wrap statement nodes
+        if isinstance(node, ast.stmt) and not isinstance(node, ast.FunctionDef):
+            # The test uses our fuzzer-provided, seeded RNG instance.
             test = ast.Compare(
-                left=ast.Call(func=ast.Name(id="random", ctx=ast.Load()), args=[], keywords=[]),
+                left=ast.Call(
+                    func=ast.Attribute(
+                        value=ast.Name(id='fuzzer_rng', ctx=ast.Load()),
+                        attr='random',
+                        ctx=ast.Load()
+                    ),
+                    args=[],
+                    keywords=[]
+                ),
                 ops=[ast.Lt()],
-                comparators=[ast.Constant(value=0.9)],
+                comparators=[ast.Constant(value=0.1)] # Low probability
             )
             return ast.If(test=test, body=[node], orelse=[])
         return node
@@ -1462,7 +1467,7 @@ class ASTMutator:
             OperatorSwapper,
             ComparisonSwapper,
             ConstantPerturbator,
-            # GuardInjector,
+            GuardInjector,
             ContainerChanger,
             VariableSwapper,
             StressPatternInjector,

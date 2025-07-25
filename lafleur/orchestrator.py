@@ -79,11 +79,12 @@ class LafleurOrchestrator:
     """
 
     def __init__(
-        self, fusil_path: str, min_corpus_files: int = 1, differential_testing: bool = False, timeout: int = 10
+        self, fusil_path: str, min_corpus_files: int = 1, differential_testing: bool = False, timeout: int = 10,  num_runs: int = 1,
     ):
         """Initialize the orchestrator and the corpus manager."""
         self.differential_testing = differential_testing
         self.fusil_path = fusil_path
+        self.num_runs = num_runs
         self.ast_mutator = ASTMutator()
         self.boilerplate_code = None
         self.timeout = timeout  # Store the timeout value
@@ -444,10 +445,10 @@ class LafleurOrchestrator:
         prefix: str,
         current_seed: int,
         parent_id: str,
+        runtime_seed: int,
     ) -> str | None:
         """Reassemble the AST and generate the final Python source code for the child."""
         try:
-            runtime_seed = current_seed + 1
             rng_setup_code = dedent(f"""
                 import random
                 fuzzer_rng = random.Random({runtime_seed})
@@ -665,23 +666,62 @@ except Exception:
         setup_code = ast.unparse(setup_nodes)
         core_logic_to_mutate = base_harness_node
         prefix = base_harness_node.name.replace("uop_harness_", "")
+
+        runtime_seed = self.global_seed_counter + 2  # Initialize runtime_seed as it will be in first loop
         # --- Main Mutation Loop ---
         for i in range(max_mutations):
             self.run_stats["total_mutations"] = self.run_stats.get("total_mutations", 0) + 1
             self.mutations_since_last_find += 1
             self.global_seed_counter += 1
-            current_seed = self.global_seed_counter
+            mutation_seed = self.global_seed_counter
             print(
-                f"  \\-> Running mutation #{i + 1} (Seed: {current_seed}) for {parent_path.name}..."
+                f"  \\-> Running mutation #{i + 1} (Seed: {mutation_seed }) for {parent_path.name}..."
             )
+            flow_control = ""
 
             try:
                 mutated_harness_node, mutation_info = self._get_mutated_harness(
-                    core_logic_to_mutate, current_seed
+                    core_logic_to_mutate, mutation_seed
                 )
                 if not mutated_harness_node:
                     continue
                 # self.debug_mutation_differences(core_logic_to_mutate, mutated_body_ast, current_seed)
+
+                for run_num in range(self.num_runs):
+                    # Each run gets a unique, deterministic runtime_seed
+                    runtime_seed = (mutation_seed + 1) * (run_num + 1)
+
+                    # Update the mutation_info for accurate logging
+                    mutation_info['runtime_seed'] = runtime_seed
+
+                    if self.num_runs > 1:
+                        print(f"    -> Run #{run_num + 1}/{self.num_runs} (RuntimeSeed: {runtime_seed})")
+
+                    child_source = self._prepare_child_script(
+                        parent_core_tree, mutated_harness_node, setup_code, prefix,
+                        mutation_seed, parent_id, runtime_seed  # Pass runtime_seed
+                    )
+                    if not child_source:
+                        continue  # Skip this run if script prep fails
+
+                    exec_result = self._execute_child(child_source, session_id, i + 1)
+                    if not exec_result:
+                        continue  # Skip this run if execution fails
+
+                    analysis_data = self.analyze_run(
+                        exec_result, parent_lineage_profile, parent_id,
+                        mutation_info, mutation_seed, self.differential_testing
+                    )
+
+                    flow_control = self._handle_analysis_data(analysis_data, i + 1, parent_metadata)
+
+                    # CRITICAL OPTIMIZATION: If any run finds something, break the inner loop
+                    if flow_control == "BREAK" or flow_control == "CONTINUE":
+                        break
+
+                    # If the inner loop broke, we also break the outer loop to move to the next parent
+                if flow_control == "BREAK":
+                    break
 
             except RecursionError:
                 print(
@@ -699,8 +739,9 @@ except Exception:
                     mutated_harness_node,
                     setup_code,
                     prefix,
-                    current_seed,
+                    mutation_seed,
                     parent_id,
+                    runtime_seed,
                 )
                 if not child_source:
                     continue
@@ -717,7 +758,7 @@ except Exception:
                     continue
 
                 analysis_data = self.analyze_run(
-                    exec_result, parent_lineage_profile, parent_id, mutation_info, current_seed
+                    exec_result, parent_lineage_profile, parent_id, mutation_info, mutation_seed
                 )
 
                 # --- Handle Analysis Result ---
@@ -1063,6 +1104,12 @@ def main():
         default=10,  # Default timeout of 10 seconds
         help="Timeout in seconds for script execution.",
     )
+    parser.add_argument(
+        '--runs',
+        type=int,
+        default=1,
+        help='Run each mutated test case N times. (Default: 1)'
+    )
     args = parser.parse_args()
 
     LOGS_DIR.mkdir(exist_ok=True)
@@ -1113,7 +1160,8 @@ Initial Stats:
             fusil_path=args.fusil_path,
             min_corpus_files=args.min_corpus_files,
             differential_testing=args.differential_testing,
-            timeout=args.timeout,  # Pass the timeout argument
+            timeout=args.timeout,
+            num_runs=args.runs,
         )
         orchestrator.run_evolutionary_loop()
     except KeyboardInterrupt:

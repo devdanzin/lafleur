@@ -29,6 +29,7 @@ All notable changes to this project should be documented in this file.
 ### Fixed
 
 - Correctly delete all temporary files created by multiple runs, by @devdanzin.
+- Avoid adding RNG seeding and GC tuning multiple times, by @devdanzin.
 
 
 ## [0.0.1] - 2024-11-20

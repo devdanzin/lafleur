@@ -1964,6 +1964,34 @@ class ASTMutator:
             return f"# AST unparsing failed. Original code was:\n# {code_string}"
 
 
+class FuzzerSetupNormalizer(ast.NodeTransformer):
+    """
+    Removes fuzzer-injected setup code (GC tuning, RNG seeding)
+    to prevent it from accumulating across mutation cycles.
+    """
+    def visit_Import(self, node: ast.Import) -> ast.AST | None:
+        # Remove 'import gc' and 'import random' statements
+        node.names = [alias for alias in node.names if alias.name not in ('gc', 'random')]
+        return node if node.names else None
+
+    def visit_Assign(self, node: ast.Assign) -> ast.AST | None:
+        # Remove 'fuzzer_rng = random.Random(...)'
+        if len(node.targets) == 1 and isinstance(node.targets[0], ast.Name):
+            if node.targets[0].id == 'fuzzer_rng':
+                return None
+        return node
+
+    def visit_Expr(self, node: ast.Expr) -> ast.AST | None:
+        # Remove 'gc.set_threshold(...)'
+        if (isinstance(node.value, ast.Call) and
+                isinstance(node.value.func, ast.Attribute) and
+                node.value.func.attr == 'set_threshold' and
+                isinstance(node.value.func.value, ast.Name) and
+                node.value.func.value.id == 'gc'):
+            return None
+        return node
+
+
 def genLyingEqualityObject(var_name: str) -> str:
     """
     Generate a class that lies about equality.

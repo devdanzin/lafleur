@@ -31,7 +31,7 @@ from typing import Any
 
 from lafleur.corpus_manager import CorpusManager
 from lafleur.coverage import parse_log_for_edge_coverage, load_coverage_state
-from lafleur.mutator import ASTMutator, VariableRenamer
+from lafleur.mutator import ASTMutator, FuzzerSetupNormalizer, VariableRenamer
 from lafleur.utils import ExecutionResult, TeeLogger, load_run_stats, save_run_stats
 
 RANDOM = random.Random()
@@ -413,6 +413,10 @@ class LafleurOrchestrator:
         weights = [0.85, 0.10, 0.05]
 
         tree_copy = copy.deepcopy(base_ast)
+        # Clean the AST of any previous fuzzer setup before applying new mutations.
+        normalizer = FuzzerSetupNormalizer()
+        tree_copy = normalizer.visit(tree_copy)
+
         chosen_strategy = RANDOM.choices(strategies, weights=weights, k=1)[0]
 
         # The `seed` argument is used by the deterministic stage for its own

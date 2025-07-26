@@ -13,6 +13,12 @@ All notable changes to this project should be documented in this file.
 - A `--dynamic-runs` CLI option to calculate number of runs based on parent score, by @devdanzin.
 - A `GCInjector` mutator to lower GC thresholds inside the harness function, by @devdanzin.
 - A way to prepend code lowering the GC thresholds to the test case, by @devdanzin.
+- A `DictPolluter` mutator to attack global or local dict caches (dk_version), by @devdanzin.
+- A `FunctionPatcher` mutator to attack function versioning and inlining caches, by @devdanzin.
+- A `TraceBreaker` mutator to attack the JIT's ability to form superblocks using trace-unfriendly code, by @devdanzin.
+- An `ExitStresser` mutator to attack the JIT's side-exit mechanism with loops containing many frequently taken branches, by @devdanzin.
+- A `DeepCallMutator` to attack the JIT's trace stack limit by adding a chain of nested function calls, by @devdanzin.
+
 
 ### Enhanced
 

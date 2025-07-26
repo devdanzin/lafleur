@@ -15,7 +15,7 @@ import builtins
 import random
 import copy
 import sys
-from textwrap import dedent
+from textwrap import dedent, indent
 
 
 class OperatorSwapper(ast.NodeTransformer):
@@ -1501,6 +1501,365 @@ class GCInjector(ast.NodeTransformer):
         return node
 
 
+class DictPolluter(ast.NodeTransformer):
+    """
+    Attacks JIT dictionary caches (dk_version) by injecting loops that
+    repeatedly add and delete keys from dictionaries.
+    """
+
+    def _create_global_pollution_scenario(self, prefix: str) -> list[ast.stmt]:
+        """Generates a scenario that pollutes the globals() dictionary."""
+        print("    -> Injecting globals() pollution scenario...", file=sys.stderr)
+        key_name = f"fuzzer_polluter_key_{prefix}"
+
+        attack_code = dedent(f"""
+            # Global dictionary pollution attack
+            print('[{prefix}] Running globals() pollution scenario...', file=sys.stderr)
+            for i_pollute in range(200):
+                try:
+                    # Repeatedly add and delete the key to churn the dict version
+                    if i_pollute % 2 == 0:
+                        globals()['{key_name}'] = i_pollute
+                    elif '{key_name}' in globals():
+                        del globals()['{key_name}']
+                except Exception:
+                    pass
+        """)
+        return ast.parse(attack_code).body
+
+    def _create_local_pollution_scenario(self, prefix: str) -> list[ast.stmt]:
+        """Generates a scenario that creates and pollutes a local dictionary."""
+        print("    -> Injecting local dict pollution scenario...", file=sys.stderr)
+        dict_name = f"polluter_dict_{prefix}"
+        key_name = f"fuzzer_local_key_{prefix}"
+
+        attack_code = dedent(f"""
+            # Local dictionary pollution attack
+            print('[{prefix}] Running local dict pollution scenario...', file=sys.stderr)
+            {dict_name} = {{'initial_key': 0}}
+            for i_pollute in range(200):
+                try:
+                    # Repeatedly add and delete the key to churn the dict version
+                    if i_pollute % 2 == 0:
+                        {dict_name}['{key_name}'] = i_pollute
+                    elif '{key_name}' in {dict_name}:
+                        del {dict_name}['{key_name}']
+                except Exception:
+                    pass
+        """)
+        return ast.parse(attack_code).body
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> ast.FunctionDef:
+        self.generic_visit(node)
+
+        if not node.name.startswith("uop_harness"):
+            return node
+
+        if random.random() < 0.1:  # Low probability for this invasive mutation
+            prefix = f"{node.name}_{random.randint(1000, 9999)}"
+
+            # Choose which pollution strategy to use
+            if random.random() < 0.5:
+                scenario_nodes = self._create_global_pollution_scenario(prefix)
+            else:
+                scenario_nodes = self._create_local_pollution_scenario(prefix)
+
+            # Prepend the scenario to the function's body
+            node.body = scenario_nodes + node.body
+            ast.fix_missing_locations(node)
+
+        return node
+
+
+class FunctionPatcher(ast.NodeTransformer):
+    """
+    Attacks JIT function versioning and inlining caches.
+
+    This mutator injects a scenario that defines a simple nested function,
+    calls it in a hot loop to get it JIT-compiled, and then overwrites the
+    function object with a new one to invalidate the JIT's assumptions.
+    """
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> ast.FunctionDef:
+        self.generic_visit(node)
+
+        if not node.name.startswith("uop_harness"):
+            return node
+
+        # Low probability for this complex injection
+        if random.random() < 0.1:
+            print(f"    -> Injecting function patching scenario into '{node.name}'", file=sys.stderr)
+
+            p_prefix = f"fp_{random.randint(1000, 9999)}"
+
+            # This template string contains the entire self-contained attack.
+            attack_preamble = dedent(f"""
+                # --- Function Patching Scenario ---
+                print('[{p_prefix}] Running function patching scenario...', file=sys.stderr)
+
+                # 1. Define a simple "victim" function inside the harness.
+                def victim_func_{p_prefix}(a=0, b=1, c=2):
+                    return a + b + c
+
+                # 2. Train the JIT by calling the victim in a hot loop.
+                #    The JIT may decide to inline this function.
+                try:
+                    for _ in range(500):
+                        res = victim_func_{p_prefix}()
+                except Exception:
+                    pass
+
+            """)
+
+            attack_1 = dedent(f"""
+                # 3. Invalidate the JIT's assumptions by redefining the function.
+                print('[{p_prefix}] Patching victim_func_{p_prefix} with lambda...', file=sys.stderr)
+                victim_func_{p_prefix} = lambda: "patched!"
+
+                # 4. Call the function again to check for a crash.
+                try:
+                    res = victim_func_{p_prefix}()
+                except Exception:
+                    pass
+            """)
+
+            attack_2 = dedent(f"""
+                # 3. Invalidate the JIT's assumptions by redefining the function's defaults.
+                print('[{p_prefix}] Patching victim_func_{p_prefix} with different values...', file=sys.stderr)
+                victim_func_{p_prefix}.__defaults__ = (2**10, 2**15, 2**32)
+
+                # 4. Call the function again to check for a crash.
+                try:
+                    res = victim_func_{p_prefix}()
+                except Exception:
+                    pass
+            """)
+
+            attack_3 = dedent(f"""
+                # 3. Invalidate the JIT's assumptions by redefining the function's defaults types.
+                print('[{p_prefix}] Patching victim_func_{p_prefix} with diffent types...', file=sys.stderr)
+                victim_func_{p_prefix}.__defaults__ = ("a", "b", "c")
+
+                # 4. Call the function again to check for a crash.
+                try:
+                    res = victim_func_{p_prefix}()
+                except Exception:
+                    pass
+            """)
+
+            attack_4 = dedent(f"""
+                # 3. Invalidate the JIT's assumptions by redefining the function's defaults with incompatible types.
+                print('[{p_prefix}] Patching victim_func_{p_prefix} with incompatible types...', file=sys.stderr)
+                victim_func_{p_prefix}.__defaults__ = ("a", "b", -2**31-1)
+
+                # 4. Call the function again to check for a crash.
+                try:
+                    res = victim_func_{p_prefix}()
+                except Exception:
+                    pass
+            """)
+
+            chosen_attack = random.choice((attack_1, attack_2, attack_3, attack_4))
+            attack_code = attack_preamble + chosen_attack
+            try:
+                scenario_nodes = ast.parse(attack_code).body
+                # Prepend the scenario to the function's body.
+                node.body = scenario_nodes + node.body
+                ast.fix_missing_locations(node)
+            except SyntaxError:
+                pass  # Should not happen with a fixed template
+
+        return node
+
+
+class TraceBreaker(ast.NodeTransformer):
+    """
+    Attacks the JIT's ability to form long, linear traces (superblocks)
+    by injecting code that is known to be "trace-unfriendly".
+    """
+
+    def _create_dynamic_call_break(self, prefix: str) -> list[ast.stmt]:
+        """Injects a call to a function whose target is not statically known."""
+        print("    -> Injecting trace-breaking (dynamic call) scenario...", file=sys.stderr)
+        attack_code = dedent(f"""
+            # Dynamic call trace-breaking scenario
+            print('[{prefix}] Running dynamic call trace break...', file=sys.stderr)
+            def f1_{prefix}(): return 1
+            def f2_{prefix}(): return 2
+            funcs = [f1_{prefix}, f2_{prefix}]
+            for i in range(200):
+                # The JIT cannot easily predict the target of func_to_call().
+                func_to_call = funcs[i % 2]
+                try:
+                    func_to_call()
+                except Exception:
+                    pass
+        """)
+        return ast.parse(attack_code).body
+
+    def _create_exception_break(self, prefix: str) -> list[ast.stmt]:
+        """Injects a try...except...finally block into a hot loop."""
+        print("    -> Injecting trace-breaking (exception) scenario...", file=sys.stderr)
+        attack_code = dedent(f"""
+            # Exception handling trace-breaking scenario
+            print('[{prefix}] Running exception trace break...', file=sys.stderr)
+            for i in range(200):
+                try:
+                    # The JIT tracer often bails on complex exception handling.
+                    if i % 10 == 0:
+                        raise ValueError("trace break")
+                except ValueError:
+                    pass
+                finally:
+                    _ = i
+        """)
+        return ast.parse(attack_code).body
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> ast.FunctionDef:
+        self.generic_visit(node)
+
+        if not node.name.startswith("uop_harness"):
+            return node
+
+        if random.random() < 0.1:  # Low probability
+            prefix = f"{node.name}_{random.randint(1000, 9999)}"
+
+            attack_generators = [
+                self._create_dynamic_call_break,
+                self._create_exception_break,
+            ]
+            chosen_generator = random.choice(attack_generators)
+            scenario_nodes = chosen_generator(prefix)
+
+            node.body = scenario_nodes + node.body
+            ast.fix_missing_locations(node)
+
+        return node
+
+
+class ExitStresser(ast.NodeTransformer):
+    """
+    Attacks the JIT's side-exit mechanism by injecting a loop with
+    many frequently taken branches.
+    """
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> ast.FunctionDef:
+        self.generic_visit(node)
+
+        if not node.name.startswith("uop_harness"):
+            return node
+
+        if random.random() < 0.1:  # Low probability
+            print(f"    -> Injecting exit stress pattern into '{node.name}'", file=sys.stderr)
+
+            p_prefix = f"es_{random.randint(1000, 9999)}"
+            num_branches = random.randint(5, 12)
+
+            # 1. Build the if/elif/else chain as a string
+            branch_code = []
+            for i in range(num_branches):
+                # Each branch performs a slightly different, simple operation
+                branch_body = random.choice([
+                    f"res_{p_prefix} = i * {i}",
+                    f"res_{p_prefix} = str(i)",
+                    f"res_{p_prefix} = len(str(i * 2))",
+                    f"res_{p_prefix} = i % {(i % 5) + 1}",
+                ])
+
+                if i == 0:
+                    branch_code.append(f"if i % {num_branches} == {i}:")
+                else:
+                    branch_code.append(f"elif i % {num_branches} == {i}:")
+                branch_code.append(f"    {branch_body}")
+
+            # 2. Assemble the full scenario
+            attack_code = dedent(f"""
+                # --- Exit Stress Scenario ---
+                print('[{p_prefix}] Running exit stress scenario...', file=sys.stderr)
+                res_{p_prefix} = 0
+                for i in range(500):
+                    try:
+                        # This long chain encourages the JIT to create multiple
+                        # side exits from the main hot loop.
+                        {indent(chr(10).join(branch_code), ' ' * 8)}
+                    except Exception:
+                        pass
+            """)
+
+            try:
+                scenario_nodes = ast.parse(attack_code).body
+                # Prepend the scenario to the function's body.
+                node.body = scenario_nodes + node.body
+                ast.fix_missing_locations(node)
+            except SyntaxError:
+                pass  # Should not happen with a fixed template
+
+        return node
+
+
+class DeepCallMutator(ast.NodeTransformer):
+    """
+    Attacks the JIT's trace stack limit by injecting a chain of deeply
+    nested function calls with a precisely targeted depth.
+    """
+    TRACE_STACK_SIZE = 10  # From pycore_optimizer.h
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> ast.FunctionDef:
+        self.generic_visit(node)
+
+        if not node.name.startswith("uop_harness"):
+            return node
+
+        if random.random() < 0.1:  # Low probability for this complex injection
+
+            # 1. Choose a "tricky" depth based on the JIT's known limit.
+            depth = random.choice([
+                self.TRACE_STACK_SIZE - 1,
+                self.TRACE_STACK_SIZE,
+                self.TRACE_STACK_SIZE + 1,
+            ])
+            print(f"    -> Injecting deep call chain of depth {depth} into '{node.name}'", file=sys.stderr)
+
+            p_prefix = f"dc_{random.randint(1000, 9999)}"
+
+            # 2. Programmatically build the function chain as a string.
+            func_chain_lines = [f"# Deep call chain of depth {depth}"]
+            func_chain_lines.append(f"def f_0_{p_prefix}(p): return p + 1")
+            for i in range(1, depth):
+                func_chain_lines.append(f"def f_{i}_{p_prefix}(p): return f_{i - 1}_{p_prefix}(p) + 1")
+
+            func_chain_str = "\\n".join(func_chain_lines)
+            top_level_func = f"f_{depth - 1}_{p_prefix}"
+
+            # 3. Assemble the full scenario string.
+            attack_code = dedent(f"""
+                # --- Deep Call Scenario ---
+                print('[{p_prefix}] Running deep call scenario of depth {depth}...', file=sys.stderr)
+                {func_chain_str}
+
+                # Execute the top of the chain in a hot loop.
+                for i in range(200):
+                    try:
+                        # This tests the JIT's ability to handle a stack
+                        # of this specific depth during tracing.
+                        {top_level_func}(i)
+                    except RecursionError:
+                        # This is an expected and valid outcome for deep stacks.
+                        break
+                    except Exception:
+                        pass
+            """)
+
+            try:
+                scenario_nodes = ast.parse(attack_code).body
+                node.body = scenario_nodes + node.body
+                ast.fix_missing_locations(node)
+            except SyntaxError:
+                pass  # Should not happen
+
+        return node
+
+
 class ASTMutator:
     """
     An engine for structurally modifying Python code at the AST level.
@@ -1534,6 +1893,11 @@ class ASTMutator:
             NumericMutator,
             IterableMutator,
             GCInjector,
+            DictPolluter,
+            FunctionPatcher,
+            TraceBreaker,
+            ExitStresser,
+            DeepCallMutator,
         ]
 
     def mutate_ast(

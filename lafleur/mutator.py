@@ -1882,12 +1882,13 @@ class GuardRemover(ast.NodeTransformer):
         if (isinstance(node.test, ast.Compare) and
                 self.is_rng_check(node.test.left)):
 
-            # With a certain probability, remove this guard.
             if random.random() < 0.25:
                 print("    -> Removing fuzzer-injected guard.", file=sys.stderr)
-                # The transformer automatically handles replacing one statement
-                # with a list of them.
-                return node.body
+
+                # If the body is not empty, unwrap it.
+                # If the body IS empty (because a child visitor removed its contents),
+                # replace the entire 'if' with a 'pass' to maintain valid syntax.
+                return node.body if node.body else ast.Pass()
 
         return node
 

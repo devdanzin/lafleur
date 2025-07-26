@@ -1860,6 +1860,38 @@ class DeepCallMutator(ast.NodeTransformer):
         return node
 
 
+class GuardRemover(ast.NodeTransformer):
+    """
+    Finds conditional blocks injected by GuardInjector and replaces them
+    with their body, effectively removing the guard.
+    """
+
+    def is_rng_check(self, node: ast.AST) -> bool:
+        """Check if an AST node is our specific `fuzzer_rng.random()` call."""
+        return (isinstance(node, ast.Call) and
+                isinstance(node.func, ast.Attribute) and
+                node.func.attr == 'random' and
+                isinstance(node.func.value, ast.Name) and
+                node.func.value.id == 'fuzzer_rng')
+
+    def visit_If(self, node: ast.If) -> ast.AST:
+        # First, visit children to allow nested removals.
+        self.generic_visit(node)
+
+        # Check if the test condition is `fuzzer_rng.random() < ...`
+        if (isinstance(node.test, ast.Compare) and
+                self.is_rng_check(node.test.left)):
+
+            # With a certain probability, remove this guard.
+            if random.random() < 0.25:
+                print("    -> Removing fuzzer-injected guard.", file=sys.stderr)
+                # The transformer automatically handles replacing one statement
+                # with a list of them.
+                return node.body
+
+        return node
+
+
 class ASTMutator:
     """
     An engine for structurally modifying Python code at the AST level.
@@ -1898,6 +1930,7 @@ class ASTMutator:
             TraceBreaker,
             ExitStresser,
             DeepCallMutator,
+            GuardRemover,
         ]
 
     def mutate_ast(

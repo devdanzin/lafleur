@@ -573,6 +573,14 @@ except Exception:
         except Exception as e:
             print(f"  [!] Error during child execution: {e}", file=sys.stderr)
             return None
+        finally:
+            try:
+                if child_source_path.exists():
+                    child_source_path.unlink()
+                if child_log_path.exists():
+                    child_log_path.unlink()
+            except OSError as e:
+                print(f"  [!] Warning: Could not delete temp file: {e}", file=sys.stderr)
 
     def _handle_analysis_data(
         self, analysis_data: dict, i: int, parent_metadata: dict
@@ -804,15 +812,6 @@ except Exception:
             except Exception as e:
                 print(f"  [!] Error executing child process: {e}", file=sys.stderr)
                 continue  # Move to the next mutation
-            finally:
-                try:
-                    if child_source_path.exists():
-                        # self.verify_jit_determinism(child_source_path, 25)
-                        child_source_path.unlink()
-                    if child_log_path.exists():
-                        child_log_path.unlink()
-                except OSError as e:
-                    print(f"  [!] Warning: Could not delete temp file: {e}", file=sys.stderr)
 
     def _check_for_divergence(self, log_content: str, source_path: Path, log_path: Path) -> bool:
         """Check for correctness divergences and save artifacts."""

@@ -25,6 +25,12 @@ All notable changes to this project should be documented in this file.
 - Timeout log files will be compressed with zstd if larger than 1MB, by @devdanzin.
 - Mutations (`GuardInjector`) will add non-determinism again in a reproducible way, by @devdanzin.
 
+
+### Fixed
+
+- Correctly delete all temporary files created by multiple runs, by @devdanzin.
+
+
 ## [0.0.1] - 2024-11-20
 
 - Initial release of the `lafleur` evolutionary fuzzer.

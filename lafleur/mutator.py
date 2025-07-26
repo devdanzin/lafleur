@@ -15,7 +15,7 @@ import builtins
 import random
 import copy
 import sys
-from textwrap import dedent
+from textwrap import dedent, indent
 
 
 class OperatorSwapper(ast.NodeTransformer):
@@ -1737,6 +1737,66 @@ class TraceBreaker(ast.NodeTransformer):
         return node
 
 
+class ExitStresser(ast.NodeTransformer):
+    """
+    Attacks the JIT's side-exit mechanism by injecting a loop with
+    many frequently taken branches.
+    """
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> ast.FunctionDef:
+        self.generic_visit(node)
+
+        if not node.name.startswith("uop_harness"):
+            return node
+
+        if random.random() < 0.1:  # Low probability
+            print(f"    -> Injecting exit stress pattern into '{node.name}'", file=sys.stderr)
+
+            p_prefix = f"es_{random.randint(1000, 9999)}"
+            num_branches = random.randint(5, 12)
+
+            # 1. Build the if/elif/else chain as a string
+            branch_code = []
+            for i in range(num_branches):
+                # Each branch performs a slightly different, simple operation
+                branch_body = random.choice([
+                    f"res_{p_prefix} = i * {i}",
+                    f"res_{p_prefix} = str(i)",
+                    f"res_{p_prefix} = len(str(i * 2))",
+                    f"res_{p_prefix} = i % {(i % 5) + 1}",
+                ])
+
+                if i == 0:
+                    branch_code.append(f"if i % {num_branches} == {i}:")
+                else:
+                    branch_code.append(f"elif i % {num_branches} == {i}:")
+                branch_code.append(f"    {branch_body}")
+
+            # 2. Assemble the full scenario
+            attack_code = dedent(f"""
+                # --- Exit Stress Scenario ---
+                print('[{p_prefix}] Running exit stress scenario...', file=sys.stderr)
+                res_{p_prefix} = 0
+                for i in range(500):
+                    try:
+                        # This long chain encourages the JIT to create multiple
+                        # side exits from the main hot loop.
+                        {indent(chr(10).join(branch_code), ' ' * 8)}
+                    except Exception:
+                        pass
+            """)
+
+            try:
+                scenario_nodes = ast.parse(attack_code).body
+                # Prepend the scenario to the function's body.
+                node.body = scenario_nodes + node.body
+                ast.fix_missing_locations(node)
+            except SyntaxError:
+                pass  # Should not happen with a fixed template
+
+        return node
+
+
 class ASTMutator:
     """
     An engine for structurally modifying Python code at the AST level.
@@ -1773,6 +1833,7 @@ class ASTMutator:
             DictPolluter,
             FunctionPatcher,
             TraceBreaker,
+            ExitStresser,
         ]
 
     def mutate_ast(

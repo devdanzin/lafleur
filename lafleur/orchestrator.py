@@ -524,11 +524,9 @@ except Exception:
             return None
 
     def _execute_child(
-        self, source_code: str, session_id: int, mutation_index: int
+        self, source_code: str, session_id: int, mutation_index: int,  child_source_path: Path, child_log_path: Path
     ) -> ExecutionResult | None:
         """Write the child script to a temp file, execute it, and return results."""
-        child_source_path = TMP_DIR / f"child_{session_id}_{mutation_index}.py"
-        child_log_path = TMP_DIR / f"child_{session_id}_{mutation_index}.log"
 
         try:
             child_source_path.write_text(source_code)
@@ -577,14 +575,6 @@ except Exception:
         except Exception as e:
             print(f"  [!] Error during child execution: {e}", file=sys.stderr)
             return None
-        finally:
-            try:
-                if child_source_path.exists():
-                    child_source_path.unlink()
-                if child_log_path.exists():
-                    child_log_path.unlink()
-            except OSError as e:
-                print(f"  [!] Warning: Could not delete temp file: {e}", file=sys.stderr)
 
     def _handle_analysis_data(
         self, analysis_data: dict, i: int, parent_metadata: dict
@@ -693,8 +683,6 @@ except Exception:
         core_logic_to_mutate = base_harness_node
         prefix = base_harness_node.name.replace("uop_harness_", "")
 
-        runtime_seed = self.global_seed_counter + 2  # Initialize runtime_seed as it will be in first loop
-
         if self.use_dynamic_runs:
             # Use a logarithmic scale to model diminishing returns.
             # A score of ~60 results in 3 runs, ~120 in 4 runs, etc.
@@ -711,20 +699,22 @@ except Exception:
             self.global_seed_counter += 1
             mutation_seed = self.global_seed_counter
             print(
-                f"  \\-> Running mutation #{i + 1} (Seed: {mutation_seed }) for {parent_path.name}..."
+                f"  \\-> Running mutation #{i + 1} (Seed: {mutation_seed}) for {parent_path.name}..."
             )
             flow_control = ""
 
-            try:
-                mutated_harness_node, mutation_info = self._get_mutated_harness(
-                    core_logic_to_mutate, mutation_seed
-                )
-                if not mutated_harness_node:
-                    continue
-                # self.debug_mutation_differences(core_logic_to_mutate, mutated_body_ast, current_seed)
+            mutated_harness_node, mutation_info = self._get_mutated_harness(
+                core_logic_to_mutate, mutation_seed
+            )
+            if not mutated_harness_node:
+                continue
 
-                for run_num in range(num_runs):
-                    # Each run gets a unique, deterministic runtime_seed
+            for run_num in range(num_runs):
+                # Define unique paths for each run
+                child_source_path = TMP_DIR / f"child_{session_id}_{i + 1}_{run_num + 1}.py"
+                child_log_path = TMP_DIR / f"child_{session_id}_{i + 1}_{run_num + 1}.log"
+
+                try:
                     runtime_seed = (mutation_seed + 1) * (run_num + 1)
 
                     # Update the mutation_info for accurate logging
@@ -735,12 +725,14 @@ except Exception:
 
                     child_source = self._prepare_child_script(
                         parent_core_tree, mutated_harness_node, setup_code, prefix,
-                        mutation_seed, parent_id, runtime_seed  # Pass runtime_seed
+                        mutation_seed, parent_id, runtime_seed
                     )
                     if not child_source:
                         continue  # Skip this run if script prep fails
 
-                    exec_result = self._execute_child(child_source, session_id, i + 1)
+                    exec_result = self._execute_child(
+                        child_source, session_id, i + 1, child_source_path, child_log_path
+                    )
                     if not exec_result:
                         continue  # Skip this run if execution fails
 
@@ -751,71 +743,24 @@ except Exception:
 
                     flow_control = self._handle_analysis_data(analysis_data, i + 1, parent_metadata)
 
-                    # CRITICAL OPTIMIZATION: If any run finds something, break the inner loop
                     if flow_control == "BREAK" or flow_control == "CONTINUE":
                         break
 
-                    # If the inner loop broke, we also break the outer loop to move to the next parent
-                if flow_control == "BREAK":
-                    break
+                finally:
+                    try:
+                        if child_source_path.exists():
+                            child_source_path.unlink()
+                        else:
+                            print(f"Error deleting {child_source_path}, file doesn't exist!")
+                        if child_log_path.exists():
+                            child_log_path.unlink()
+                        else:
+                            print(f"Error deleting {child_log_path}, file doesn't exist!")
+                    except OSError as e:
+                        print(f"  [!] Warning: Could not delete temp file: {e}", file=sys.stderr)
 
-            except RecursionError:
-                print(
-                    "  [!] Warning: Skipping mutation due to RecursionError during AST transformation.",
-                    file=sys.stderr,
-                )
-                continue
-
-            child_source_path = TMP_DIR / f"child_{session_id}_{i + 1}.py"
-            child_log_path = TMP_DIR / f"child_{session_id}_{i + 1}.log"
-
-            try:
-                child_source = self._prepare_child_script(
-                    parent_core_tree,
-                    mutated_harness_node,
-                    setup_code,
-                    prefix,
-                    mutation_seed,
-                    parent_id,
-                    runtime_seed,
-                )
-                if not child_source:
-                    continue
-            except RecursionError:
-                print(
-                    "  [!] Warning: Skipping mutation due to RecursionError during ast.unparse.",
-                    file=sys.stderr,
-                )
-                continue
-            try:
-                # --- Execute and Analyze Child ---
-                exec_result = self._execute_child(child_source, session_id, i + 1)
-                if not exec_result:
-                    continue
-
-                analysis_data = self.analyze_run(
-                    exec_result, parent_lineage_profile, parent_id, mutation_info, mutation_seed
-                )
-
-                # --- Handle Analysis Result ---
-                flow_control = self._handle_analysis_data(analysis_data, i, parent_metadata)
-                if flow_control == "BREAK":
-                    break
-                elif flow_control == "CONTINUE":
-                    continue
-            except subprocess.TimeoutExpired:
-                self.run_stats["timeouts_found"] = self.run_stats.get("timeouts_found", 0) + 1
-                print("  [!!!] TIMEOUT DETECTED! Saving test case.", file=sys.stderr)
-                timeout_source_path = (
-                    TIMEOUTS_DIR / f"timeout_{session_id}_{i + 1}_{parent_path.name}"
-                )
-                timeout_log_path = timeout_source_path.with_suffix(".log")
-                shutil.copy(child_source_path, timeout_source_path)
-                shutil.copy(child_log_path, timeout_log_path)
-                continue
-            except Exception as e:
-                print(f"  [!] Error executing child process: {e}", file=sys.stderr)
-                continue  # Move to the next mutation
+            if flow_control == "BREAK":
+                break
 
     def _check_for_divergence(self, log_content: str, source_path: Path, log_path: Path) -> bool:
         """Check for correctness divergences and save artifacts."""

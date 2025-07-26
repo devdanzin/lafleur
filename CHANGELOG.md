@@ -31,6 +31,8 @@ All notable changes to this project should be documented in this file.
 
 - Correctly delete all temporary files created by multiple runs, by @devdanzin.
 - Avoid adding RNG seeding and GC tuning multiple times, by @devdanzin.
+- Avoid double counting crashes, by @devdanzin.
+- Avoid IndentationErrors after mutation with `GuardRemover`, by @devdanzin.
 
 
 ## [0.0.1] - 2024-11-20

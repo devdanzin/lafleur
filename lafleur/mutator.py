@@ -1797,6 +1797,69 @@ class ExitStresser(ast.NodeTransformer):
         return node
 
 
+class DeepCallMutator(ast.NodeTransformer):
+    """
+    Attacks the JIT's trace stack limit by injecting a chain of deeply
+    nested function calls with a precisely targeted depth.
+    """
+    TRACE_STACK_SIZE = 10  # From pycore_optimizer.h
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> ast.FunctionDef:
+        self.generic_visit(node)
+
+        if not node.name.startswith("uop_harness"):
+            return node
+
+        if random.random() < 0.1:  # Low probability for this complex injection
+
+            # 1. Choose a "tricky" depth based on the JIT's known limit.
+            depth = random.choice([
+                self.TRACE_STACK_SIZE - 1,
+                self.TRACE_STACK_SIZE,
+                self.TRACE_STACK_SIZE + 1,
+            ])
+            print(f"    -> Injecting deep call chain of depth {depth} into '{node.name}'", file=sys.stderr)
+
+            p_prefix = f"dc_{random.randint(1000, 9999)}"
+
+            # 2. Programmatically build the function chain as a string.
+            func_chain_lines = [f"# Deep call chain of depth {depth}"]
+            func_chain_lines.append(f"def f_0_{p_prefix}(p): return p + 1")
+            for i in range(1, depth):
+                func_chain_lines.append(f"def f_{i}_{p_prefix}(p): return f_{i - 1}_{p_prefix}(p) + 1")
+
+            func_chain_str = "\\n".join(func_chain_lines)
+            top_level_func = f"f_{depth - 1}_{p_prefix}"
+
+            # 3. Assemble the full scenario string.
+            attack_code = dedent(f"""
+                # --- Deep Call Scenario ---
+                print('[{p_prefix}] Running deep call scenario of depth {depth}...', file=sys.stderr)
+                {func_chain_str}
+
+                # Execute the top of the chain in a hot loop.
+                for i in range(200):
+                    try:
+                        # This tests the JIT's ability to handle a stack
+                        # of this specific depth during tracing.
+                        {top_level_func}(i)
+                    except RecursionError:
+                        # This is an expected and valid outcome for deep stacks.
+                        break
+                    except Exception:
+                        pass
+            """)
+
+            try:
+                scenario_nodes = ast.parse(attack_code).body
+                node.body = scenario_nodes + node.body
+                ast.fix_missing_locations(node)
+            except SyntaxError:
+                pass  # Should not happen
+
+        return node
+
+
 class ASTMutator:
     """
     An engine for structurally modifying Python code at the AST level.
@@ -1834,6 +1897,7 @@ class ASTMutator:
             FunctionPatcher,
             TraceBreaker,
             ExitStresser,
+            DeepCallMutator,
         ]
 
     def mutate_ast(

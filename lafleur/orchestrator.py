@@ -627,6 +627,11 @@ except Exception:
                 self._extract_and_cache_boilerplate(parent_source)
             parent_core_code = self._get_core_code(parent_source)
             parent_core_tree = ast.parse(parent_core_code)
+
+            normalizer = FuzzerSetupNormalizer()
+            parent_core_tree = normalizer.visit(parent_core_tree)
+            ast.fix_missing_locations(parent_core_tree)
+
         except (IOError, SyntaxError) as e:
             print(f"[!] Error processing parent file {parent_path.name}: {e}", file=sys.stderr)
             return None, None, None

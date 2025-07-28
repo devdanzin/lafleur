@@ -31,7 +31,7 @@ from typing import Any
 
 from lafleur.corpus_manager import CorpusManager
 from lafleur.coverage import parse_log_for_edge_coverage, load_coverage_state
-from lafleur.mutator import ASTMutator, FuzzerSetupNormalizer, VariableRenamer
+from lafleur.mutator import ASTMutator, EmptyBodySanitizer, FuzzerSetupNormalizer, VariableRenamer
 from lafleur.utils import ExecutionResult, TeeLogger, load_run_stats, save_run_stats
 
 RANDOM = random.Random()
@@ -422,6 +422,12 @@ class LafleurOrchestrator:
         # The `seed` argument is used by the deterministic stage for its own
         # seeding, and the other stages use the globally seeded RANDOM instance.
         mutated_ast, mutation_info = chosen_strategy(tree_copy, seed=seed)
+
+        # Always run the sanitizer last to fix any empty bodies.
+        sanitizer = EmptyBodySanitizer()
+        mutated_ast = sanitizer.visit(mutated_ast)
+        ast.fix_missing_locations(mutated_ast)
+
         mutation_info["seed"] = seed
         return mutated_ast, mutation_info
 

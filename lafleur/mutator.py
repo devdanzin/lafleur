@@ -2031,6 +2031,27 @@ class FuzzerSetupNormalizer(ast.NodeTransformer):
             return None
         return node
 
+    def visit_Call(self, node: ast.Call) -> ast.AST:
+        """
+        Find calls to the global `random()` and replace them with our
+        seeded `fuzzer_rng.random()`.
+        """
+        # First, visit children of the call, like its arguments.
+        self.generic_visit(node)
+
+        # Check if this is a call to the global 'random' function.
+        if isinstance(node.func, ast.Name) and node.func.id == 'random':
+            print("    -> Normalizing call to random() to use fuzzer_rng.", file=sys.stderr)
+            # Transform the function call from `random()` to `fuzzer_rng.random()`
+            node.func = ast.Attribute(
+                value=ast.Name(id='fuzzer_rng', ctx=ast.Load()),
+                attr='random',
+                ctx=ast.Load()
+            )
+            ast.fix_missing_locations(node)
+
+        return node
+
 
 class EmptyBodySanitizer(ast.NodeTransformer):
     """
@@ -2105,7 +2126,7 @@ def genUnstableHashObject(var_name: str) -> str:
             def __hash__(self):
                 # Violates the rule that hash must be constant for the object's lifetime.
                 self.hash_count += 1
-                new_hash = 5 if self.hash_count < 70 else randint(0, 2**64 - 1)
+                new_hash = 5 if self.hash_count < 70 else fuzzer_rng.randint(0, 2**64 - 1)
                 if not self.hash_count % 20:
                     print(f"[EVIL] UnstableHash __hash__ called, returning {{new_hash}}", file=sys.stderr)
                 return new_hash

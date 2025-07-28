@@ -83,11 +83,13 @@ class ConstantPerturbator(ast.NodeTransformer):
 
 class GuardInjector(ast.NodeTransformer):
     """Wrap a random statement in a seeded, reproducible 'if' block."""
-
-    def visit(self, node: ast.AST) -> ast.AST:
-        # First, visit children to avoid infinite recursion
+    def visit(self, node: ast.AST) -> ast.AST | None:
         node = super().visit(node)
-        # Only wrap statement nodes
+
+        # If a child visitor removed the node, propagate the deletion.
+        if node is None:
+            return ast.Pass()
+
         if isinstance(node, ast.stmt) and not isinstance(node, ast.FunctionDef):
             # The test uses our fuzzer-provided, seeded RNG instance.
             test = ast.Compare(
@@ -722,15 +724,18 @@ def _is_simple_statement(node: ast.stmt) -> bool:
 
 class ForLoopInjector(ast.NodeTransformer):
     """
-    Find a simple statement and wrap it in a `for` loop to make it "hot".
+    A mutator that finds simple statements and wraps them in a for loop
+    to make them "hot" for the JIT.
     """
 
-    def _try_inject_loop(self, node: ast.stmt) -> ast.stmt | ast.For:
-        # Low probability for this mutation
+    def _try_inject_loop(self, node: ast.stmt | None) -> ast.stmt | ast.For | None:
+        # If the node was removed by a child visitor, return None.
+        if node is None:
+            return ast.Pass()
+
         if random.random() < 0.05 and _is_simple_statement(node):
             print("    -> Injecting for loop around a statement.", file=sys.stderr)
 
-            # Choose a random iterable for the loop
             loop_var_name = f"i_loop_{random.randint(1000, 9999)}"
 
             # Choose between range(), a list, or a tuple
@@ -759,14 +764,15 @@ class ForLoopInjector(ast.NodeTransformer):
             return for_node
         return node
 
-    def visit_Assign(self, node: ast.Assign) -> ast.stmt:
-        self.generic_visit(node)
+    def visit_Assign(self, node: ast.Assign) -> ast.stmt | None:
+        # The call to generic_visit might return None if a child visitor
+        # removes the node. We must respect this.
+        node = self.generic_visit(node)
         return self._try_inject_loop(node)
 
-    def visit_Expr(self, node: ast.Expr) -> ast.stmt:
-        self.generic_visit(node)
-        # We only want to loop simple expressions, not complex ones that define classes etc.
-        if isinstance(node.value, ast.Call):
+    def visit_Expr(self, node: ast.Expr) -> ast.stmt | None:
+        node = self.generic_visit(node)
+        if node and isinstance(node.value, ast.Call):
             return self._try_inject_loop(node)
         return node
 
@@ -2023,6 +2029,25 @@ class FuzzerSetupNormalizer(ast.NodeTransformer):
                 isinstance(node.value.func.value, ast.Name) and
                 node.value.func.value.id == 'gc'):
             return None
+        return node
+
+
+class EmptyBodySanitizer(ast.NodeTransformer):
+    """
+    A final-pass transformer to ensure no control flow statements have empty
+    bodies, which would cause an IndentationError.
+    """
+
+    def visit(self, node: ast.AST) -> ast.AST:
+        # First, let any children be visited and potentially modified.
+        self.generic_visit(node)
+
+        # This check covers If, For, While, With, FunctionDef, ClassDef, etc.
+        if hasattr(node, 'body') and isinstance(node.body, list) and not node.body:
+            print("    -> Sanitizing empty body with a 'pass' statement.", file=sys.stderr)
+            node.body = [ast.Pass()]
+            ast.fix_missing_locations(node)
+
         return node
 
 

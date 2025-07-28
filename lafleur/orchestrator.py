@@ -788,6 +788,13 @@ except Exception:
     ) -> bool:
         """Check for crashes and save artifacts."""
         if return_code != 0:
+            if "IndentationError: too many levels of indentation" in log_content:
+                print("  [~] Ignoring known-uninteresting IndentationError (too deep).", file=sys.stderr)
+                return False
+            elif "SyntaxError: too many statically nested blocks" in log_content:
+                print("  [~] Ignoring known-uninteresting SyntaxError (too nested).", file=sys.stderr)
+                return False
+
             print(f"  [!!!] CRASH DETECTED! Exit code: {return_code}. Saving...", file=sys.stderr)
             crash_path = CRASHES_DIR / f"crash_retcode_{source_path.name}"
             shutil.copy(source_path, crash_path)

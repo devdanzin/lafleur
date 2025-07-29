@@ -27,7 +27,7 @@ class JitState(Enum):
 
 
 PROTO_TRACE_REGEX = re.compile(r"Created a proto-trace")
-OPTIMIZED_TRACE_REGEX = re.compile(r"Optimized trace")
+OPTIMIZED_TRACE_REGEX = re.compile(r"Optimized trace \(length (\d+)\):")
 
 # Regex to find our harness markers, e.g., "[f1]", "[f12]", etc.
 HARNESS_MARKER_REGEX = re.compile(r"\[(f\d+)\]")
@@ -55,21 +55,20 @@ COVERAGE_DIR = Path("coverage")
 COVERAGE_STATE_FILE = COVERAGE_DIR / "coverage_state.pkl"
 
 
-def _create_empty_harness_coverage() -> dict[str, Counter[tuple[str, str]]]:
+def _create_empty_harness_coverage() -> dict[str, int | Counter[tuple[str, str]]]:
     """Create a factory for an empty harness coverage dictionary."""
     return {"uops": Counter(), "edges": Counter(), "rare_events": Counter()}
 
 
-def parse_log_for_edge_coverage(log_path: Path) -> dict[str, dict[str, Counter]]:
+def parse_log_for_edge_coverage(log_path: Path) -> dict[str, dict[str, Any]]:
     """
-    Read a JIT log file and extract hit counts for uops, edges, and rare events.
+    Read a JIT log file and extract hit counts and structural metrics.
 
     This function operates as a state machine, tracking the JIT's current
     state (TRACING, OPTIMIZED, etc.) and associating the coverage it finds
-    with that state.
+    with that state. It also extracts trace length and side exit counts.
 
-    Return a dictionary mapping each harness ID found in the log to its
-    own coverage profile.
+    Return a dictionary mapping each harness ID to its coverage profile.
     """
     if not log_path.is_file():
         print(f"Error: Log file not found at {log_path}", file=sys.stderr)
@@ -79,31 +78,49 @@ def parse_log_for_edge_coverage(log_path: Path) -> dict[str, dict[str, Counter]]
     current_harness_id = None
     previous_uop = None
 
-    # The parser now tracks the JIT's state.
+    # --- State machine and metrics tracking ---
     current_state = JitState.EXECUTING
+    current_trace_length = 0
+    current_side_exits = 0
 
     with open(log_path, "r", encoding="utf-8", errors="ignore") as f:
         for line in f:
-            # --- State Machine Logic ---
-            if PROTO_TRACE_REGEX.search(line):
-                current_state = JitState.TRACING
-            elif OPTIMIZED_TRACE_REGEX.search(line):
-                current_state = JitState.OPTIMIZED
-
+            # --- State and Metric Transition Logic ---
+            proto_trace_match = PROTO_TRACE_REGEX.search(line)
+            opt_trace_match = OPTIMIZED_TRACE_REGEX.search(line)
             harness_match = HARNESS_MARKER_REGEX.search(line)
+
+            if proto_trace_match:
+                current_state = JitState.TRACING
+            elif opt_trace_match:
+                current_state = JitState.OPTIMIZED
+                current_trace_length = int(opt_trace_match.group(1))
+                current_side_exits = 0  # Reset for the new trace
+
             if harness_match:
+                # Before switching harness, save the metrics for the previous one.
+                if current_harness_id and current_trace_length > 0:
+                    coverage_by_harness[current_harness_id]['trace_length'] = current_trace_length
+                    coverage_by_harness[current_harness_id]['side_exits'] = current_side_exits
+
+                # Reset state for the new harness.
                 current_harness_id = harness_match.group(1)
                 previous_uop = "_START_OF_HARNESS_"
-                current_state = JitState.EXECUTING  # Reset state for new harness
+                current_state = JitState.EXECUTING
+                current_trace_length = 0
+                current_side_exits = 0
 
             if not current_harness_id:
                 continue
 
+            # --- Coverage Parsing Logic ---
             uop_match = UOP_REGEX.search(line)
             if uop_match:
                 current_uop = uop_match.group(1)
 
-                # Uops are not stateful, we just record them by name.
+                if current_state == JitState.OPTIMIZED and current_uop in ("_DEOPT", "_EXIT_TRACE"):
+                    current_side_exits += 1
+
                 coverage_by_harness[current_harness_id]["uops"][current_uop] += 1
 
                 if previous_uop:
@@ -116,8 +133,12 @@ def parse_log_for_edge_coverage(log_path: Path) -> dict[str, dict[str, Counter]]
             rare_event_match = RARE_EVENT_REGEX.search(line)
             if rare_event_match:
                 rare_event = rare_event_match.group(1)
-                # For now, rare events are not stateful, but this could be changed.
                 coverage_by_harness[current_harness_id]["rare_events"][rare_event] += 1
+
+    # After the loop, save the metrics for the very last harness in the file.
+    if current_harness_id and current_trace_length > 0:
+        coverage_by_harness[current_harness_id]['trace_length'] = current_trace_length
+        coverage_by_harness[current_harness_id]['side_exits'] = current_side_exits
 
     return coverage_by_harness
 

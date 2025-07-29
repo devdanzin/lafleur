@@ -41,15 +41,18 @@ class CorpusScheduler:
         self.global_coverage = coverage_state.get("global_coverage", {})
 
     def _calculate_rarity_score(self, file_metadata: dict[str, Any]) -> float:
-        """Calculate a score based on the rarity of the file's coverage."""
+        """
+        Calculate a score based on the rarity of the file's coverage.
+        Rarer edges (lower global hit count) contribute more to the score.
+        """
         rarity_score = 0.0
         baseline_coverage = file_metadata.get("baseline_coverage", {})
 
         for harness_data in baseline_coverage.values():
-            for edge in harness_data.get("edges", []):
+            for edge_tuple in harness_data.get("edges", []):
                 # The score for an edge is the inverse of its global hit count.
                 # We add 1 to the denominator to avoid division by zero.
-                global_hits = self.global_coverage.get("edges", {}).get(edge, 0)
+                global_hits = self.global_coverage.get("edges", {}).get(edge_tuple, 0)
                 rarity_score += 1.0 / (global_hits + 1)
         return rarity_score
 

@@ -874,7 +874,7 @@ except Exception:
         for harness_id in sorted(coverage_profile.keys()):
             edges = sorted(coverage_profile[harness_id].get("edges", {}).keys())
             if edges:
-                all_edges.append(f"{harness_id}:{','.join(edges)}")
+                all_edges.append(f"{harness_id}:{','.join(": ".join(edge) for edge in edges)}")
 
         canonical_string = ";".join(all_edges)
         return hashlib.sha256(canonical_string.encode('utf-8')).hexdigest()
@@ -965,11 +965,10 @@ except Exception:
             lineage_harness = lineage.setdefault(
                 harness_id, {"uops": set(), "edges": set(), "rare_events": set()}
             )
-            for key in ["uops", "edges", "rare_events"]:
-                # Get the set of items from the parent's lineage.
-                lineage_set = lineage_harness.setdefault(key, set())
-                # Add all the keys from the child's new coverage to the set.
-                lineage_set.update(child_data.get(key, {}).keys())
+            lineage_harness["uops"].update(child_data.get("uops", {}).keys())
+            lineage_harness["rare_events"].update(child_data.get("rare_events", {}).keys())
+            lineage_harness["edges"].update(child_data.get("edges", {}).keys())
+
         return lineage
 
     def _get_differential_test_boilerplate(self) -> str:

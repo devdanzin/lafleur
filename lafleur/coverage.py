@@ -14,8 +14,20 @@ import re
 import secrets
 import sys
 from collections import defaultdict, Counter
+from enum import Enum, auto
 from pathlib import Path
 from typing import Any
+
+
+class JitState(Enum):
+    """Represents the current operational state of the JIT compiler."""
+    TRACING = auto()      # The JIT is creating a proto-trace from bytecode.
+    OPTIMIZED = auto()    # The JIT has produced and is logging an optimized trace.
+    EXECUTING = auto()    # Default state for general execution.
+
+
+PROTO_TRACE_REGEX = re.compile(r"Created a proto-trace")
+OPTIMIZED_TRACE_REGEX = re.compile(r"Optimized trace")
 
 # Regex to find our harness markers, e.g., "[f1]", "[f12]", etc.
 HARNESS_MARKER_REGEX = re.compile(r"\[(f\d+)\]")
@@ -43,14 +55,18 @@ COVERAGE_DIR = Path("coverage")
 COVERAGE_STATE_FILE = COVERAGE_DIR / "coverage_state.pkl"
 
 
-def _create_empty_harness_coverage() -> dict[str, Counter[str]]:
+def _create_empty_harness_coverage() -> dict[str, Counter[tuple[str, str]]]:
     """Create a factory for an empty harness coverage dictionary."""
     return {"uops": Counter(), "edges": Counter(), "rare_events": Counter()}
 
 
-def parse_log_for_edge_coverage(log_path: Path) -> dict[str, dict[str, Counter[str]]]:
+def parse_log_for_edge_coverage(log_path: Path) -> dict[str, dict[str, Counter]]:
     """
     Read a JIT log file and extract hit counts for uops, edges, and rare events.
+
+    This function operates as a state machine, tracking the JIT's current
+    state (TRACING, OPTIMIZED, etc.) and associating the coverage it finds
+    with that state.
 
     Return a dictionary mapping each harness ID found in the log to its
     own coverage profile.
@@ -59,20 +75,26 @@ def parse_log_for_edge_coverage(log_path: Path) -> dict[str, dict[str, Counter[s
         print(f"Error: Log file not found at {log_path}", file=sys.stderr)
         return {}
 
-    # The new data structure uses Counters for hit tracking.
-    coverage_by_harness: defaultdict[str, dict[str, Counter[str]]] = defaultdict(
-        _create_empty_harness_coverage
-    )
-
+    coverage_by_harness = defaultdict(_create_empty_harness_coverage)
     current_harness_id = None
     previous_uop = None
 
+    # The parser now tracks the JIT's state.
+    current_state = JitState.EXECUTING
+
     with open(log_path, "r", encoding="utf-8", errors="ignore") as f:
         for line in f:
+            # --- State Machine Logic ---
+            if PROTO_TRACE_REGEX.search(line):
+                current_state = JitState.TRACING
+            elif OPTIMIZED_TRACE_REGEX.search(line):
+                current_state = JitState.OPTIMIZED
+
             harness_match = HARNESS_MARKER_REGEX.search(line)
             if harness_match:
                 current_harness_id = harness_match.group(1)
                 previous_uop = "_START_OF_HARNESS_"
+                current_state = JitState.EXECUTING  # Reset state for new harness
 
             if not current_harness_id:
                 continue
@@ -80,22 +102,23 @@ def parse_log_for_edge_coverage(log_path: Path) -> dict[str, dict[str, Counter[s
             uop_match = UOP_REGEX.search(line)
             if uop_match:
                 current_uop = uop_match.group(1)
-                # Increment hit count for the individual uop.
+
+                # Uops are not stateful, we just record them by name.
                 coverage_by_harness[current_harness_id]["uops"][current_uop] += 1
 
                 if previous_uop:
-                    edge = f"{previous_uop}->{current_uop}"
-                    # Increment hit count for the edge.
-                    coverage_by_harness[current_harness_id]["edges"][edge] += 1
+                    edge_str = f"{previous_uop}->{current_uop}"
+                    stateful_edge = (current_state.name, edge_str)
+                    coverage_by_harness[current_harness_id]["edges"][stateful_edge] += 1
+
                 previous_uop = current_uop
 
             rare_event_match = RARE_EVENT_REGEX.search(line)
             if rare_event_match:
                 rare_event = rare_event_match.group(1)
-                # Increment hit count for the rare event.
+                # For now, rare events are not stateful, but this could be changed.
                 coverage_by_harness[current_harness_id]["rare_events"][rare_event] += 1
 
-    # No need to sort, as Counters handle their own structure.
     return coverage_by_harness
 
 

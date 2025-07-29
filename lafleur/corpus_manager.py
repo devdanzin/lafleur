@@ -84,6 +84,19 @@ class CorpusScheduler:
             # Slightly reward deeper mutation chains to encourage depth exploration.
             score += metadata.get("lineage_depth", 1) * 5.0
 
+            total_trace_length = 0
+            total_side_exits = 0
+            baseline_coverage = metadata.get("baseline_coverage", {})
+            for harness_data in baseline_coverage.values():
+                total_trace_length += harness_data.get("trace_length", 0)
+                total_side_exits += harness_data.get("side_exits", 0)
+
+            # Reward files that produce long, optimized traces.
+            score += total_trace_length * 0.2
+
+            # Strongly reward files that explore many different side exits.
+            score += total_side_exits * 5.0
+
             # Ensure score is non-negative
             scores[filename] = max(1.0, score)
 

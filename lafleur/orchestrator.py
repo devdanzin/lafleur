@@ -697,7 +697,7 @@ except Exception:
         if self.use_dynamic_runs:
             # Use a logarithmic scale to model diminishing returns.
             # A score of ~60 results in 3 runs, ~120 in 4 runs, etc.
-            num_runs = 2 + int(math.floor(math.log(max(1.0, parent_score / 15))))
+            num_runs = 2 + int(math.floor(math.log(max(1.0, parent_score / 25))))
             num_runs = min(num_runs, 10)  # Cap at 10 runs to avoid excessive execution
             print(f"    -> Dynamically set run count to {num_runs} for this parent.")
         else:
@@ -962,12 +962,22 @@ except Exception:
         lineage = copy.deepcopy(parent_lineage_profile)
         for harness_id, child_data in child_baseline_profile.items():
             # Ensure the harness entry exists in the new lineage profile.
-            lineage_harness = lineage.setdefault(
-                harness_id, {"uops": set(), "edges": set(), "rare_events": set()}
-            )
+            lineage_harness = lineage.setdefault(harness_id, {
+                "uops": set(), "edges": set(), "rare_events": set(),
+                "max_trace_length": 0, "max_side_exits": 0
+            })
             lineage_harness["uops"].update(child_data.get("uops", {}).keys())
             lineage_harness["rare_events"].update(child_data.get("rare_events", {}).keys())
             lineage_harness["edges"].update(child_data.get("edges", {}).keys())
+
+            lineage_harness["max_trace_length"] = max(
+                lineage_harness.get("max_trace_length", 0),
+                child_data.get("trace_length", 0)
+            )
+            lineage_harness["max_side_exits"] = max(
+                lineage_harness.get("max_side_exits", 0),
+                child_data.get("side_exits", 0)
+            )
 
         return lineage
 

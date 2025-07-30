@@ -579,8 +579,17 @@ except Exception:
             shutil.copy(log_to_save, timeout_log_path)  # Copy the (potentially compressed) log
             return None
         except Exception as e:
-            print(f"  [!] Error during child execution: {e}", file=sys.stderr)
-            return None
+            # Instead of letting the exception propagate, we create a "failure"
+            # result so the analyzer can inspect the log and non-zero exit code.
+            print(f"  [!] An OS-level error occurred during child execution: {e}", file=sys.stderr)
+            # A common exit code for segfaults is -11. We'll use a high
+            # number to indicate an exceptional failure that was caught.
+            return ExecutionResult(
+                returncode=255, # Indicates a crash caught by the orchestrator
+                log_path=child_log_path,
+                source_path=child_source_path,
+                execution_time_ms=0
+            )
 
     def _handle_analysis_data(
         self, analysis_data: dict, i: int, parent_metadata: dict

@@ -857,8 +857,10 @@ except Exception:
 
         # --- Apply special rules for SEED files ---
         if parent_id is None:
-            is_generative_seed = mutation_info.get("strategy") == "generative_seed"
-            if child_coverage or is_generative_seed:
+            # We can have two kinds of seeds: "generative_seed" for generated
+            # files and "seed" for new corpus additions
+            is_seed = "seed" in mutation_info.get("strategy", "")
+            if child_coverage or is_seed:
                 is_interesting = True
             elif not is_interesting:
                 print("  [~] Seed file produced no JIT coverage. Skipping.", file=sys.stderr)

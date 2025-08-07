@@ -31,6 +31,7 @@ from typing import Any
 
 from lafleur.corpus_manager import CorpusManager
 from lafleur.coverage import parse_log_for_edge_coverage, load_coverage_state
+from lafleur.learning import MutatorScoreTracker
 from lafleur.mutator import ASTMutator, EmptyBodySanitizer, FuzzerSetupNormalizer, VariableRenamer
 from lafleur.utils import ExecutionResult, TeeLogger, load_run_stats, save_run_stats
 
@@ -92,6 +93,8 @@ class LafleurOrchestrator:
 
         self.coverage_state = load_coverage_state()
         self.run_stats = load_run_stats()
+
+        self.score_tracker = MutatorScoreTracker(self.ast_mutator.transformers)
 
         self.min_corpus_files = min_corpus_files
         self.corpus_manager = CorpusManager(
@@ -232,6 +235,8 @@ class LafleurOrchestrator:
             self.update_and_save_run_stats()
             self._log_timeseries_datapoint()  # Log one final data point on exit
 
+            self.score_tracker.save_state()
+
     def update_and_save_run_stats(self) -> None:
         """Update dynamic run statistics and save them to the stats file."""
         self.run_stats["last_update_time"] = datetime.now(timezone.utc).isoformat()
@@ -269,9 +274,15 @@ class LafleurOrchestrator:
         num_havoc_mutations = RANDOM.randint(15, 50)
         transformers_applied = []
 
+        transformer_names = [t.__name__ for t in self.ast_mutator.transformers]
+        dynamic_weights = self.score_tracker.get_weights(transformer_names)
+
         for _ in range(num_havoc_mutations):
-            transformer_class = RANDOM.choice(self.ast_mutator.transformers)
+            transformer_class = random.choices(self.ast_mutator.transformers, weights=dynamic_weights, k=1)[0]
+            # Record the attempt
+            self.score_tracker.attempts[transformer_class.__name__] += 1
             transformers_applied.append(transformer_class.__name__)
+
             tree = transformer_class().visit(tree)
 
         ast.fix_missing_locations(tree)
@@ -284,8 +295,10 @@ class LafleurOrchestrator:
         tree = base_ast
         num_spam_mutations = RANDOM.randint(20, 50)
 
-        # Choose one single type of mutation to spam
-        chosen_transformer_class = RANDOM.choice(self.ast_mutator.transformers)
+        transformer_names = [t.__name__ for t in self.ast_mutator.transformers]
+        dynamic_weights = self.score_tracker.get_weights(transformer_names)
+
+        chosen_transformer_class = random.choices(self.ast_mutator.transformers, weights=dynamic_weights, k=1)[0]
         print(f"    -> Spamming with: {chosen_transformer_class.__name__}", file=sys.stderr)
 
         for _ in range(num_spam_mutations):
@@ -404,20 +417,25 @@ class LafleurOrchestrator:
         RANDOM.seed(seed)
         random.seed(seed)
 
-        strategies = [
-            self._run_deterministic_stage,
-            self._run_havoc_stage,
-            self._run_spam_stage,
-            # self._run_splicing_stage,
-        ]
-        weights = [0.85, 0.10, 0.05]
-
         tree_copy = copy.deepcopy(base_ast)
         # Clean the AST of any previous fuzzer setup before applying new mutations.
         normalizer = FuzzerSetupNormalizer()
         tree_copy = normalizer.visit(tree_copy)
 
-        chosen_strategy = RANDOM.choices(strategies, weights=weights, k=1)[0]
+        strategy_candidates = [
+            self._run_deterministic_stage,
+            self._run_havoc_stage,
+            self._run_spam_stage,
+        ]
+        strategy_names = [s.__name__.replace("_run_", "").replace("_stage", "") for s in strategy_candidates]
+
+        # Record an attempt for each strategy to help with exploration.
+        for name in strategy_names:
+            self.score_tracker.attempts[name] += 1
+
+        dynamic_weights = self.score_tracker.get_weights(strategy_names)
+
+        chosen_strategy = random.choices(strategy_candidates, weights=dynamic_weights, k=1)[0]
 
         # The `seed` argument is used by the deterministic stage for its own
         # seeding, and the other stages use the globally seeded RANDOM instance.
@@ -595,6 +613,13 @@ except Exception:
         self, analysis_data: dict, i: int, parent_metadata: dict
     ) -> str | None:
         """Process the result from analyze_run and update fuzzer state."""
+        if analysis_data["status"] in ("DIVERGENCE", "NEW_COVERAGE"):
+            mutation_info = analysis_data.get("mutation_info", {})
+            strategy = mutation_info.get("strategy")
+            transformers = mutation_info.get("transformers", [])
+            if strategy and transformers:
+                self.score_tracker.record_success(strategy, transformers)
+
         if analysis_data["status"] == "DIVERGENCE":
             self.run_stats["divergences_found"] = self.run_stats.get("divergences_found", 0) + 1
             self.mutations_since_last_find = 0
@@ -961,6 +986,8 @@ except Exception:
                 f.write(json.dumps(datapoint) + "\n")
         except IOError as e:
             print(f"[!] Warning: Could not write to time-series log file: {e}", file=sys.stderr)
+
+        self.score_tracker.save_telemetry()
 
     def _build_lineage_profile(
         self, parent_lineage_profile: dict, child_baseline_profile: dict

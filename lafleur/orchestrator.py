@@ -593,8 +593,12 @@ except Exception:
             timeout_source_path = TIMEOUTS_DIR / f"timeout_{session_id}_{mutation_index}_{child_source_path.name}"
             timeout_log_path = timeout_source_path.with_suffix(log_to_save.suffix)  # Use the correct suffix
 
-            shutil.copy(child_source_path, timeout_source_path)
-            shutil.copy(log_to_save, timeout_log_path)  # Copy the (potentially compressed) log
+            if log_to_save.exists():
+                shutil.copy(child_source_path, timeout_source_path)
+                shutil.copy(log_to_save, timeout_log_path)
+
+                if log_to_save != child_log_path:
+                    log_to_save.unlink()
             return None
         except Exception as e:
             # Instead of letting the exception propagate, we create a "failure"

@@ -248,6 +248,7 @@ class CorpusManager:
                         mutation_info=analysis_data["mutation_info"],
                         mutation_seed=analysis_data["mutation_seed"],
                         build_lineage_func=orchestrator_build_lineage_func,
+                        filename_override=filename,
                     )
 
             except subprocess.TimeoutExpired:
@@ -317,14 +318,21 @@ class CorpusManager:
         content_hash: str,
         coverage_hash: str,
         build_lineage_func: Callable,
+        filename_override: str | None = None,
     ) -> str:
         """
         Add a new file to the corpus and update all related state.
 
         Return the unique filename assigned to the new corpus file.
         """
-        self.corpus_file_counter += 1
-        new_filename = f"{self.corpus_file_counter}.py"
+        if filename_override:
+            # When syncing, use the original filename of the seed file.
+            new_filename = filename_override
+        else:
+            # For new mutations, generate a new filename from the counter.
+            self.corpus_file_counter += 1
+            new_filename = f"{self.corpus_file_counter}.py"
+
         corpus_filepath = CORPUS_DIR / new_filename
         corpus_filepath.write_text(core_code)
         print(f"[+] Added minimized file to corpus: {new_filename}")

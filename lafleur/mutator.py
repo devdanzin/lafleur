@@ -1787,7 +1787,7 @@ class ExitStresser(ast.NodeTransformer):
                     try:
                         # This long chain encourages the JIT to create multiple
                         # side exits from the main hot loop.
-                        {indent(chr(10).join(branch_code), ' ' * 8)}
+{indent("\n".join(branch_code), ' ' * 24)}
                     except Exception:
                         pass
             """)
@@ -1798,7 +1798,7 @@ class ExitStresser(ast.NodeTransformer):
                 node.body = scenario_nodes + node.body
                 ast.fix_missing_locations(node)
             except SyntaxError:
-                pass  # Should not happen with a fixed template
+                print(f"    -> SyntaxError parsing ExitStresser attack code!", file=sys.stderr)
 
         return node
 
@@ -1834,14 +1834,14 @@ class DeepCallMutator(ast.NodeTransformer):
             for i in range(1, depth):
                 func_chain_lines.append(f"def f_{i}_{p_prefix}(p): return f_{i - 1}_{p_prefix}(p) + 1")
 
-            func_chain_str = "\\n".join(func_chain_lines)
+            func_chain_str = "\n".join(func_chain_lines)
             top_level_func = f"f_{depth - 1}_{p_prefix}"
 
             # 3. Assemble the full scenario string.
             attack_code = dedent(f"""
                 # --- Deep Call Scenario ---
                 print('[{p_prefix}] Running deep call scenario of depth {depth}...', file=sys.stderr)
-                {func_chain_str}
+                {indent(func_chain_str, " " * 16)}
 
                 # Execute the top of the chain in a hot loop.
                 for i in range(200):
@@ -2019,6 +2019,7 @@ class FuzzerSetupNormalizer(ast.NodeTransformer):
         if len(node.targets) == 1 and isinstance(node.targets[0], ast.Name):
             if node.targets[0].id == 'fuzzer_rng':
                 return None
+        self.generic_visit(node)
         return node
 
     def visit_Expr(self, node: ast.Expr) -> ast.AST | None:
@@ -2029,6 +2030,7 @@ class FuzzerSetupNormalizer(ast.NodeTransformer):
                 isinstance(node.value.func.value, ast.Name) and
                 node.value.func.value.id == 'gc'):
             return None
+        self.generic_visit(node)
         return node
 
     def visit_Call(self, node: ast.Call) -> ast.AST:

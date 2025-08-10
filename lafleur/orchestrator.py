@@ -644,30 +644,28 @@ except Exception:
         self, analysis_data: dict, i: int, parent_metadata: dict
     ) -> str | None:
         """Process the result from analyze_run and update fuzzer state."""
-        if analysis_data["status"] in ("DIVERGENCE", "NEW_COVERAGE"):
+        status = analysis_data.get("status")
+
+        if status in ("DIVERGENCE", "NEW_COVERAGE"):
             mutation_info = analysis_data.get("mutation_info", {})
             strategy = mutation_info.get("strategy")
             transformers = mutation_info.get("transformers", [])
             if strategy and transformers:
                 self.score_tracker.record_success(strategy, transformers)
 
-        if analysis_data["status"] == "DIVERGENCE":
+        if status == "DIVERGENCE":
             self.run_stats["divergences_found"] = self.run_stats.get("divergences_found", 0) + 1
             self.mutations_since_last_find = 0
             print(
                 f"  [***] SUCCESS! Mutation #{i + 1} found a correctness divergence. Moving to next parent."
             )
+            analysis_data["new_filename"] = "divergence" # Placeholder
             return "BREAK"  # A divergence is a major find, move to the next parent
-        elif analysis_data["status"] == "CRASH":
+        elif status == "CRASH":
             self.run_stats["crashes_found"] = self.run_stats.get("crashes_found", 0) + 1
             return "CONTINUE"
-        elif analysis_data["status"] == "NEW_COVERAGE":
-            self.run_stats["new_coverage_finds"] += 1
-            self.run_stats["sum_of_mutations_per_find"] += self.mutations_since_last_find
-            self.mutations_since_last_find = 0
+        elif status == "NEW_COVERAGE":
             print(f"  [***] SUCCESS! Mutation #{i + 1} found new coverage. Moving to next parent.")
-            parent_metadata["total_finds"] = parent_metadata.get("total_finds", 0) + 1
-            parent_metadata["mutations_since_last_find"] = 0
             new_filename = self.corpus_manager.add_new_file(
                 core_code=analysis_data["core_code"],
                 baseline_coverage=analysis_data["baseline_coverage"],
@@ -753,6 +751,7 @@ except Exception:
         current_parent_path = initial_parent_path
         current_parent_score = initial_parent_score
         mutations_since_last_find_in_session = 0
+        new_finds_this_session = 0
 
         # --- This loop controls the deepening process ---
         while True:
@@ -831,6 +830,20 @@ except Exception:
                         if flow_control == "BREAK" or flow_control == "CONTINUE":
                             if analysis_data.get("status") == "NEW_COVERAGE":
                                 found_new_coverage_in_cycle = True
+
+                                # --- Update stats and logs on every find ---
+                                self.run_stats["new_coverage_finds"] += 1
+                                self.run_stats["sum_of_mutations_per_find"] += self.mutations_since_last_find
+                                self.mutations_since_last_find = 0
+                                parent_metadata["total_finds"] = parent_metadata.get("total_finds", 0) + 1
+                                parent_metadata["mutations_since_last_find"] = 0
+                                self.update_and_save_run_stats()
+
+                                new_finds_this_session += 1
+                                if new_finds_this_session % 10 == 0:
+                                    print(f"[*] Logging time-series data point after {new_finds_this_session} finds in this session.")
+                                    self._log_timeseries_datapoint()
+
                                 if is_deepening_session:
                                     new_child_filename = analysis_data["new_filename"]
                                     print(f"  [>>>] DEEPENING: New child {new_child_filename} becomes the new parent.",

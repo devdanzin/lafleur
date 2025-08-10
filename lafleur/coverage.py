@@ -21,9 +21,10 @@ from typing import Any
 
 class JitState(Enum):
     """Represents the current operational state of the JIT compiler."""
-    TRACING = auto()      # The JIT is creating a proto-trace from bytecode.
-    OPTIMIZED = auto()    # The JIT has produced and is logging an optimized trace.
-    EXECUTING = auto()    # Default state for general execution.
+
+    TRACING = auto()  # The JIT is creating a proto-trace from bytecode.
+    OPTIMIZED = auto()  # The JIT has produced and is logging an optimized trace.
+    EXECUTING = auto()  # Default state for general execution.
 
 
 PROTO_TRACE_REGEX = re.compile(r"Created a proto-trace")
@@ -100,8 +101,8 @@ def parse_log_for_edge_coverage(log_path: Path) -> dict[str, dict[str, Any]]:
             if harness_match:
                 # Before switching harness, save the metrics for the previous one.
                 if current_harness_id and current_trace_length > 0:
-                    coverage_by_harness[current_harness_id]['trace_length'] = current_trace_length
-                    coverage_by_harness[current_harness_id]['side_exits'] = current_side_exits
+                    coverage_by_harness[current_harness_id]["trace_length"] = current_trace_length
+                    coverage_by_harness[current_harness_id]["side_exits"] = current_side_exits
 
                 # Reset state for the new harness.
                 current_harness_id = harness_match.group(1)
@@ -137,8 +138,8 @@ def parse_log_for_edge_coverage(log_path: Path) -> dict[str, dict[str, Any]]:
 
     # After the loop, save the metrics for the very last harness in the file.
     if current_harness_id and current_trace_length > 0:
-        coverage_by_harness[current_harness_id]['trace_length'] = current_trace_length
-        coverage_by_harness[current_harness_id]['side_exits'] = current_side_exits
+        coverage_by_harness[current_harness_id]["trace_length"] = current_trace_length
+        coverage_by_harness[current_harness_id]["side_exits"] = current_side_exits
 
     return coverage_by_harness
 

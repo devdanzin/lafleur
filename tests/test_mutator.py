@@ -9,16 +9,14 @@ functionality.
 
 import ast
 import random
-import sys
 import unittest
 from textwrap import dedent
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
 # Import all classes and functions from mutator
 from lafleur.mutator import (
     # Main orchestrator
     ASTMutator,
-
     # Basic mutators
     OperatorSwapper,
     ComparisonSwapper,
@@ -28,7 +26,6 @@ from lafleur.mutator import (
     VariableSwapper,
     StatementDuplicator,
     VariableRenamer,
-
     # Stress pattern mutators
     StressPatternInjector,
     TypeInstabilityInjector,
@@ -50,11 +47,9 @@ from lafleur.mutator import (
     ExitStresser,
     DeepCallMutator,
     GuardRemover,
-
     # Utility transformers
     FuzzerSetupNormalizer,
     EmptyBodySanitizer,
-
     # Helper functions
     _create_type_corruption_node,
     _create_uop_attribute_deletion_node,
@@ -65,7 +60,6 @@ from lafleur.mutator import (
     _create_len_attack,
     _create_hash_attack,
     _create_pow_attack,
-
     # Evil object generators
     genLyingEqualityObject,
     genStatefulLenObject,
@@ -279,7 +273,7 @@ class TestBasicMutators(unittest.TestCase):
         tree = ast.parse(code)
 
         # Force mutation by patching random
-        with patch('random.random', return_value=0.1):
+        with patch("random.random", return_value=0.1):
             mutator = OperatorSwapper()
             mutated = mutator.visit(tree)
 
@@ -294,7 +288,7 @@ class TestBasicMutators(unittest.TestCase):
         code = "if a < b: pass"
         tree = ast.parse(code)
 
-        with patch('random.random', return_value=0.3):
+        with patch("random.random", return_value=0.3):
             mutator = ComparisonSwapper()
             mutated = mutator.visit(tree)
 
@@ -308,8 +302,8 @@ class TestBasicMutators(unittest.TestCase):
         code = "x = 42"
         tree = ast.parse(code)
 
-        with patch('random.random', return_value=0.1):
-            with patch('random.choice', return_value=1):
+        with patch("random.random", return_value=0.1):
+            with patch("random.choice", return_value=1):
                 mutator = ConstantPerturbator()
                 mutated = mutator.visit(tree)
 
@@ -321,15 +315,15 @@ class TestBasicMutators(unittest.TestCase):
         code = "x = 'hello'"
         tree = ast.parse(code)
 
-        with patch('random.random', return_value=0.1):
-            with patch('random.randint', return_value=1):  # Mutate 'e'
-                with patch('random.choice', return_value=1):
+        with patch("random.random", return_value=0.1):
+            with patch("random.randint", return_value=1):  # Mutate 'e'
+                with patch("random.choice", return_value=1):
                     mutator = ConstantPerturbator()
                     mutated = mutator.visit(tree)
 
         constant = mutated.body[0].value
         self.assertEqual(len(constant.value), 5)
-        self.assertNotEqual(constant.value, 'hello')
+        self.assertNotEqual(constant.value, "hello")
 
     def test_guard_injector(self):
         """Test GuardInjector mutator."""
@@ -345,14 +339,14 @@ class TestBasicMutators(unittest.TestCase):
         test = mutated.body[0].test
         self.assertIsInstance(test, ast.Compare)
         self.assertIsInstance(test.left, ast.Call)
-        self.assertEqual(test.left.func.value.id, 'fuzzer_rng')
+        self.assertEqual(test.left.func.value.id, "fuzzer_rng")
 
     def test_container_changer_list_to_set(self):
         """Test ContainerChanger converting list to set."""
         code = "x = [1, 2, 3]"
         tree = ast.parse(code)
 
-        with patch('random.random', return_value=0.3):
+        with patch("random.random", return_value=0.3):
             mutator = ContainerChanger()
             mutated = mutator.visit(tree)
 
@@ -364,7 +358,7 @@ class TestBasicMutators(unittest.TestCase):
         code = "x = [i for i in range(10)]"
         tree = ast.parse(code)
 
-        with patch('random.random', return_value=0.3):
+        with patch("random.random", return_value=0.3):
             mutator = ContainerChanger()
             mutated = mutator.visit(tree)
 
@@ -401,15 +395,15 @@ class TestBasicMutators(unittest.TestCase):
 
         # print and len should not be swapped
         call = mutated.body[0].value
-        self.assertEqual(call.func.id, 'print')
-        self.assertEqual(call.args[0].func.id, 'len')
+        self.assertEqual(call.func.id, "print")
+        self.assertEqual(call.args[0].func.id, "len")
 
     def test_statement_duplicator(self):
         """Test StatementDuplicator mutator."""
         code = "x = 1"
         tree = ast.parse(code)
 
-        with patch('random.random', return_value=0.05):
+        with patch("random.random", return_value=0.05):
             mutator = StatementDuplicator()
             mutated = mutator.visit(tree)
 
@@ -423,14 +417,14 @@ class TestBasicMutators(unittest.TestCase):
         code = "x = 1; y = x + 2"
         tree = ast.parse(code)
 
-        remapping = {'x': 'renamed_x', 'y': 'renamed_y'}
+        remapping = {"x": "renamed_x", "y": "renamed_y"}
         mutator = VariableRenamer(remapping)
         mutated = mutator.visit(tree)
 
         # Check variables were renamed
-        self.assertEqual(mutated.body[0].targets[0].id, 'renamed_x')
-        self.assertEqual(mutated.body[1].targets[0].id, 'renamed_y')
-        self.assertEqual(mutated.body[1].value.left.id, 'renamed_x')
+        self.assertEqual(mutated.body[0].targets[0].id, "renamed_x")
+        self.assertEqual(mutated.body[1].targets[0].id, "renamed_y")
+        self.assertEqual(mutated.body[1].value.left.id, "renamed_x")
 
 
 class TestStressPatternMutators(unittest.TestCase):
@@ -450,8 +444,8 @@ class TestStressPatternMutators(unittest.TestCase):
         """)
         tree = ast.parse(code)
 
-        with patch('random.random', return_value=0.1):
-            with patch('random.choice', side_effect=lambda x: x[0]):
+        with patch("random.random", return_value=0.1):
+            with patch("random.choice", side_effect=lambda x: x[0]):
                 mutator = StressPatternInjector()
                 mutated = mutator.visit(tree)
 
@@ -471,8 +465,8 @@ class TestStressPatternMutators(unittest.TestCase):
         """)
         tree = ast.parse(code)
 
-        with patch('random.random', return_value=0.05):
-            with patch('random.choice', side_effect=lambda x: x[0] if isinstance(x, list) else x):
+        with patch("random.random", return_value=0.05):
+            with patch("random.choice", side_effect=lambda x: x[0] if isinstance(x, list) else x):
                 mutator = TypeInstabilityInjector()
                 mutated = mutator.visit(tree)
 
@@ -489,7 +483,7 @@ class TestStressPatternMutators(unittest.TestCase):
         """)
         tree = ast.parse(code)
 
-        with patch('random.random', return_value=0.05):
+        with patch("random.random", return_value=0.05):
             mutator = GuardExhaustionGenerator()
             mutated = mutator.visit(tree)
 
@@ -506,7 +500,7 @@ class TestStressPatternMutators(unittest.TestCase):
         """)
         tree = ast.parse(code)
 
-        with patch('random.random', return_value=0.05):
+        with patch("random.random", return_value=0.05):
             mutator = InlineCachePolluter()
             mutated = mutator.visit(tree)
 
@@ -525,8 +519,8 @@ class TestStressPatternMutators(unittest.TestCase):
         """)
         tree = ast.parse(code)
 
-        with patch('random.random', return_value=0.1):
-            with patch('random.choice', side_effect=lambda x: x[0] if isinstance(x, list) else x):
+        with patch("random.random", return_value=0.1):
+            with patch("random.choice", side_effect=lambda x: x[0] if isinstance(x, list) else x):
                 mutator = SideEffectInjector()
                 mutated = mutator.visit(tree)
 
@@ -534,8 +528,7 @@ class TestStressPatternMutators(unittest.TestCase):
         func = mutated.body[0]
         # Look for FrameModifier class
         has_frame_modifier = any(
-            isinstance(stmt, ast.ClassDef) and 'FrameModifier' in stmt.name
-            for stmt in func.body
+            isinstance(stmt, ast.ClassDef) and "FrameModifier" in stmt.name for stmt in func.body
         )
         self.assertTrue(has_frame_modifier)
 
@@ -547,9 +540,9 @@ class TestStressPatternMutators(unittest.TestCase):
         """)
         tree = ast.parse(code)
 
-        with patch('random.random', return_value=0.01):
-            with patch('random.choice', return_value='range'):
-                with patch('random.randint', return_value=100):
+        with patch("random.random", return_value=0.01):
+            with patch("random.choice", return_value="range"):
+                with patch("random.randint", return_value=100):
                     mutator = ForLoopInjector()
                     mutated = mutator.visit(tree)
 
@@ -564,8 +557,8 @@ class TestStressPatternMutators(unittest.TestCase):
         """)
         tree = ast.parse(code)
 
-        with patch('random.random', return_value=0.05):
-            with patch('random.randint', side_effect=[0, 12345]):
+        with patch("random.random", return_value=0.05):
+            with patch("random.randint", side_effect=[0, 12345]):
                 mutator = GlobalInvalidator()
                 mutated = mutator.visit(tree)
 
@@ -573,11 +566,11 @@ class TestStressPatternMutators(unittest.TestCase):
         func = mutated.body[0]
         # Look for globals() call
         has_globals = any(
-            isinstance(stmt, ast.Assign) and
-            isinstance(stmt.targets[0], ast.Subscript) and
-            isinstance(stmt.targets[0].value, ast.Call) and
-            isinstance(stmt.targets[0].value.func, ast.Name) and
-            stmt.targets[0].value.func.id == 'globals'
+            isinstance(stmt, ast.Assign)
+            and isinstance(stmt.targets[0], ast.Subscript)
+            and isinstance(stmt.targets[0].value, ast.Call)
+            and isinstance(stmt.targets[0].value.func, ast.Name)
+            and stmt.targets[0].value.func.id == "globals"
             for stmt in func.body
         )
         self.assertTrue(has_globals)
@@ -590,7 +583,7 @@ class TestStressPatternMutators(unittest.TestCase):
         """)
         tree = ast.parse(code)
 
-        with patch('random.random', return_value=0.05):
+        with patch("random.random", return_value=0.05):
             mutator = LoadAttrPolluter()
             mutated = mutator.visit(tree)
 
@@ -598,13 +591,13 @@ class TestStressPatternMutators(unittest.TestCase):
         func = mutated.body[0]
         # Look for ShapeA/B/C/D classes
         class_names = [stmt.name for stmt in func.body if isinstance(stmt, ast.ClassDef)]
-        shape_classes = [name for name in class_names if 'ShapeA_' in name or 'ShapeB_' in name]
+        shape_classes = [name for name in class_names if "ShapeA_" in name or "ShapeB_" in name]
         self.assertGreater(len(shape_classes), 0)
 
         # Should have loop accessing payload attribute
         code_str = ast.unparse(func)
-        self.assertIn('payload', code_str)
-        self.assertIn('obj.payload', code_str)
+        self.assertIn("payload", code_str)
+        self.assertIn("obj.payload", code_str)
 
     def test_many_vars_injector(self):
         """Test ManyVarsInjector mutator."""
@@ -614,8 +607,8 @@ class TestStressPatternMutators(unittest.TestCase):
         """)
         tree = ast.parse(code)
 
-        with patch('random.random', return_value=0.03):
-            with patch('random.randint', return_value=1234):
+        with patch("random.random", return_value=0.03):
+            with patch("random.randint", return_value=1234):
                 mutator = ManyVarsInjector()
                 mutated = mutator.visit(tree)
 
@@ -628,8 +621,8 @@ class TestStressPatternMutators(unittest.TestCase):
 
         # Check variable naming pattern
         code_str = ast.unparse(func)
-        self.assertIn('mv_1234_0', code_str)
-        self.assertIn('mv_1234_259', code_str)
+        self.assertIn("mv_1234_0", code_str)
+        self.assertIn("mv_1234_259", code_str)
 
     def test_type_introspection_mutator(self):
         """Test TypeIntrospectionMutator mutator."""
@@ -643,8 +636,8 @@ class TestStressPatternMutators(unittest.TestCase):
         """)
         tree = ast.parse(code)
 
-        with patch('random.random', return_value=0.1):
-            with patch('random.choice', side_effect=lambda x: x[0] if isinstance(x, list) else x):
+        with patch("random.random", return_value=0.1):
+            with patch("random.choice", side_effect=lambda x: x[0] if isinstance(x, list) else x):
                 mutator = TypeIntrospectionMutator()
                 mutated = mutator.visit(tree)
 
@@ -653,8 +646,8 @@ class TestStressPatternMutators(unittest.TestCase):
         code_str = ast.unparse(func)
 
         # Should contain either isinstance or hasattr attack
-        has_isinstance_attack = 'isinstance attack' in code_str or 'poly_isinstance' in code_str
-        has_hasattr_attack = 'hasattr' in code_str and 'fuzzer_attr' in code_str
+        has_isinstance_attack = "isinstance attack" in code_str or "poly_isinstance" in code_str
+        has_hasattr_attack = "hasattr" in code_str and "fuzzer_attr" in code_str
         self.assertTrue(has_isinstance_attack or has_hasattr_attack)
 
     def test_exit_stresser(self):
@@ -665,8 +658,10 @@ class TestStressPatternMutators(unittest.TestCase):
         """)
         tree = ast.parse(code)
 
-        with patch('lafleur.mutator.random.random', return_value=0.05):
-            with patch('lafleur.mutator.random.randint', side_effect=[4567, 7]):  # prefix and num_branches
+        with patch("lafleur.mutator.random.random", return_value=0.05):
+            with patch(
+                "lafleur.mutator.random.randint", side_effect=[4567, 7]
+            ):  # prefix and num_branches
                 mutator = ExitStresser()
                 mutated = mutator.visit(tree)
 
@@ -675,11 +670,11 @@ class TestStressPatternMutators(unittest.TestCase):
         code_str = ast.unparse(func)
 
         # Should contain the exit stress pattern
-        self.assertIn('exit stress scenario', code_str)
-        self.assertIn('res_es_4567', code_str)
+        self.assertIn("exit stress scenario", code_str)
+        self.assertIn("res_es_4567", code_str)
         # Should have if/elif chain
-        self.assertIn('if i %', code_str)
-        self.assertIn('elif i %', code_str)
+        self.assertIn("if i %", code_str)
+        self.assertIn("elif i %", code_str)
 
 
 class TestAdvancedMutators(unittest.TestCase):
@@ -697,15 +692,15 @@ class TestAdvancedMutators(unittest.TestCase):
         """)
         tree = ast.parse(code)
 
-        with patch('random.random', return_value=0.1):
-            with patch('random.choices', return_value=[1]):
+        with patch("random.random", return_value=0.1):
+            with patch("random.choices", return_value=[1]):
                 mutator = GCInjector()
                 mutated = mutator.visit(tree)
 
         # Should have injected import gc and gc.set_threshold
         func = mutated.body[0]
         self.assertIsInstance(func.body[0], ast.Import)
-        self.assertEqual(func.body[0].names[0].name, 'gc')
+        self.assertEqual(func.body[0].names[0].name, "gc")
         self.assertIsInstance(func.body[1], ast.Expr)
 
     def test_dict_polluter_global(self):
@@ -716,7 +711,7 @@ class TestAdvancedMutators(unittest.TestCase):
         """)
         tree = ast.parse(code)
 
-        with patch('random.random', side_effect=[0.05, 0.3]):
+        with patch("random.random", side_effect=[0.05, 0.3]):
             mutator = DictPolluter()
             mutated = mutator.visit(tree)
 
@@ -732,8 +727,8 @@ class TestAdvancedMutators(unittest.TestCase):
         """)
         tree = ast.parse(code)
 
-        with patch('random.random', return_value=0.05):
-            with patch('random.choice', side_effect=lambda x: x[0]):
+        with patch("random.random", return_value=0.05):
+            with patch("random.choice", side_effect=lambda x: x[0]):
                 mutator = FunctionPatcher()
                 mutated = mutator.visit(tree)
 
@@ -741,8 +736,7 @@ class TestAdvancedMutators(unittest.TestCase):
         func = mutated.body[0]
         # Look for victim_func definition
         has_victim_func = any(
-            isinstance(stmt, ast.FunctionDef) and 'victim_func' in stmt.name
-            for stmt in func.body
+            isinstance(stmt, ast.FunctionDef) and "victim_func" in stmt.name for stmt in func.body
         )
         self.assertTrue(has_victim_func)
 
@@ -754,8 +748,8 @@ class TestAdvancedMutators(unittest.TestCase):
         """)
         tree = ast.parse(code)
 
-        with patch('random.random', return_value=0.05):
-            with patch('random.choice', side_effect=lambda x: x[0]):
+        with patch("random.random", return_value=0.05):
+            with patch("random.choice", side_effect=lambda x: x[0]):
                 mutator = TraceBreaker()
                 mutated = mutator.visit(tree)
 
@@ -771,9 +765,9 @@ class TestAdvancedMutators(unittest.TestCase):
         """)
         tree = ast.parse(code)
 
-        with patch('lafleur.mutator.random.random', return_value=0.05):
-            with patch('lafleur.mutator.random.choice', return_value=10):
-                with patch('lafleur.mutator.random.randint', return_value=1234):  # Add prefix mock
+        with patch("lafleur.mutator.random.random", return_value=0.05):
+            with patch("lafleur.mutator.random.choice", return_value=10):
+                with patch("lafleur.mutator.random.randint", return_value=1234):  # Add prefix mock
                     mutator = DeepCallMutator()
                     mutated = mutator.visit(tree)
 
@@ -793,13 +787,13 @@ class TestAdvancedMutators(unittest.TestCase):
         """)
         tree = ast.parse(code)
 
-        with patch('random.random', return_value=0.1):
+        with patch("random.random", return_value=0.1):
             mutator = GuardRemover()
             mutated = mutator.visit(tree)
 
         # Should have removed the guard
         self.assertIsInstance(mutated.body[0], ast.Assign)
-        self.assertEqual(mutated.body[0].targets[0].id, 'x')
+        self.assertEqual(mutated.body[0].targets[0].id, "x")
 
 
 class TestMagicMethodMutators(unittest.TestCase):
@@ -817,8 +811,8 @@ class TestMagicMethodMutators(unittest.TestCase):
         """)
         tree = ast.parse(code)
 
-        with patch('random.random', return_value=0.1):
-            with patch('random.choice', return_value=_create_len_attack):
+        with patch("random.random", return_value=0.1):
+            with patch("random.choice", return_value=_create_len_attack):
                 mutator = MagicMethodMutator()
                 mutated = mutator.visit(tree)
 
@@ -826,8 +820,7 @@ class TestMagicMethodMutators(unittest.TestCase):
         func = mutated.body[0]
         # Look for StatefulLen class
         has_stateful_len = any(
-            isinstance(stmt, ast.ClassDef) and 'StatefulLen' in stmt.name
-            for stmt in func.body
+            isinstance(stmt, ast.ClassDef) and "StatefulLen" in stmt.name for stmt in func.body
         )
         self.assertTrue(has_stateful_len)
 
@@ -836,8 +829,8 @@ class TestMagicMethodMutators(unittest.TestCase):
         code = "result = pow(2, 3)"
         tree = ast.parse(code)
 
-        with patch('random.random', return_value=0.05):
-            with patch('random.choice', return_value=(10, -2)):
+        with patch("random.random", return_value=0.05):
+            with patch("random.choice", return_value=(10, -2)):
                 mutator = NumericMutator()
                 mutated = mutator.visit(tree)
 
@@ -851,8 +844,8 @@ class TestMagicMethodMutators(unittest.TestCase):
         code = "c = chr(65)"
         tree = ast.parse(code)
 
-        with patch('random.random', return_value=0.05):
-            with patch('random.choice', return_value=-1):
+        with patch("random.random", return_value=0.05):
+            with patch("random.choice", return_value=-1):
                 mutator = NumericMutator()
                 mutated = mutator.visit(tree)
 
@@ -868,22 +861,22 @@ class TestMagicMethodMutators(unittest.TestCase):
         """)
         tree = ast.parse(code)
 
-        with patch('random.random', return_value=0.1):
+        with patch("random.random", return_value=0.1):
             # Make it choose _create_tuple_attack
             def mock_choice(choices):
                 for choice in choices:
-                    if hasattr(choice, '__name__') and 'tuple' in choice.__name__:
+                    if hasattr(choice, "__name__") and "tuple" in choice.__name__:
                         return choice
                 return choices[0]
 
-            with patch('random.choice', side_effect=mock_choice):
+            with patch("random.choice", side_effect=mock_choice):
                 mutator = IterableMutator()
                 mutated = mutator.visit(tree)
 
         # Should have injected tuple attack scenario
         func = mutated.body[0]
         code_str = ast.unparse(func)
-        self.assertIn('tuple', code_str)
+        self.assertIn("tuple", code_str)
 
 
 class TestUtilityTransformers(unittest.TestCase):
@@ -903,7 +896,7 @@ class TestUtilityTransformers(unittest.TestCase):
 
         # Should have removed gc and random imports
         self.assertEqual(len(mutated.body), 1)
-        self.assertEqual(mutated.body[0].names[0].name, 'os')
+        self.assertEqual(mutated.body[0].names[0].name, "os")
 
     def test_fuzzer_setup_normalizer_assign(self):
         """Test FuzzerSetupNormalizer removing fuzzer_rng assignment."""
@@ -918,7 +911,7 @@ class TestUtilityTransformers(unittest.TestCase):
 
         # Should have removed fuzzer_rng assignment
         self.assertEqual(len(mutated.body), 1)
-        self.assertEqual(mutated.body[0].targets[0].id, 'x')
+        self.assertEqual(mutated.body[0].targets[0].id, "x")
 
     def test_fuzzer_setup_normalizer_gc_call(self):
         """Test FuzzerSetupNormalizer removing gc.set_threshold."""
@@ -934,7 +927,7 @@ class TestUtilityTransformers(unittest.TestCase):
         # Should have removed gc.set_threshold call
         self.assertEqual(len(mutated.body), 1)
         self.assertIsInstance(mutated.body[0].value, ast.Call)
-        self.assertEqual(mutated.body[0].value.func.id, 'print')
+        self.assertEqual(mutated.body[0].value.func.id, "print")
 
     def test_fuzzer_setup_normalizer_random_call(self):
         """Test FuzzerSetupNormalizer converting random() to fuzzer_rng.random()."""
@@ -948,8 +941,8 @@ class TestUtilityTransformers(unittest.TestCase):
         # Should have converted to fuzzer_rng.random()
         call = mutated.body[0].value
         self.assertIsInstance(call.func, ast.Attribute)
-        self.assertEqual(call.func.value.id, 'fuzzer_rng')
-        self.assertEqual(call.func.attr, 'random')
+        self.assertEqual(call.func.value.id, "fuzzer_rng")
+        self.assertEqual(call.func.attr, "random")
 
     def test_empty_body_sanitizer_if(self):
         """Test EmptyBodySanitizer adding pass to empty if."""
@@ -1084,8 +1077,8 @@ class TestASTMutator(unittest.TestCase):
     def test_mutate_list_as_tree(self):
         """Test mutating when tree is a list."""
         statements = [
-            ast.Assign(targets=[ast.Name(id='x', ctx=ast.Store())], value=ast.Constant(value=1)),
-            ast.Assign(targets=[ast.Name(id='y', ctx=ast.Store())], value=ast.Constant(value=2))
+            ast.Assign(targets=[ast.Name(id="x", ctx=ast.Store())], value=ast.Constant(value=1)),
+            ast.Assign(targets=[ast.Name(id="y", ctx=ast.Store())], value=ast.Constant(value=2)),
         ]
 
         mutator = ASTMutator()
@@ -1102,10 +1095,10 @@ class TestASTMutator(unittest.TestCase):
         # Check some key mutators are present
         mutator_names = [m.__name__ for m in mutator.transformers]
 
-        self.assertIn('OperatorSwapper', mutator_names)
-        self.assertIn('GCInjector', mutator_names)
-        self.assertIn('TypeInstabilityInjector', mutator_names)
-        self.assertIn('GuardRemover', mutator_names)
+        self.assertIn("OperatorSwapper", mutator_names)
+        self.assertIn("GCInjector", mutator_names)
+        self.assertIn("TypeInstabilityInjector", mutator_names)
+        self.assertIn("GuardRemover", mutator_names)
 
         # Should have many mutators
         self.assertGreater(len(mutator.transformers), 20)
@@ -1188,7 +1181,7 @@ class TestEdgeCases(unittest.TestCase):
         """)
         tree = ast.parse(code)
 
-        with patch('random.random', return_value=0.05):
+        with patch("random.random", return_value=0.05):
             mutator = TypeInstabilityInjector()
             mutated = mutator.visit(tree)
 
@@ -1203,7 +1196,7 @@ class TestEdgeCases(unittest.TestCase):
         """)
         tree = ast.parse(code)
 
-        with patch('random.random', return_value=0.1):
+        with patch("random.random", return_value=0.1):
             mutator = StressPatternInjector()
             mutated = mutator.visit(tree)
 
@@ -1220,14 +1213,14 @@ class TestEdgeCases(unittest.TestCase):
 
         # Should handle gracefully without swapping
         self.assertIsInstance(mutated, ast.Module)
-        self.assertEqual(mutated.body[0].targets[0].id, 'x')
+        self.assertEqual(mutated.body[0].targets[0].id, "x")
 
     def test_for_loop_injector_with_del(self):
         """Test ForLoopInjector doesn't wrap del statements."""
         code = "del x"
         tree = ast.parse(code)
 
-        with patch('random.random', return_value=0.01):
+        with patch("random.random", return_value=0.01):
             mutator = ForLoopInjector()
             mutated = mutator.visit(tree)
 
@@ -1269,7 +1262,7 @@ class TestEdgeCases(unittest.TestCase):
         """)
         tree = ast.parse(code)
 
-        with patch('random.random', return_value=0.03):
+        with patch("random.random", return_value=0.03):
             mutator = ManyVarsInjector()
             mutated = mutator.visit(tree)
 
@@ -1277,7 +1270,7 @@ class TestEdgeCases(unittest.TestCase):
         func = mutated.body[0]
         # First assignments should be the many new variables
         # Last statements should be the original code
-        self.assertEqual(func.body[-2].targets[0].id, 'existing_var_2')
+        self.assertEqual(func.body[-2].targets[0].id, "existing_var_2")
         self.assertIsInstance(func.body[-1], ast.Return)
 
 
@@ -1332,9 +1325,9 @@ class TestIntegration(unittest.TestCase):
 
         # Then mutate with a seed that won't apply GCInjector
         mutator = ASTMutator()
-        with patch('random.seed'):
-            with patch('random.randint', return_value=1):
-                with patch('random.choices', return_value=[OperatorSwapper]):
+        with patch("random.seed"):
+            with patch("random.randint", return_value=1):
+                with patch("random.choices", return_value=[OperatorSwapper]):
                     mutated, _ = mutator.mutate_ast(normalized, seed=42)
 
         final_code = ast.unparse(mutated)
@@ -1387,7 +1380,7 @@ class TestIntegration(unittest.TestCase):
         # The test was checking for fuzzer_rng.random after mutation,
         # but the mutator prepends attack code. The original normalized
         # code is still there, just later in the function.
-        with patch('random.random', return_value=0.1):
+        with patch("random.random", return_value=0.1):
             mutator = TypeIntrospectionMutator()
             mutated = mutator.visit(normalized)
 
@@ -1429,8 +1422,8 @@ class TestMutatorOutput(unittest.TestCase):
         """)
         tree = ast.parse(code)
 
-        with patch('random.random', return_value=0.1):
-            with patch('random.choices', return_value=[10]):
+        with patch("random.random", return_value=0.1):
+            with patch("random.choices", return_value=[10]):
                 mutator = GCInjector()
                 mutated = mutator.visit(tree)
 
@@ -1458,9 +1451,9 @@ class TestMutatorOutput(unittest.TestCase):
         """)
         tree = ast.parse(code)
 
-        with patch('random.random', return_value=0.05):
-            with patch('random.choice', return_value=5):
-                with patch('random.randint', return_value=2824):
+        with patch("random.random", return_value=0.05):
+            with patch("random.choice", return_value=5):
+                with patch("random.randint", return_value=2824):
                     mutator = DeepCallMutator()
                     mutated = mutator.visit(tree)
 
@@ -1478,8 +1471,10 @@ class TestMutatorOutput(unittest.TestCase):
         """)
         tree = ast.parse(code)
 
-        with patch('lafleur.mutator.random.random', return_value=0.05):
-            with patch('lafleur.mutator.random.randint', side_effect=[9999, 3]):  # prefix and 3 branches
+        with patch("lafleur.mutator.random.random", return_value=0.05):
+            with patch(
+                "lafleur.mutator.random.randint", side_effect=[9999, 3]
+            ):  # prefix and 3 branches
                 mutator = ExitStresser()
                 mutated = mutator.visit(tree)
 
@@ -1499,7 +1494,7 @@ class TestMutatorOutput(unittest.TestCase):
         """)
         tree = ast.parse(code)
 
-        with patch('random.random', side_effect=[0.1, 0.3]):  # Force polymorphic attack
+        with patch("random.random", side_effect=[0.1, 0.3]):  # Force polymorphic attack
             mutator = TypeIntrospectionMutator()
             mutated = mutator.visit(tree)
 
@@ -1509,5 +1504,5 @@ class TestMutatorOutput(unittest.TestCase):
         self.assertIn("isinstance(poly_variable, str)", output)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     unittest.main(verbosity=2)

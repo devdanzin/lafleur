@@ -3,6 +3,7 @@ import re
 from pathlib import Path
 import sys
 
+
 def bump_version(new_version):
     # Update pyproject.toml
     pyproject = Path("pyproject.toml")
@@ -16,6 +17,7 @@ def bump_version(new_version):
         content = init_file.read_text()
         content = re.sub(r'__version__ = "[^"]+"', f'__version__ = "{new_version}"', content)
         init_file.write_text(content)
+
 
 if __name__ == "__main__":
     if len(sys.argv) != 2:

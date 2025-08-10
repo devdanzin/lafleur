@@ -136,7 +136,7 @@ class CorpusManager:
 
         CORPUS_DIR.mkdir(parents=True, exist_ok=True)
         TMP_DIR.mkdir(parents=True, exist_ok=True)
-        
+
         print(f"[*] Using execution timeout of {self.execution_timeout} seconds")
 
     def synchronize(
@@ -252,7 +252,10 @@ class CorpusManager:
                     )
 
             except subprocess.TimeoutExpired:
-                print(f"  [!] Timeout ({self.execution_timeout}s) expired for seed file {filename}", file=sys.stderr)
+                print(
+                    f"  [!] Timeout ({self.execution_timeout}s) expired for seed file {filename}",
+                    file=sys.stderr,
+                )
             except Exception as e:
                 print(f"  [!] Failed to analyze seed file {filename}: {e}", file=sys.stderr)
 
@@ -405,14 +408,17 @@ class CorpusManager:
         try:
             with open(tmp_log, "w") as log_file:
                 result = subprocess.run(
-                    ["python3", tmp_source], 
-                    stdout=log_file, 
-                    stderr=subprocess.STDOUT, 
+                    ["python3", tmp_source],
+                    stdout=log_file,
+                    stderr=subprocess.STDOUT,
                     timeout=self.execution_timeout,  # Use configurable timeout here too
-                    env=ENV
+                    env=ENV,
                 )
         except subprocess.TimeoutExpired:
-            print(f"[!] Timeout ({self.execution_timeout}s) expired during seed generation", file=sys.stderr)
+            print(
+                f"[!] Timeout ({self.execution_timeout}s) expired during seed generation",
+                file=sys.stderr,
+            )
             return
 
         # Analyze it for coverage

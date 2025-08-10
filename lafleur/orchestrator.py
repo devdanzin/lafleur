@@ -1,4 +1,3 @@
-
 """
 This module contains the main LafleurOrchestrator class.
 
@@ -80,7 +79,13 @@ class LafleurOrchestrator:
     """
 
     def __init__(
-        self, fusil_path: str, min_corpus_files: int = 1, differential_testing: bool = False, timeout: int = 10,  num_runs: int = 1, use_dynamic_runs: bool = False,
+        self,
+        fusil_path: str,
+        min_corpus_files: int = 1,
+        differential_testing: bool = False,
+        timeout: int = 10,
+        num_runs: int = 1,
+        use_dynamic_runs: bool = False,
     ):
         """Initialize the orchestrator and the corpus manager."""
         self.differential_testing = differential_testing
@@ -98,7 +103,7 @@ class LafleurOrchestrator:
 
         self.min_corpus_files = min_corpus_files
         self.corpus_manager = CorpusManager(
-            self.coverage_state, self.run_stats, fusil_path, self.get_boilerplate,self.timeout
+            self.coverage_state, self.run_stats, fusil_path, self.get_boilerplate, self.timeout
         )
         # Synchronize the corpus and state at startup.
         self.corpus_manager.synchronize(self.analyze_run, self._build_lineage_profile)
@@ -278,7 +283,9 @@ class LafleurOrchestrator:
         dynamic_weights = self.score_tracker.get_weights(transformer_names)
 
         for _ in range(num_havoc_mutations):
-            transformer_class = random.choices(self.ast_mutator.transformers, weights=dynamic_weights, k=1)[0]
+            transformer_class = random.choices(
+                self.ast_mutator.transformers, weights=dynamic_weights, k=1
+            )[0]
             # Record the attempt
             self.score_tracker.attempts[transformer_class.__name__] += 1
             transformers_applied.append(transformer_class.__name__)
@@ -298,7 +305,9 @@ class LafleurOrchestrator:
         transformer_names = [t.__name__ for t in self.ast_mutator.transformers]
         dynamic_weights = self.score_tracker.get_weights(transformer_names)
 
-        chosen_transformer_class = random.choices(self.ast_mutator.transformers, weights=dynamic_weights, k=1)[0]
+        chosen_transformer_class = random.choices(
+            self.ast_mutator.transformers, weights=dynamic_weights, k=1
+        )[0]
         print(f"    -> Spamming with: {chosen_transformer_class.__name__}", file=sys.stderr)
 
         for _ in range(num_spam_mutations):
@@ -427,7 +436,9 @@ class LafleurOrchestrator:
             self._run_havoc_stage,
             self._run_spam_stage,
         ]
-        strategy_names = [s.__name__.replace("_run_", "").replace("_stage", "") for s in strategy_candidates]
+        strategy_names = [
+            s.__name__.replace("_run_", "").replace("_stage", "") for s in strategy_candidates
+        ]
 
         # Record an attempt for each strategy to help with exploration.
         for name in strategy_names:
@@ -457,7 +468,7 @@ class LafleurOrchestrator:
             mutated_harness_node, mutation_info = self.apply_mutation_strategy(
                 original_harness_node, seed=seed
             )
-            mutation_info['runtime_seed'] = seed + 1
+            mutation_info["runtime_seed"] = seed + 1
             return mutated_harness_node, mutation_info
         except RecursionError:
             print(
@@ -480,7 +491,7 @@ class LafleurOrchestrator:
         try:
             gc_tuning_code = ""
             if random.random() < 0.25:  # 25% chance to prepend GC tuning
-                print(f"    -> Prepending GC pressure to test case", file=sys.stderr)
+                print("    -> Prepending GC pressure to test case", file=sys.stderr)
                 # This logic is the same as in GCInjector
                 thresholds = [1, 10, 100, None]
                 weights = [0.6, 0.1, 0.1, 0.2]
@@ -548,7 +559,12 @@ except Exception:
             return None
 
     def _execute_child(
-        self, source_code: str, session_id: int, mutation_index: int,  child_source_path: Path, child_log_path: Path
+        self,
+        source_code: str,
+        session_id: int,
+        mutation_index: int,
+        child_source_path: Path,
+        child_log_path: Path,
     ) -> ExecutionResult | None:
         """Write the child script to a temp file, execute it, and return results."""
 
@@ -577,7 +593,7 @@ except Exception:
             log_to_save = child_log_path
             try:
                 if child_log_path.stat().st_size > TIMEOUT_LOG_COMPRESSION_THRESHOLD:
-                    print(f"  [*] Timeout log is large, compressing with zstd...", file=sys.stderr)
+                    print("  [*] Timeout log is large, compressing with zstd...", file=sys.stderr)
                     compressed_log_path = child_log_path.with_suffix(".log.zst")
 
                     log_content = child_log_path.read_bytes()
@@ -590,8 +606,12 @@ except Exception:
             except Exception as e:
                 print(f"  [!] Warning: Could not compress timeout log: {e}", file=sys.stderr)
 
-            timeout_source_path = TIMEOUTS_DIR / f"timeout_{session_id}_{mutation_index}_{child_source_path.name}"
-            timeout_log_path = timeout_source_path.with_suffix(log_to_save.suffix)  # Use the correct suffix
+            timeout_source_path = (
+                TIMEOUTS_DIR / f"timeout_{session_id}_{mutation_index}_{child_source_path.name}"
+            )
+            timeout_log_path = timeout_source_path.with_suffix(
+                log_to_save.suffix
+            )  # Use the correct suffix
 
             if log_to_save.exists():
                 shutil.copy(child_source_path, timeout_source_path)
@@ -607,10 +627,10 @@ except Exception:
             # A common exit code for segfaults is -11. We'll use a high
             # number to indicate an exceptional failure that was caught.
             return ExecutionResult(
-                returncode=255, # Indicates a crash caught by the orchestrator
+                returncode=255,  # Indicates a crash caught by the orchestrator
                 log_path=child_log_path,
                 source_path=child_source_path,
-                execution_time_ms=0
+                execution_time_ms=0,
             )
 
     def _handle_analysis_data(
@@ -767,14 +787,19 @@ except Exception:
                     runtime_seed = (mutation_seed + 1) * (run_num + 1)
 
                     # Update the mutation_info for accurate logging
-                    mutation_info['runtime_seed'] = runtime_seed
+                    mutation_info["runtime_seed"] = runtime_seed
 
                     if num_runs > 1:
                         print(f"    -> Run #{run_num + 1}/{num_runs} (RuntimeSeed: {runtime_seed})")
 
                     child_source = self._prepare_child_script(
-                        parent_core_tree, mutated_harness_node, setup_code, prefix,
-                        mutation_seed, parent_id, runtime_seed
+                        parent_core_tree,
+                        mutated_harness_node,
+                        setup_code,
+                        prefix,
+                        mutation_seed,
+                        parent_id,
+                        runtime_seed,
                     )
                     if not child_source:
                         continue  # Skip this run if script prep fails
@@ -786,8 +811,12 @@ except Exception:
                         continue  # Skip this run if execution fails
 
                     analysis_data = self.analyze_run(
-                        exec_result, parent_lineage_profile, parent_id,
-                        mutation_info, mutation_seed, self.differential_testing
+                        exec_result,
+                        parent_lineage_profile,
+                        parent_id,
+                        mutation_info,
+                        mutation_seed,
+                        self.differential_testing,
                     )
 
                     flow_control = self._handle_analysis_data(analysis_data, i + 1, parent_metadata)
@@ -829,10 +858,15 @@ except Exception:
         """Check for crashes and save artifacts."""
         if return_code != 0:
             if "IndentationError: too many levels of indentation" in log_content:
-                print("  [~] Ignoring known-uninteresting IndentationError (too deep).", file=sys.stderr)
+                print(
+                    "  [~] Ignoring known-uninteresting IndentationError (too deep).",
+                    file=sys.stderr,
+                )
                 return False
             elif "SyntaxError: too many statically nested blocks" in log_content:
-                print("  [~] Ignoring known-uninteresting SyntaxError (too nested).", file=sys.stderr)
+                print(
+                    "  [~] Ignoring known-uninteresting SyntaxError (too nested).", file=sys.stderr
+                )
                 return False
 
             print(f"  [!!!] CRASH DETECTED! Exit code: {return_code}. Saving...", file=sys.stderr)
@@ -916,10 +950,10 @@ except Exception:
         for harness_id in sorted(coverage_profile.keys()):
             edges = sorted(coverage_profile[harness_id].get("edges", {}).keys())
             if edges:
-                all_edges.append(f"{harness_id}:{','.join(": ".join(edge) for edge in edges)}")
+                all_edges.append(f"{harness_id}:{','.join(': '.join(edge) for edge in edges)}")
 
         canonical_string = ";".join(all_edges)
-        return hashlib.sha256(canonical_string.encode('utf-8')).hexdigest()
+        return hashlib.sha256(canonical_string.encode("utf-8")).hexdigest()
 
     def analyze_run(
         self,
@@ -960,7 +994,8 @@ except Exception:
             if (content_hash, coverage_hash) in self.corpus_manager.known_hashes:
                 print(
                     f"  [~] New coverage found, but this is a known duplicate behavior (ContentHash: {content_hash[:10]}, CoverageHash: {coverage_hash[:10]}). Skipping.",
-                    file=sys.stderr)
+                    file=sys.stderr,
+                )
                 return {"status": "NO_CHANGE"}
 
             # This is the crucial step: if it's new and not a duplicate, we commit the coverage.
@@ -1006,21 +1041,25 @@ except Exception:
         lineage = copy.deepcopy(parent_lineage_profile)
         for harness_id, child_data in child_baseline_profile.items():
             # Ensure the harness entry exists in the new lineage profile.
-            lineage_harness = lineage.setdefault(harness_id, {
-                "uops": set(), "edges": set(), "rare_events": set(),
-                "max_trace_length": 0, "max_side_exits": 0
-            })
+            lineage_harness = lineage.setdefault(
+                harness_id,
+                {
+                    "uops": set(),
+                    "edges": set(),
+                    "rare_events": set(),
+                    "max_trace_length": 0,
+                    "max_side_exits": 0,
+                },
+            )
             lineage_harness["uops"].update(child_data.get("uops", {}).keys())
             lineage_harness["rare_events"].update(child_data.get("rare_events", {}).keys())
             lineage_harness["edges"].update(child_data.get("edges", {}).keys())
 
             lineage_harness["max_trace_length"] = max(
-                lineage_harness.get("max_trace_length", 0),
-                child_data.get("trace_length", 0)
+                lineage_harness.get("max_trace_length", 0), child_data.get("trace_length", 0)
             )
             lineage_harness["max_side_exits"] = max(
-                lineage_harness.get("max_side_exits", 0),
-                child_data.get("side_exits", 0)
+                lineage_harness.get("max_side_exits", 0), child_data.get("side_exits", 0)
             )
 
         return lineage
@@ -1162,15 +1201,15 @@ def main():
         help="Timeout in seconds for script execution.",
     )
     parser.add_argument(
-        '--runs',
+        "--runs",
         type=int,
         default=1,
-        help='Run each mutated test case N times. (Default: 1)',
+        help="Run each mutated test case N times. (Default: 1)",
     )
     parser.add_argument(
-        '--dynamic-runs',
-        action='store_true',
-        help='Dynamically vary the number of runs based on parent score, overriding --runs.',
+        "--dynamic-runs",
+        action="store_true",
+        help="Dynamically vary the number of runs based on parent score, overriding --runs.",
     )
     args = parser.parse_args()
 

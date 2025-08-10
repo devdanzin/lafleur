@@ -19,12 +19,18 @@ All notable changes to this project should be documented in this file.
 - An `ExitStresser` mutator to attack the JIT's side-exit mechanism with loops containing many frequently taken branches, by @devdanzin.
 - A `DeepCallMutator` to attack the JIT's trace stack limit by adding a chain of nested function calls, by @devdanzin.
 - A `GuardRemover` mutator as a counterpoint to `GuardInjector`, by @devdanzin.
+- Tests for mutators.py, by @devdanzin.
 
 
 ### Enhanced
 
 - Timeout log files will be compressed with zstd if larger than 1MB, by @devdanzin.
 - Mutations (`GuardInjector`) will add non-determinism again in a reproducible way, by @devdanzin.
+- Give scores to mutators and reward those most successful, by @devdanzin.
+- Use trace length and number of side exits in corpus scheduling, by @devdanzin.
+- Record JIT state (executing, tracing or optimized) when collecting edges, by @devdanzin.
+- Use `FuzzerSetupNormalizer` make randomness reproducible, by @devdanzin.
+- Do not record some known uninteresting crashes, by @devdanzin.
 
 
 ### Fixed
@@ -33,6 +39,12 @@ All notable changes to this project should be documented in this file.
 - Avoid adding RNG seeding and GC tuning multiple times, by @devdanzin.
 - Avoid double counting crashes, by @devdanzin.
 - Avoid IndentationErrors after mutation with `GuardRemover`, by @devdanzin.
+- Delete temporary compressed files, by @devdanzin.
+- Avoid overwriting new files manually added to the corpus, by @devdanzin.
+- Code generation bugs in FuzzerSetupNormalizer, DeepCallMutator and ExitStresser, by @devdanzin.
+- Detect interestingness of manually added files to the corpus, by @devdanzin.
+- Use `FuzzerSetupNormalizer` to remove extraneous GC and RNG tuning, by @devdanzin.
+- Sanitize all blocks that would have an empty block to contain `pass`, by @devdanzin.
 
 
 ## [0.0.1] - 2024-11-20

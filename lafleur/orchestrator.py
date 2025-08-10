@@ -228,10 +228,12 @@ class LafleurOrchestrator:
                     parent_path, parent_score = selection
                     if is_deepening_session:
                         print(
-                            f"[+] Selected parent for DEEPENING session: {parent_path.name} (Score: {parent_score:.2f})")
+                            f"[+] Selected parent for DEEPENING session: {parent_path.name} (Score: {parent_score:.2f})"
+                        )
                     else:
                         print(
-                            f"[+] Selected parent for BREADTH session: {parent_path.name} (Score: {parent_score:.2f})")
+                            f"[+] Selected parent for BREADTH session: {parent_path.name} (Score: {parent_score:.2f})"
+                        )
 
                     self.execute_mutation_and_analysis_cycle(
                         parent_path, parent_score, session_num, is_deepening_session
@@ -659,7 +661,7 @@ except Exception:
             print(
                 f"  [***] SUCCESS! Mutation #{i + 1} found a correctness divergence. Moving to next parent."
             )
-            analysis_data["new_filename"] = "divergence" # Placeholder
+            analysis_data["new_filename"] = "divergence"  # Placeholder
             return "BREAK"  # A divergence is a major find, move to the next parent
         elif status == "CRASH":
             self.run_stats["crashes_found"] = self.run_stats.get("crashes_found", 0) + 1
@@ -677,7 +679,7 @@ except Exception:
                 mutation_seed=analysis_data["mutation_seed"],
                 build_lineage_func=self._build_lineage_profile,
             )
-            analysis_data['new_filename'] = new_filename
+            analysis_data["new_filename"] = new_filename
             return "BREAK"
         else:  # NO_CHANGE
             parent_metadata["mutations_since_last_find"] = (
@@ -741,7 +743,11 @@ except Exception:
         return max_mutations
 
     def execute_mutation_and_analysis_cycle(
-            self, initial_parent_path: Path, initial_parent_score: float, session_id: int, is_deepening_session: bool
+        self,
+        initial_parent_path: Path,
+        initial_parent_score: float,
+        session_id: int,
+        is_deepening_session: bool,
     ):
         """
         Take a parent test case and run a full cycle of mutation and analysis.
@@ -760,7 +766,9 @@ except Exception:
             parent_metadata = self.coverage_state["per_file_coverage"].get(parent_id, {})
             parent_lineage_profile = parent_metadata.get("lineage_coverage_profile", {})
 
-            base_harness_node, parent_core_tree, setup_nodes = self._get_nodes_from_parent(current_parent_path)
+            base_harness_node, parent_core_tree, setup_nodes = self._get_nodes_from_parent(
+                current_parent_path
+            )
             if base_harness_node is None:
                 return  # Abort if parent is invalid
 
@@ -784,12 +792,16 @@ except Exception:
                 mutations_since_last_find_in_session += 1
 
                 if is_deepening_session and mutations_since_last_find_in_session > 30:
-                    print("  [~] Deepening session became sterile. Returning to breadth-first search.")
+                    print(
+                        "  [~] Deepening session became sterile. Returning to breadth-first search."
+                    )
                     return
 
                 self.global_seed_counter += 1
                 mutation_seed = self.global_seed_counter
-                print(f"  \\-> Running mutation #{i + 1} (Seed: {mutation_seed}) for {parent_id}...")
+                print(
+                    f"  \\-> Running mutation #{i + 1} (Seed: {mutation_seed}) for {parent_id}..."
+                )
 
                 mutated_harness_node, mutation_info = self._get_mutated_harness(
                     core_logic_to_mutate, mutation_seed
@@ -803,29 +815,43 @@ except Exception:
                     child_log_path = TMP_DIR / f"child_{session_id}_{i + 1}_{run_num + 1}.log"
                     try:
                         runtime_seed = (mutation_seed + 1) * (run_num + 1)
-                        mutation_info['runtime_seed'] = runtime_seed
+                        mutation_info["runtime_seed"] = runtime_seed
 
                         if num_runs > 1:
-                            print(f"    -> Run #{run_num + 1}/{num_runs} (RuntimeSeed: {runtime_seed})")
+                            print(
+                                f"    -> Run #{run_num + 1}/{num_runs} (RuntimeSeed: {runtime_seed})"
+                            )
 
                         child_source = self._prepare_child_script(
-                            parent_core_tree, mutated_harness_node, setup_code, prefix,
-                            mutation_seed, parent_id, runtime_seed
+                            parent_core_tree,
+                            mutated_harness_node,
+                            setup_code,
+                            prefix,
+                            mutation_seed,
+                            parent_id,
+                            runtime_seed,
                         )
                         if not child_source:
                             continue
 
-                        exec_result = self._execute_child(child_source, session_id, i + 1, child_source_path,
-                                                          child_log_path)
+                        exec_result = self._execute_child(
+                            child_source, session_id, i + 1, child_source_path, child_log_path
+                        )
                         if not exec_result:
                             continue
 
                         analysis_data = self.analyze_run(
-                            exec_result, parent_lineage_profile, parent_id,
-                            mutation_info, mutation_seed, self.differential_testing
+                            exec_result,
+                            parent_lineage_profile,
+                            parent_id,
+                            mutation_info,
+                            mutation_seed,
+                            self.differential_testing,
                         )
 
-                        flow_control = self._handle_analysis_data(analysis_data, i + 1, parent_metadata)
+                        flow_control = self._handle_analysis_data(
+                            analysis_data, i + 1, parent_metadata
+                        )
 
                         if flow_control == "BREAK" or flow_control == "CONTINUE":
                             if analysis_data.get("status") == "NEW_COVERAGE":
@@ -833,24 +859,35 @@ except Exception:
 
                                 # --- Update stats and logs on every find ---
                                 self.run_stats["new_coverage_finds"] += 1
-                                self.run_stats["sum_of_mutations_per_find"] += self.mutations_since_last_find
+                                self.run_stats["sum_of_mutations_per_find"] += (
+                                    self.mutations_since_last_find
+                                )
                                 self.mutations_since_last_find = 0
-                                parent_metadata["total_finds"] = parent_metadata.get("total_finds", 0) + 1
+                                parent_metadata["total_finds"] = (
+                                    parent_metadata.get("total_finds", 0) + 1
+                                )
                                 parent_metadata["mutations_since_last_find"] = 0
                                 self.update_and_save_run_stats()
 
                                 new_finds_this_session += 1
                                 if new_finds_this_session % 10 == 0:
-                                    print(f"[*] Logging time-series data point after {new_finds_this_session} finds in this session.")
+                                    print(
+                                        f"[*] Logging time-series data point after {new_finds_this_session} finds in this session."
+                                    )
                                     self._log_timeseries_datapoint()
 
                                 if is_deepening_session:
                                     new_child_filename = analysis_data["new_filename"]
-                                    print(f"  [>>>] DEEPENING: New child {new_child_filename} becomes the new parent.",
-                                          file=sys.stderr)
+                                    print(
+                                        f"  [>>>] DEEPENING: New child {new_child_filename} becomes the new parent.",
+                                        file=sys.stderr,
+                                    )
                                     current_parent_path = CORPUS_DIR / new_child_filename
-                                    current_parent_score = self.corpus_manager.scheduler.calculate_scores().get(
-                                        new_child_filename, 100.0)
+                                    current_parent_score = (
+                                        self.corpus_manager.scheduler.calculate_scores().get(
+                                            new_child_filename, 100.0
+                                        )
+                                    )
                                     mutations_since_last_find_in_session = 0
                             break  # Break inner multi-run loop
                     finally:
@@ -867,7 +904,9 @@ except Exception:
                             else:
                                 print(f"Error deleting {child_log_path}, file doesn't exist!")
                         except OSError as e:
-                            print(f"  [!] Warning: Could not delete temp file: {e}", file=sys.stderr)
+                            print(
+                                f"  [!] Warning: Could not delete temp file: {e}", file=sys.stderr
+                            )
 
                 if found_new_coverage_in_cycle:
                     break  # Break outer mutation loop

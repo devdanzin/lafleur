@@ -20,6 +20,7 @@ All notable changes to this project should be documented in this file.
 - A `DeepCallMutator` to attack the JIT's trace stack limit by adding a chain of nested function calls, by @devdanzin.
 - A `GuardRemover` mutator as a counterpoint to `GuardInjector`, by @devdanzin.
 - Tests for mutators.py, by @devdanzin.
+- A depth-first way of mutating code samples, by @devdanzin.
 
 
 ### Enhanced

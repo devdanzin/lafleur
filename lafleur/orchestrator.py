@@ -803,6 +803,8 @@ except Exception:
                             print(f"Error deleting {child_source_path}, file doesn't exist!")
                         if child_log_path.exists():
                             child_log_path.unlink()
+                        elif child_log_path.with_suffix(".log.zst").exists():
+                            child_log_path.with_suffix(".log.zst").unlink()
                         else:
                             print(f"Error deleting {child_log_path}, file doesn't exist!")
                     except OSError as e:

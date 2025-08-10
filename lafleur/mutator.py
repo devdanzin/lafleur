@@ -83,6 +83,7 @@ class ConstantPerturbator(ast.NodeTransformer):
 
 class GuardInjector(ast.NodeTransformer):
     """Wrap a random statement in a seeded, reproducible 'if' block."""
+
     def visit(self, node: ast.AST) -> ast.AST | None:
         node = super().visit(node)
 
@@ -95,15 +96,15 @@ class GuardInjector(ast.NodeTransformer):
             test = ast.Compare(
                 left=ast.Call(
                     func=ast.Attribute(
-                        value=ast.Name(id='fuzzer_rng', ctx=ast.Load()),
-                        attr='random',
-                        ctx=ast.Load()
+                        value=ast.Name(id="fuzzer_rng", ctx=ast.Load()),
+                        attr="random",
+                        ctx=ast.Load(),
                     ),
                     args=[],
-                    keywords=[]
+                    keywords=[],
                 ),
                 ops=[ast.Lt()],
-                comparators=[ast.Constant(value=0.1)] # Low probability
+                comparators=[ast.Constant(value=0.1)],  # Low probability
             )
             return ast.If(test=test, body=[node], orelse=[])
         return node
@@ -971,8 +972,6 @@ class TypeIntrospectionMutator(ast.NodeTransformer):
         __class__ is changed after a hot loop.
         """
         print("    -> Injecting isinstance (invalidation) attack...", file=sys.stderr)
-        type_to_check_node = original_call.args[1]
-        type_to_check_str = ast.unparse(type_to_check_node)
 
         p_prefix = f"inv_{random.randint(1000, 9999)}"
         # The attack is self-contained and uses its own classes.
@@ -1485,17 +1484,17 @@ class GCInjector(ast.NodeTransformer):
                 chosen_threshold = random.randint(1, 150)
 
             # 2. Create the AST nodes for 'import gc' and 'gc.set_threshold(...)'
-            import_node = ast.Import(names=[ast.alias(name='gc')])
+            import_node = ast.Import(names=[ast.alias(name="gc")])
 
             set_threshold_node = ast.Expr(
                 value=ast.Call(
                     func=ast.Attribute(
-                        value=ast.Name(id='gc', ctx=ast.Load()),
-                        attr='set_threshold',
-                        ctx=ast.Load()
+                        value=ast.Name(id="gc", ctx=ast.Load()),
+                        attr="set_threshold",
+                        ctx=ast.Load(),
                     ),
                     args=[ast.Constant(value=chosen_threshold)],
-                    keywords=[]
+                    keywords=[],
                 )
             )
 
@@ -1594,7 +1593,9 @@ class FunctionPatcher(ast.NodeTransformer):
 
         # Low probability for this complex injection
         if random.random() < 0.1:
-            print(f"    -> Injecting function patching scenario into '{node.name}'", file=sys.stderr)
+            print(
+                f"    -> Injecting function patching scenario into '{node.name}'", file=sys.stderr
+            )
 
             p_prefix = f"fp_{random.randint(1000, 9999)}"
 
@@ -1765,12 +1766,14 @@ class ExitStresser(ast.NodeTransformer):
             branch_code = []
             for i in range(num_branches):
                 # Each branch performs a slightly different, simple operation
-                branch_body = random.choice([
-                    f"res_{p_prefix} = i * {i}",
-                    f"res_{p_prefix} = str(i)",
-                    f"res_{p_prefix} = len(str(i * 2))",
-                    f"res_{p_prefix} = i % {(i % 5) + 1}",
-                ])
+                branch_body = random.choice(
+                    [
+                        f"res_{p_prefix} = i * {i}",
+                        f"res_{p_prefix} = str(i)",
+                        f"res_{p_prefix} = len(str(i * 2))",
+                        f"res_{p_prefix} = i % {(i % 5) + 1}",
+                    ]
+                )
 
                 if i == 0:
                     branch_code.append(f"if i % {num_branches} == {i}:")
@@ -1787,7 +1790,7 @@ class ExitStresser(ast.NodeTransformer):
                     try:
                         # This long chain encourages the JIT to create multiple
                         # side exits from the main hot loop.
-{indent("\n".join(branch_code), ' ' * 24)}
+{indent(chr(10).join(branch_code), " " * 24)}
                     except Exception:
                         pass
             """)
@@ -1798,7 +1801,7 @@ class ExitStresser(ast.NodeTransformer):
                 node.body = scenario_nodes + node.body
                 ast.fix_missing_locations(node)
             except SyntaxError:
-                print(f"    -> SyntaxError parsing ExitStresser attack code!", file=sys.stderr)
+                print("    -> SyntaxError parsing ExitStresser attack code!", file=sys.stderr)
 
         return node
 
@@ -1808,6 +1811,7 @@ class DeepCallMutator(ast.NodeTransformer):
     Attacks the JIT's trace stack limit by injecting a chain of deeply
     nested function calls with a precisely targeted depth.
     """
+
     TRACE_STACK_SIZE = 10  # From pycore_optimizer.h
 
     def visit_FunctionDef(self, node: ast.FunctionDef) -> ast.FunctionDef:
@@ -1817,14 +1821,18 @@ class DeepCallMutator(ast.NodeTransformer):
             return node
 
         if random.random() < 0.1:  # Low probability for this complex injection
-
             # 1. Choose a "tricky" depth based on the JIT's known limit.
-            depth = random.choice([
-                self.TRACE_STACK_SIZE - 1,
-                self.TRACE_STACK_SIZE,
-                self.TRACE_STACK_SIZE + 1,
-            ])
-            print(f"    -> Injecting deep call chain of depth {depth} into '{node.name}'", file=sys.stderr)
+            depth = random.choice(
+                [
+                    self.TRACE_STACK_SIZE - 1,
+                    self.TRACE_STACK_SIZE,
+                    self.TRACE_STACK_SIZE + 1,
+                ]
+            )
+            print(
+                f"    -> Injecting deep call chain of depth {depth} into '{node.name}'",
+                file=sys.stderr,
+            )
 
             p_prefix = f"dc_{random.randint(1000, 9999)}"
 
@@ -1832,7 +1840,9 @@ class DeepCallMutator(ast.NodeTransformer):
             func_chain_lines = [f"# Deep call chain of depth {depth}"]
             func_chain_lines.append(f"def f_0_{p_prefix}(p): return p + 1")
             for i in range(1, depth):
-                func_chain_lines.append(f"def f_{i}_{p_prefix}(p): return f_{i - 1}_{p_prefix}(p) + 1")
+                func_chain_lines.append(
+                    f"def f_{i}_{p_prefix}(p): return f_{i - 1}_{p_prefix}(p) + 1"
+                )
 
             func_chain_str = "\n".join(func_chain_lines)
             top_level_func = f"f_{depth - 1}_{p_prefix}"
@@ -1874,20 +1884,20 @@ class GuardRemover(ast.NodeTransformer):
 
     def is_rng_check(self, node: ast.AST) -> bool:
         """Check if an AST node is our specific `fuzzer_rng.random()` call."""
-        return (isinstance(node, ast.Call) and
-                isinstance(node.func, ast.Attribute) and
-                node.func.attr == 'random' and
-                isinstance(node.func.value, ast.Name) and
-                node.func.value.id == 'fuzzer_rng')
+        return (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "random"
+            and isinstance(node.func.value, ast.Name)
+            and node.func.value.id == "fuzzer_rng"
+        )
 
     def visit_If(self, node: ast.If) -> ast.AST:
         # First, visit children to allow nested removals.
         self.generic_visit(node)
 
         # Check if the test condition is `fuzzer_rng.random() < ...`
-        if (isinstance(node.test, ast.Compare) and
-                self.is_rng_check(node.test.left)):
-
+        if isinstance(node.test, ast.Compare) and self.is_rng_check(node.test.left):
             if random.random() < 0.25:
                 print("    -> Removing fuzzer-injected guard.", file=sys.stderr)
 
@@ -2009,26 +2019,29 @@ class FuzzerSetupNormalizer(ast.NodeTransformer):
     Removes fuzzer-injected setup code (GC tuning, RNG seeding)
     to prevent it from accumulating across mutation cycles.
     """
+
     def visit_Import(self, node: ast.Import) -> ast.AST | None:
         # Remove 'import gc' and 'import random' statements
-        node.names = [alias for alias in node.names if alias.name not in ('gc', 'random')]
+        node.names = [alias for alias in node.names if alias.name not in ("gc", "random")]
         return node if node.names else None
 
     def visit_Assign(self, node: ast.Assign) -> ast.AST | None:
         # Remove 'fuzzer_rng = random.Random(...)'
         if len(node.targets) == 1 and isinstance(node.targets[0], ast.Name):
-            if node.targets[0].id == 'fuzzer_rng':
+            if node.targets[0].id == "fuzzer_rng":
                 return None
         self.generic_visit(node)
         return node
 
     def visit_Expr(self, node: ast.Expr) -> ast.AST | None:
         # Remove 'gc.set_threshold(...)'
-        if (isinstance(node.value, ast.Call) and
-                isinstance(node.value.func, ast.Attribute) and
-                node.value.func.attr == 'set_threshold' and
-                isinstance(node.value.func.value, ast.Name) and
-                node.value.func.value.id == 'gc'):
+        if (
+            isinstance(node.value, ast.Call)
+            and isinstance(node.value.func, ast.Attribute)
+            and node.value.func.attr == "set_threshold"
+            and isinstance(node.value.func.value, ast.Name)
+            and node.value.func.value.id == "gc"
+        ):
             return None
         self.generic_visit(node)
         return node
@@ -2042,13 +2055,11 @@ class FuzzerSetupNormalizer(ast.NodeTransformer):
         self.generic_visit(node)
 
         # Check if this is a call to the global 'random' function.
-        if isinstance(node.func, ast.Name) and node.func.id == 'random':
+        if isinstance(node.func, ast.Name) and node.func.id == "random":
             print("    -> Normalizing call to random() to use fuzzer_rng.", file=sys.stderr)
             # Transform the function call from `random()` to `fuzzer_rng.random()`
             node.func = ast.Attribute(
-                value=ast.Name(id='fuzzer_rng', ctx=ast.Load()),
-                attr='random',
-                ctx=ast.Load()
+                value=ast.Name(id="fuzzer_rng", ctx=ast.Load()), attr="random", ctx=ast.Load()
             )
             ast.fix_missing_locations(node)
 
@@ -2066,7 +2077,7 @@ class EmptyBodySanitizer(ast.NodeTransformer):
         self.generic_visit(node)
 
         # This check covers If, For, While, With, FunctionDef, ClassDef, etc.
-        if hasattr(node, 'body') and isinstance(node.body, list) and not node.body:
+        if hasattr(node, "body") and isinstance(node.body, list) and not node.body:
             print("    -> Sanitizing empty body with a 'pass' statement.", file=sys.stderr)
             node.body = [ast.Pass()]
             ast.fix_missing_locations(node)

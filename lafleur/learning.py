@@ -13,7 +13,9 @@ MUTATOR_TELEMETRY_LOG = Path("logs/mutator_effectiveness.jsonl")
 class MutatorScoreTracker:
     """Tracks the effectiveness of mutators and strategies to guide selection."""
 
-    def __init__(self, all_transformers: list[type], decay_factor: float = 0.995, min_attempts: int = 10):
+    def __init__(
+        self, all_transformers: list[type], decay_factor: float = 0.995, min_attempts: int = 10
+    ):
         self.all_transformers = [t.__name__ for t in all_transformers]
         self.strategies = ["deterministic", "havoc", "spam"]
         self.decay_factor = decay_factor
@@ -43,7 +45,10 @@ class MutatorScoreTracker:
         """
         Update scores for a successful mutation and apply decay.
         """
-        print(f"    -> Rewarding successful strategy '{strategy_name}' and transformers: {transformer_names}", file=sys.stderr)
+        print(
+            f"    -> Rewarding successful strategy '{strategy_name}' and transformers: {transformer_names}",
+            file=sys.stderr,
+        )
 
         # Increment scores for the successful items
         self.scores[strategy_name] += 1.0

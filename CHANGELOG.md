@@ -46,6 +46,7 @@ All notable changes to this project should be documented in this file.
 - Detect interestingness of manually added files to the corpus, by @devdanzin.
 - Use `FuzzerSetupNormalizer` to remove extraneous GC and RNG tuning, by @devdanzin.
 - Sanitize all blocks that would have an empty block to contain `pass`, by @devdanzin.
+- Avoid overwriting crash files by giving them unique names, by @devdanzin.
 
 
 ## [0.0.1] - 2024-11-20

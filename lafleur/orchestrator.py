@@ -568,12 +568,7 @@ except Exception:
             return None
 
     def _execute_child(
-        self,
-        source_code: str,
-        session_id: int,
-        mutation_index: int,
-        child_source_path: Path,
-        child_log_path: Path,
+        self, source_code: str, child_source_path: Path, child_log_path: Path, parent_path: Path
     ) -> ExecutionResult | None:
         """Write the child script to a temp file, execute it, and return results."""
 
@@ -616,7 +611,7 @@ except Exception:
                 print(f"  [!] Warning: Could not compress timeout log: {e}", file=sys.stderr)
 
             timeout_source_path = (
-                TIMEOUTS_DIR / f"timeout_{session_id}_{mutation_index}_{child_source_path.name}"
+                TIMEOUTS_DIR / f"timeout_{child_source_path.stem}_{parent_path.name}"
             )
             timeout_log_path = timeout_source_path.with_suffix(
                 log_to_save.suffix
@@ -759,6 +754,8 @@ except Exception:
         mutations_since_last_find_in_session = 0
         new_finds_this_session = 0
 
+        mutation_id = 0
+
         # --- This loop controls the deepening process ---
         while True:
             max_mutations = self._calculate_mutations(current_parent_score)
@@ -786,7 +783,10 @@ except Exception:
 
             # --- Main Mutation Loop ---
             found_new_coverage_in_cycle = False
-            for i in range(max_mutations):
+            mutation_index = 0
+            while mutation_index < max_mutations:
+                mutation_index += 1
+                mutation_id += 1
                 self.run_stats["total_mutations"] += 1
                 self.mutations_since_last_find += 1
                 mutations_since_last_find_in_session += 1
@@ -800,7 +800,7 @@ except Exception:
                 self.global_seed_counter += 1
                 mutation_seed = self.global_seed_counter
                 print(
-                    f"  \\-> Running mutation #{i + 1} (Seed: {mutation_seed}) for {parent_id}..."
+                    f"  \\-> Running mutation #{mutation_index} (Seed: {mutation_seed}) for {parent_id}..."
                 )
 
                 mutated_harness_node, mutation_info = self._get_mutated_harness(
@@ -810,9 +810,13 @@ except Exception:
                     continue
 
                 # --- Inner Multi-Run Loop ---
+                flow_control = ""
                 for run_num in range(num_runs):
-                    child_source_path = TMP_DIR / f"child_{session_id}_{i + 1}_{run_num + 1}.py"
-                    child_log_path = TMP_DIR / f"child_{session_id}_{i + 1}_{run_num + 1}.log"
+                    child_source_path = (
+                        TMP_DIR / f"child_{session_id}_{mutation_id}_{run_num + 1}.py"
+                    )
+                    child_log_path = TMP_DIR / f"child_{session_id}_{mutation_id}_{run_num + 1}.log"
+
                     try:
                         runtime_seed = (mutation_seed + 1) * (run_num + 1)
                         mutation_info["runtime_seed"] = runtime_seed
@@ -835,7 +839,7 @@ except Exception:
                             continue
 
                         exec_result = self._execute_child(
-                            child_source, session_id, i + 1, child_source_path, child_log_path
+                            child_source, child_source_path, child_log_path, current_parent_path
                         )
                         if not exec_result:
                             continue
@@ -850,7 +854,7 @@ except Exception:
                         )
 
                         flow_control = self._handle_analysis_data(
-                            analysis_data, i + 1, parent_metadata
+                            analysis_data, mutation_index, parent_metadata
                         )
 
                         if flow_control == "BREAK" or flow_control == "CONTINUE":
@@ -908,8 +912,10 @@ except Exception:
                                 f"  [!] Warning: Could not delete temp file: {e}", file=sys.stderr
                             )
 
-                if found_new_coverage_in_cycle:
-                    break  # Break outer mutation loop
+                if found_new_coverage_in_cycle and is_deepening_session:
+                    break
+                elif flow_control == "BREAK":
+                    return  # For breadth mode, a single find ends the entire session
 
             # Exit condition for the while True loop
             if not is_deepening_session or not found_new_coverage_in_cycle:

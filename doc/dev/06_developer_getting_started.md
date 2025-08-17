@@ -140,6 +140,13 @@ With the project installed, you can run the fuzzer from any directory on your sy
     lafleur --fusil-path /path/to/fusil/fuzzers/fusil-python-threaded --dynamic-runs
     ```
 
+* **Retaining Logs for Analysis:**
+    To keep temporary log files for offline analysis and debugging, use the `--keep-tmp-logs` flag.
+
+    ```bash
+    lafleur --fusil-path /path/to/fusil/fuzzers/fusil-python-threaded --keep-tmp-logs
+    ```
+
 ### Using the `state_tool.py`
 
 The fuzzer's main state file, `coverage/coverage_state.pkl`, is a binary file that is not human-readable. The `state_tool.py` script is provided to inspect and convert this file. See [05_state_and_data_formats.md](./05_state_and_data_formats.md) for a description of this file's format and interesting fields.

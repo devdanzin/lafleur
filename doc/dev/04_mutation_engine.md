@@ -56,3 +56,14 @@ This is a library of advanced mutators specifically designed to generate pattern
 * **`MagicMethodMutator`**: Attacks the JIT's data model assumptions by using "evil objects" with misbehaving magic methods (e.g., `__len__`, `__hash__`).
 * **`NumericMutator`**: Attacks JIT optimizations for numeric built-ins (`pow`, `chr`, etc.) by providing them with tricky arguments that test edge cases and error handling paths.
 * **`IterableMutator`**: Attacks the JIT's understanding of the iterator protocol by injecting scenarios with misbehaving iterators.
+
+---
+
+### The Library of "Evil Objects"
+
+To support the advanced JIT-specific mutators, `mutator.py` also contains a suite of functions that generate the source code for "evil" classes. The core concept is that these classes have stateful "magic" methods that intentionally violate Python's data model contracts to trick the JIT.
+
+Key examples include:
+* **`genStatefulLenObject`**: Generates a class whose `__len__` method returns different values on subsequent calls.
+* **`genUnstableHashObject`**: Generates a class whose `__hash__` method is not constant, violating a core requirement for dictionary keys.
+* **`genStatefulIterObject`**: Generates a class whose `__iter__` method can return different kinds of iterators, for example, one that changes the type of the items it yields mid-iteration.

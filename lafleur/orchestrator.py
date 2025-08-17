@@ -43,6 +43,7 @@ CRASHES_DIR = Path("crashes")
 TIMEOUTS_DIR = Path("timeouts")
 DIVERGENCES_DIR = Path("divergences")
 LOGS_DIR = Path("logs")
+RUN_LOGS_DIR = LOGS_DIR / "run_logs"
 TIMEOUT_LOG_COMPRESSION_THRESHOLD = 1_048_576  # 1 MB
 
 CRASH_KEYWORDS = [
@@ -86,12 +87,14 @@ class LafleurOrchestrator:
         timeout: int = 10,
         num_runs: int = 1,
         use_dynamic_runs: bool = False,
+        keep_tmp_logs: bool = False,
     ):
         """Initialize the orchestrator and the corpus manager."""
         self.differential_testing = differential_testing
         self.fusil_path = fusil_path
         self.base_runs = num_runs
         self.use_dynamic_runs = use_dynamic_runs
+        self.keep_tmp_logs = keep_tmp_logs
         self.deepening_probability = 0.2
         self.ast_mutator = ASTMutator()
         self.boilerplate_code = None
@@ -118,6 +121,9 @@ class LafleurOrchestrator:
         TIMEOUTS_DIR.mkdir(exist_ok=True)
         DIVERGENCES_DIR.mkdir(exist_ok=True)
         LOGS_DIR.mkdir(exist_ok=True)
+        if self.keep_tmp_logs:
+            RUN_LOGS_DIR.mkdir(exist_ok=True)
+            print(f"[+] Retaining temporary run logs in: {RUN_LOGS_DIR}")
 
         run_timestamp = self.run_stats.get("start_time", datetime.now(timezone.utc).isoformat())
         # Sanitize timestamp for use in filename
@@ -895,21 +901,41 @@ except Exception:
                                     mutations_since_last_find_in_session = 0
                             break  # Break inner multi-run loop
                     finally:
-                        # Cleanup temp files for this specific run
+                        # Cleanup or save temp files for this specific run
                         try:
                             if child_source_path.exists():
                                 child_source_path.unlink()
                             else:
                                 print(f"Error deleting {child_source_path}, file doesn't exist!")
+
+                            compressed_log_path = child_log_path.with_suffix(".log.zst")
                             if child_log_path.exists():
-                                child_log_path.unlink()
-                            elif child_log_path.with_suffix(".log.zst").exists():
-                                child_log_path.with_suffix(".log.zst").unlink()
+                                if self.keep_tmp_logs:
+                                    dest_log_path = (
+                                        RUN_LOGS_DIR
+                                        / f"log_{parent_id}_seed_{mutation_seed}_run_{run_num + 1}.log"
+                                    )
+                                    shutil.move(child_log_path, dest_log_path)
+                                else:
+                                    child_log_path.unlink()
+
+                            elif compressed_log_path.exists():
+                                if self.keep_tmp_logs:
+                                    dest_log_path = (
+                                        RUN_LOGS_DIR
+                                        / f"log_{parent_id}_seed_{mutation_seed}_run_{run_num + 1}.log.zst"
+                                    )
+                                    shutil.move(compressed_log_path, dest_log_path)
+                                else:
+                                    compressed_log_path.unlink()
                             else:
-                                print(f"Error deleting {child_log_path}, file doesn't exist!")
+                                print(
+                                    f"Error processing log named {child_log_path.stem}, file doesn't exist!"
+                                )
+
                         except OSError as e:
                             print(
-                                f"  [!] Warning: Could not delete temp file: {e}", file=sys.stderr
+                                f"  [!] Warning: Could not process temp file: {e}", file=sys.stderr
                             )
 
                 if found_new_coverage_in_cycle and is_deepening_session:
@@ -1290,6 +1316,11 @@ def main():
         action="store_true",
         help="Dynamically vary the number of runs based on parent score, overriding --runs.",
     )
+    parser.add_argument(
+        "--keep-tmp-logs",
+        action="store_true",
+        help="Retain temporary log files for all runs in the logs/run_logs/ directory for offline analysis.",
+    )
     args = parser.parse_args()
 
     LOGS_DIR.mkdir(exist_ok=True)
@@ -1343,6 +1374,7 @@ Initial Stats:
             timeout=args.timeout,
             num_runs=args.runs,
             use_dynamic_runs=args.dynamic_runs,
+            keep_tmp_logs=args.keep_tmp_logs,
         )
         orchestrator.run_evolutionary_loop()
     except KeyboardInterrupt:

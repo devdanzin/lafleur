@@ -21,6 +21,7 @@ All notable changes to this project should be documented in this file.
 - A `GuardRemover` mutator as a counterpoint to `GuardInjector`, by @devdanzin.
 - Tests for mutators.py, by @devdanzin.
 - A depth-first way of mutating code samples, by @devdanzin.
+- A `--keep-temp-logs` CLI option to keep temporary log files, by @devdanzin.
 
 
 ### Enhanced
@@ -30,7 +31,7 @@ All notable changes to this project should be documented in this file.
 - Give scores to mutators and reward those most successful, by @devdanzin.
 - Use trace length and number of side exits in corpus scheduling, by @devdanzin.
 - Record JIT state (executing, tracing or optimized) when collecting edges, by @devdanzin.
-- Use `FuzzerSetupNormalizer` make randomness reproducible, by @devdanzin.
+- Use `FuzzerSetupNormalizer` to make randomness reproducible, by @devdanzin.
 - Do not record some known uninteresting crashes, by @devdanzin.
 - Allow disabling tweaks when running `jit_tuner.py`, by @devdanzin.
 

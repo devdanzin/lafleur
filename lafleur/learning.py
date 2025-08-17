@@ -1,3 +1,13 @@
+"""
+This module contains the adaptive learning engine for the lafleur fuzzer.
+
+It houses the MutatorScoreTracker, which is responsible for evaluating the
+effectiveness of different mutation strategies over time. By tracking which
+mutators lead to new discoveries and applying a decay algorithm, it allows
+the fuzzer to dynamically adjust its strategy, favoring recently successful
+mutators to guide the evolutionary search more intelligently.
+"""
+
 import json
 import random
 import sys

@@ -4,7 +4,8 @@ A utility script to apply aggressive JIT settings to the CPython source code.
 
 This tool modifies C header files in a CPython source tree to lower various
 thresholds, making the JIT compiler activate more frequently and aggressively.
-This is useful for creating a dedicated CPython build for fuzzing.
+This is useful for creating a dedicated CPython build for fuzzing, increasing
+the chances of triggering JIT-specific behavior and bugs.
 """
 
 import re

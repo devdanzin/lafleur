@@ -32,6 +32,7 @@ All notable changes to this project should be documented in this file.
 - Record JIT state (executing, tracing or optimized) when collecting edges, by @devdanzin.
 - Use `FuzzerSetupNormalizer` make randomness reproducible, by @devdanzin.
 - Do not record some known uninteresting crashes, by @devdanzin.
+- Allow disabling tweaks when running `jit_tuner.py`, by @devdanzin.
 
 
 ### Fixed

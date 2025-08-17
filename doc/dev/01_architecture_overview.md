@@ -24,10 +24,10 @@ The diagram below illustrates the main components of the `lafleur` fuzzer and th
 ```mermaid
 flowchart TD
     subgraph LafleurOrchestrator
-    A[1.Select Parent] --> B(2.Mutate);
-    B --> C{3.Execute Child};
-    C --> D[4.Analyze Log];
-    D --> E{Interesting?};
+        A[1.Select Parent] --> B(2.Mutate);
+        B --> C{3.Execute Child};
+        C --> D[4.Analyze Log];
+        D --> E{Interesting?};
     end
 
     subgraph CorpusManager
@@ -42,6 +42,10 @@ flowchart TD
         H[Log Parser]
     end
 
+    subgraph LearningEngine
+        J[Mutator Scores]
+    end
+
     F -- Parent File --> A;
     B -- AST --> G;
     G -- Mutated AST --> B;
@@ -52,8 +56,12 @@ flowchart TD
     E -- Yes --> F;
     E -- No --> A;
 
+    D -- Success Info --> J;
+    J -- Dynamic Weights --> G;
+
     style F fill:#f9f,stroke:#333,stroke-width:2px
     style I fill:#bbf,stroke:#333,stroke-width:2px
+    style J fill:#d4edda,stroke:#333,stroke-width:2px
 ```
 
 ### Module Breakdown
@@ -64,5 +72,6 @@ The `lafleur` project is organized into several distinct Python modules, each wi
   * `lafleur/corpus_manager.py`: Handles all interactions with the on-disk corpus and the persistent state file (`coverage_state.pkl`). It is responsible for selecting parents, adding new files, and generating initial seeds.
   * `lafleur/coverage.py`: The "eyes" of the fuzzer. Contains the logic for parsing verbose JIT trace logs to extract the coverage feedback signal (uop edges and rare events).
   * `lafleur/mutator.py`: The "hands" of the fuzzer. Contains the `ASTMutator` engine and a rich library of `NodeTransformer` subclasses that perform both generic and highly-specialized, JIT-aware code mutations.
+  * `lafleur/learning.py`: Houses the `MutatorScoreTracker`, the adaptive learning engine that scores mutation strategies based on their historical success, allowing the fuzzer to dynamically focus on the most effective techniques.
   * `lafleur/utils.py`: A collection of generic, reusable helper components, such as the `TeeLogger` for simultaneous console and file logging, and functions for managing run statistics.
-  * `lafleur/state_tool.py`: A standalone command-line utility for inspecting and converting the binary `coverage_state.pkl` file into human-readable JSON.
+  * `lafleur/state_tool.py`: A standalone command-line utility for managing the binary state file.

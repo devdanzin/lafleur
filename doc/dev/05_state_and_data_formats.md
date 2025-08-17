@@ -6,23 +6,33 @@ During a fuzzing campaign, `lafleur` generates several files to store its persis
 
 ---
 
-### `coverage_state.pkl`
+### `coverage/coverage_state.pkl`
 
 This is the **most critical file** in the fuzzer. It is a binary file serialized using Python's `pickle` module and acts as the fuzzer's complete, persistent memory of all coverage information. It is saved atomically to prevent corruption. It contains a single dictionary with two top-level keys:
 
-* **`global_coverage`**: A dictionary that serves as the master "bitmap" of all unique coverage points ever seen by the fuzzer across all runs. It contains three sub-keys: `uops`, `edges`, and `rare_events`, each mapping the coverage item (e.g., the string `_LOAD_ATTR->_STORE_ATTR`) to its total hit count.
+* **`global_coverage`**: A dictionary that serves as the master "bitmap" of all unique coverage points ever seen by the fuzzer across all runs. It contains three sub-keys: `uops`, `edges`, and `rare_events`, each mapping the coverage item (e.g., the tuple `('OPTIMIZED', '_LOAD_ATTR->_STORE_ATTR')`) to its total hit count.
 
 * **`per_file_coverage`**: A dictionary where each key is a filename in the corpus (e.g., `"123.py"`) and the value is a rich metadata object describing that file. The metadata dictionary for each file contains the following keys:
     * `parent_id`: The filename of the parent test case that this file was mutated from. `None` for initial seed files.
     * `lineage_depth`: An integer representing how many generations of successful mutations led to this file.
-    * `content_hash`: The SHA256 hash of the file's "core code," used for fast duplicate detection.
+    * `content_hash`: The SHA256 hash of the file's "core code," used for content duplicate detection.
+    * `coverage_hash`: The SHA256 hash of the file's coverage profile, used to detect unique behaviors from non-deterministic code.
     * `discovery_time`: An ISO 8601 timestamp of when the file was added to the corpus.
     * `execution_time_ms`: The time in milliseconds the test case took to run during its discovery.
     * `file_size_bytes`: The size of the core code in bytes.
     * `total_finds`: A "fertility" score; the number of interesting children this parent has produced.
     * `is_sterile`: A boolean flag that is set to `True` if the parent has been mutated many times without producing any new discoveries.
-    * `baseline_coverage`: A dictionary representing the coverage this specific file generated when it was discovered. It has the same structure as the `global_coverage` map (uops, edges, rare_events) but contains only the coverage from this one file.
-    * `lineage_coverage_profile`: A set-based representation of the union of all coverage found in this file's entire ancestry. This is used for the "new relative coverage" check.
+    * `baseline_coverage`: A dictionary representing the coverage this specific file generated when it was discovered. It includes `uops`, `edges`, `rare_events`, and structural metrics like `trace_length` and `side_exits`.
+    * `lineage_coverage_profile`: A set-based representation of the union of all coverage found in this file's entire ancestry.
+
+---
+
+### `coverage/mutator_scores.json`
+
+This file is the persistent memory for the **adaptive mutation engine**. It is a human-readable JSON file that stores the learned effectiveness of each mutator and strategy, allowing the fuzzer to resume a campaign with its learned knowledge intact.
+
+* **`scores`**: A dictionary mapping the name of each mutator or strategy (e.g., `"SideEffectInjector"`, `"havoc"`) to its current floating-point score. This score is increased on success and periodically decayed to favor recently successful mutators.
+* **`attempts`**: A dictionary mapping each mutator or strategy name to an integer count of how many times it has been tried. This is used by the learning algorithm to give new mutators a "grace period" before their scores are used for selection.
 
 ---
 
@@ -47,7 +57,21 @@ Key fields include:
 
 This is a time-series log file in the **JSON Lines** (`.jsonl`) format, meaning each line in the file is a complete, independent JSON object.
 
-At regular intervals (e.g., every 10 sessions), the orchestrator takes a complete snapshot of the `fuzz_run_stats.json` file and appends it as a new line to this log. This creates a detailed historical record of the fuzzer's performance over the course of a single run, which can be easily parsed for post-run analysis and plotting.
+At regular intervals (e.g., after every 10 new discoveries), the orchestrator takes a complete snapshot of the `fuzz_run_stats.json` file and appends it as a new line to this log. This creates a detailed historical record of the fuzzer's performance over the course of a single run.
+
+---
+
+### `logs/mutator_effectiveness.jsonl`
+
+This is a new time-series log, also in the JSON Lines (`.jsonl`) format, that provides telemetry for the **adaptive learning engine**.
+
+At the same time a snapshot is saved to the main time-series log, the `MutatorScoreTracker` saves a snapshot of its current state to this file. Each line is a JSON object containing:
+* **`timestamp`**: An ISO 8601 timestamp for the snapshot.
+* **`scores`**: The complete dictionary of all mutator and strategy scores at that moment.
+* **`attempts`**: The complete dictionary of attempt counts.
+* **`success_rates`**: A calculated dictionary showing the `score / attempts` ratio for each mutator, providing a clear view of its effectiveness.
+
+This file is essential for post-run analysis to understand how the fuzzer's strategy evolved over time.
 
 ---
 
@@ -55,7 +79,7 @@ At regular intervals (e.g., every 10 sessions), the orchestrator takes a complet
 
 The fuzzer saves its findings—the valuable test cases that reveal bugs—into several output directories.
 
-* **`corpus/`**: Contains the main collection of "interesting" test cases. Every file in this directory has discovered at least one new piece of JIT coverage and serves as a parent for future mutations.
-* **`crashes/`**: Stores test cases that caused the Python interpreter to crash (e.g., with a segmentation fault) or that contained a keyword indicating a fatal error. Each saved test case is accompanied by its corresponding JIT log file.
-* **`timeouts/`**: Stores test cases that caused the child process to hang, exceeding the execution timeout. This is often a sign of an infinite loop or a denial-of-service vulnerability.
-* **`divergences/`**: When running in differential testing mode, this directory stores test cases that revealed a correctness bug—a silent divergence in behavior between the JIT-compiled code and the regular interpreter.
+* **`corpus/`**: Contains the main collection of "interesting" test cases that have discovered new JIT coverage.
+* **`crashes/`**: Stores test cases that caused the Python interpreter to crash or that contained a keyword indicating a fatal error.
+* **`timeouts/`**: Stores test cases that caused the child process to hang. Large log files in this directory are automatically compressed with `zstd`.
+* **`divergences/`**: When running in differential testing mode, this directory stores test cases that revealed a correctness bug.

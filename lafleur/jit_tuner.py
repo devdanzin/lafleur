@@ -11,6 +11,7 @@ the chances of triggering JIT-specific behavior and bugs.
 import re
 import argparse
 from pathlib import Path
+from typing import Sequence
 
 # A comprehensive dictionary of JIT parameters to tweak for fuzzing.
 # Values are set to be more aggressive than the defaults.
@@ -39,21 +40,36 @@ JIT_TWEAKS = {
 }
 
 
-def apply_jit_tweaks(cpython_path: Path, dry_run: bool = False) -> None:
+def apply_jit_tweaks(
+    cpython_path: Path,
+    dry_run: bool = False,
+    disabled_files: Sequence[str] | None = None,
+    disabled_tweaks: Sequence[str] | None = None,
+) -> None:
     """
     Find and replace CPython JIT parameters using regular expressions.
 
     Args:
         cpython_path: The root path of the CPython source code checkout.
         dry_run: If True, print changes without modifying files.
+        disabled_files: A list of filenames to skip patching.
+        disabled_tweaks: A list of C macro names to skip patching.
     """
     print(f"[*] Starting JIT parameter tweaks for CPython at: {cpython_path.resolve()}")
+
+    # Ensure disabled lists are not None for 'in' checks
+    disabled_files = disabled_files or []
+    disabled_tweaks = disabled_tweaks or []
 
     if not cpython_path.is_dir():
         print(f"[!] Error: CPython source directory not found at '{cpython_path}'")
         return
 
     for rel_path, tweaks in JIT_TWEAKS.items():
+        if rel_path in disabled_files:
+            print(f"[-] Skipping file as requested by --disable-file: {rel_path}")
+            continue
+
         file_path = cpython_path / rel_path
         if not file_path.exists():
             print(f"[-] Warning: File not found, skipping: {file_path}")
@@ -65,6 +81,10 @@ def apply_jit_tweaks(cpython_path: Path, dry_run: bool = False) -> None:
             original_content = content
 
             for param_name, new_value in tweaks:
+                if param_name in disabled_tweaks:
+                    print(f"  - Skipping tweak as requested by --disable-tweak: {param_name}")
+                    continue
+
                 # This regex captures the define, the parameter name, and the original value.
                 pattern = re.compile(rf"^(#define\s+{param_name}\s+)(\d+)", re.MULTILINE)
 
@@ -105,10 +125,22 @@ def main() -> None:
         action="store_true",
         help="Print changes without modifying files.",
     )
+    parser.add_argument(
+        "--disable-file",
+        action="append",
+        dest="disabled_files",
+        help="Disable all patches for a given file. Can be used multiple times.",
+    )
+    parser.add_argument(
+        "--disable-tweak",
+        action="append",
+        dest="disabled_tweaks",
+        help="Disable a specific tweak by its name (e.g., 'CONFIDENCE_CUTOFF'). Can be used multiple times.",
+    )
     args = parser.parse_args()
 
     cpython_src_path = Path(args.cpython_dir)
-    apply_jit_tweaks(cpython_src_path, args.dry_run)
+    apply_jit_tweaks(cpython_src_path, args.dry_run, args.disabled_files, args.disabled_tweaks)
     print("[*] Done.")
 
 

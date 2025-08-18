@@ -34,6 +34,7 @@ All notable changes to this project should be documented in this file.
 - Use `FuzzerSetupNormalizer` to make randomness reproducible, by @devdanzin.
 - Do not record some known uninteresting crashes, by @devdanzin.
 - Allow disabling tweaks when running `jit_tuner.py`, by @devdanzin.
+- Store int ids for UOPs, edges, and rare events instead of strings in the coverage file, by @devdanzin.
 
 
 ### Fixed

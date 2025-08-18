@@ -8,11 +8,14 @@ During a fuzzing campaign, `lafleur` generates several files to store its persis
 
 ### `coverage/coverage_state.pkl`
 
-This is the **most critical file** in the fuzzer. It is a binary file serialized using Python's `pickle` module and acts as the fuzzer's complete, persistent memory of all coverage information. It is saved atomically to prevent corruption. It contains a single dictionary with two top-level keys:
+This is the **most critical file** in the fuzzer. It is a binary file serialized using Python's `pickle` module and acts as the fuzzer's complete, persistent memory. To save space and reduce memory usage, it uses integer IDs to represent coverage items (uops, edges, and rare events). The file is saved atomically to prevent corruption.
 
-* **`global_coverage`**: A dictionary that serves as the master "bitmap" of all unique coverage points ever seen by the fuzzer across all runs. It contains three sub-keys: `uops`, `edges`, and `rare_events`, each mapping the coverage item (e.g., the tuple `('OPTIMIZED', '_LOAD_ATTR->_STORE_ATTR')`) to its total hit count.
+It contains a single dictionary with the following top-level keys:
 
-* **`per_file_coverage`**: A dictionary where each key is a filename in the corpus (e.g., `"123.py"`) and the value is a rich metadata object describing that file. The metadata dictionary for each file contains the following keys:
+* **`uop_map`**, **`edge_map`**, **`rare_event_map`**: Dictionaries that map the string representation of a coverage item (e.g., `"('OPTIMIZED', '_LOAD_ATTR->_STORE_ATTR')"`) to a unique integer ID.
+* **`next_id_map`**: A small dictionary that tracks the next available integer ID for each coverage type.
+* **`global_coverage`**: The master "bitmap" of all unique coverage points ever seen. It maps the integer IDs of uops, edges, and rare events to their total hit counts.
+* **`per_file_coverage`**: A dictionary where each key is a corpus filename and the value is a rich metadata object. The `baseline_coverage` (hit counts) and `lineage_coverage_profile` (a set of all coverage seen in its ancestry) within this metadata now store **integer IDs** instead of strings. The metadata dictionary for each file contains the following keys:
     * `parent_id`: The filename of the parent test case that this file was mutated from. `None` for initial seed files.
     * `lineage_depth`: An integer representing how many generations of successful mutations led to this file.
     * `content_hash`: The SHA256 hash of the file's "core code," used for content duplicate detection.

@@ -29,7 +29,7 @@ from textwrap import dedent, indent
 from typing import Any
 
 from lafleur.corpus_manager import CORPUS_DIR, CorpusManager
-from lafleur.coverage import parse_log_for_edge_coverage, load_coverage_state
+from lafleur.coverage import CoverageManager, parse_log_for_edge_coverage, load_coverage_state
 from lafleur.learning import MutatorScoreTracker
 from lafleur.mutator import ASTMutator, EmptyBodySanitizer, FuzzerSetupNormalizer, VariableRenamer
 from lafleur.utils import ExecutionResult, TeeLogger, load_run_stats, save_run_stats
@@ -100,14 +100,16 @@ class LafleurOrchestrator:
         self.boilerplate_code = None
         self.timeout = timeout  # Store the timeout value
 
-        self.coverage_state = load_coverage_state()
+        coverage_state = load_coverage_state()
+        self.coverage_manager = CoverageManager(coverage_state)
+
         self.run_stats = load_run_stats()
 
         self.score_tracker = MutatorScoreTracker(self.ast_mutator.transformers)
 
         self.min_corpus_files = min_corpus_files
         self.corpus_manager = CorpusManager(
-            self.coverage_state, self.run_stats, fusil_path, self.get_boilerplate, self.timeout
+            self.coverage_manager, self.run_stats, fusil_path, self.get_boilerplate, self.timeout
         )
         # Synchronize the corpus and state at startup.
         self.corpus_manager.synchronize(self.analyze_run, self._build_lineage_profile)
@@ -172,7 +174,7 @@ class LafleurOrchestrator:
         selection, mutation, execution, and analysis.
         """
         # --- Bootstrap the corpus if it's smaller than the minimum required size ---
-        current_corpus_size = len(self.coverage_state.get("per_file_coverage", {}))
+        current_corpus_size = len(self.coverage_manager.state.get("per_file_coverage", {}))
         needed = self.min_corpus_files - current_corpus_size
 
         if needed > 0:
@@ -211,7 +213,7 @@ class LafleurOrchestrator:
                         self.analyze_run, self._build_lineage_profile
                     )
                 print(
-                    f"[+] Corpus generation complete. New size: {len(self.coverage_state['per_file_coverage'])}."
+                    f"[+] Corpus generation complete. New size: {len(self.coverage_manager.state['per_file_coverage'])}."
                 )
 
         print("[+] Starting Deep Fuzzer Evolutionary Loop. Press Ctrl+C to stop.")
@@ -260,8 +262,10 @@ class LafleurOrchestrator:
     def update_and_save_run_stats(self) -> None:
         """Update dynamic run statistics and save them to the stats file."""
         self.run_stats["last_update_time"] = datetime.now(timezone.utc).isoformat()
-        self.run_stats["corpus_size"] = len(self.coverage_state.get("per_file_coverage", {}))
-        global_cov = self.coverage_state.get("global_coverage", {})
+        self.run_stats["corpus_size"] = len(
+            self.coverage_manager.state.get("per_file_coverage", {})
+        )
+        global_cov = self.coverage_manager.state.get("global_coverage", {})
         self.run_stats["global_uops"] = len(global_cov.get("uops", {}))
         self.run_stats["global_edges"] = len(global_cov.get("edges", {}))
         self.run_stats["global_rare_events"] = len(global_cov.get("rare_events", {}))
@@ -766,7 +770,7 @@ except Exception:
         while True:
             max_mutations = self._calculate_mutations(current_parent_score)
             parent_id = current_parent_path.name
-            parent_metadata = self.coverage_state["per_file_coverage"].get(parent_id, {})
+            parent_metadata = self.coverage_manager.state["per_file_coverage"].get(parent_id, {})
             parent_lineage_profile = parent_metadata.get("lineage_coverage_profile", {})
 
             base_harness_node, parent_core_tree, setup_nodes = self._get_nodes_from_parent(
@@ -1006,19 +1010,28 @@ except Exception:
         # --- PASS 1: Unified Read-Only Check for Interestingness ---
         for harness_id, child_data in child_coverage.items():
             lineage_harness_data = parent_lineage_profile.get(harness_id, {})
+
+            # Helper to get the correct reverse map for a given coverage type
+            def get_reverse_map(cov_type):
+                return getattr(self.coverage_manager, f"reverse_{cov_type}_map")
+
             for cov_type in ["uops", "edges", "rare_events"]:
                 lineage_set = lineage_harness_data.get(cov_type, set())
-                global_set = self.coverage_state["global_coverage"].get(cov_type, {})
-                for item in child_data.get(cov_type, {}):
-                    if item not in global_set:
+                global_set = self.coverage_manager.state["global_coverage"].get(cov_type, {})
+                reverse_map = get_reverse_map(cov_type.rstrip("s"))  # 'uops' -> 'uop'
+
+                for item_id in child_data.get(cov_type, {}):
+                    item_str = reverse_map.get(item_id, f"ID_{item_id}_(unknown)")
+
+                    if item_id not in global_set:
                         print(
-                            f"[NEW GLOBAL {cov_type.upper()[:-1]}] '{item}' in harness '{harness_id}'",
+                            f"[NEW GLOBAL {cov_type.upper()[:-1]}] '{item_str}' in harness '{harness_id}'",
                             file=sys.stderr,
                         )
                         is_interesting = True
-                    elif parent_id is not None and item not in lineage_set:
+                    elif parent_id is not None and item_id not in lineage_set:
                         print(
-                            f"[NEW RELATIVE {cov_type.upper()[:-1]}] '{item}' in harness '{harness_id}'",
+                            f"[NEW RELATIVE {cov_type.upper()[:-1]}] '{item_str}' in harness '{harness_id}'",
                             file=sys.stderr,
                         )
                         is_interesting = True
@@ -1039,13 +1052,13 @@ except Exception:
 
     def _update_global_coverage(self, child_coverage: dict):
         """Commit the coverage from a new, interesting child to the global state."""
-        global_coverage = self.coverage_state["global_coverage"]
+        global_coverage = self.coverage_manager.state["global_coverage"]
         for harness_id, data in child_coverage.items():
             for cov_type in ["uops", "edges", "rare_events"]:
-                global_coverage.setdefault(cov_type, {})
-                for item, count in data.get(cov_type, {}).items():
-                    global_coverage[cov_type].setdefault(item, 0)
-                    global_coverage[cov_type][item] += count
+                # The data already contains integer IDs from the parser.
+                for item_id, count in data.get(cov_type, {}).items():
+                    global_coverage[cov_type].setdefault(item_id, 0)
+                    global_coverage[cov_type][item_id] += count
 
     def _calculate_coverage_hash(self, coverage_profile: dict) -> str:
         """Create a deterministic SHA256 hash of a coverage profile's edges."""
@@ -1055,7 +1068,7 @@ except Exception:
         for harness_id in sorted(coverage_profile.keys()):
             edges = sorted(coverage_profile[harness_id].get("edges", {}).keys())
             if edges:
-                all_edges.append(f"{harness_id}:{','.join(': '.join(edge) for edge in edges)}")
+                all_edges.append(f"{harness_id}:{','.join(str(edge) for edge in edges)}")
 
         canonical_string = ";".join(all_edges)
         return hashlib.sha256(canonical_string.encode("utf-8")).hexdigest()
@@ -1086,7 +1099,8 @@ except Exception:
         ):
             return {"status": "CRASH"}
 
-        child_coverage = parse_log_for_edge_coverage(exec_result.log_path)
+        child_coverage = parse_log_for_edge_coverage(exec_result.log_path, self.coverage_manager)
+
         is_interesting = self._find_new_coverage(
             child_coverage, parent_lineage_profile, parent_id, mutation_info
         )
@@ -1254,7 +1268,7 @@ except Exception:
                     env=ENV,
                 )
 
-            coverage = parse_log_for_edge_coverage(log_path)
+            coverage = parse_log_for_edge_coverage(log_path, self.coverage_manager)
 
             # Collect all edges from all harnesses
             all_edges = set()

@@ -16,7 +16,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
-from lafleur.coverage import save_coverage_state
+from lafleur.coverage import save_coverage_state, CoverageManager
 from lafleur.utils import ExecutionResult
 
 TMP_DIR = Path("tmp_fuzz_run")
@@ -35,10 +35,10 @@ ENV.update(
 class CorpusScheduler:
     """Calculate a "fuzzing score" for each item in the corpus."""
 
-    def __init__(self, coverage_state: dict[str, Any]):
+    def __init__(self, coverage_state: CoverageManager):
         """Initialize the scheduler with the current coverage state."""
         self.coverage_state = coverage_state
-        self.global_coverage = coverage_state.get("global_coverage", {})
+        self.global_coverage = coverage_state.state.get("global_coverage", {})
 
     def _calculate_rarity_score(self, file_metadata: dict[str, Any]) -> float:
         """
@@ -59,7 +59,7 @@ class CorpusScheduler:
     def calculate_scores(self) -> dict[str, float]:
         """Iterate through the corpus and calculate a score for each file."""
         scores = {}
-        for filename, metadata in self.coverage_state.get("per_file_coverage", {}).items():
+        for filename, metadata in self.coverage_state.state.get("per_file_coverage", {}).items():
             # Start with a base score
             score = 100.0
 
@@ -110,7 +110,7 @@ class CorpusManager:
 
     def __init__(
         self,
-        coverage_state: dict[str, Any],
+        coverage_state: CoverageManager,
         run_stats: dict[str, Any],
         fusil_path: str,
         get_boilerplate_func: Callable[..., str],
@@ -154,7 +154,7 @@ class CorpusManager:
             CORPUS_DIR.mkdir(parents=True, exist_ok=True)
 
         disk_files = {p.name for p in CORPUS_DIR.glob("*.py")}
-        state_files = set(self.coverage_state["per_file_coverage"].keys())
+        state_files = set(self.coverage_state.state["per_file_coverage"].keys())
 
         # 1. Prune state for files that were deleted from disk.
         missing_from_disk = state_files - disk_files
@@ -163,7 +163,7 @@ class CorpusManager:
                 f"[-] Found {len(missing_from_disk)} files in state but not on disk. Pruning state."
             )
             for filename in missing_from_disk:
-                del self.coverage_state["per_file_coverage"][filename]
+                del self.coverage_state.state["per_file_coverage"][filename]
 
         # 2. Identify new or modified files to be analyzed.
         files_to_analyze = self._get_files_to_analyze(disk_files, state_files)
@@ -193,12 +193,12 @@ class CorpusManager:
         # Re-populate known_hashes after synchronization is complete.
         self.known_hashes = {
             (metadata.get("content_hash"), metadata.get("coverage_hash"))
-            for metadata in self.coverage_state.get("per_file_coverage", {}).values()
+            for metadata in self.coverage_state.state.get("per_file_coverage", {}).values()
             if "content_hash" in metadata and "coverage_hash" in metadata
         }
 
         # 5. Save the synchronized state.
-        save_coverage_state(self.coverage_state)
+        save_coverage_state(self.coverage_state.state)
         print("[*] Corpus synchronization complete.")
 
     def _analyze_and_add_files(
@@ -273,16 +273,16 @@ class CorpusManager:
                     content = file_path.read_text()
                     current_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
                     if (
-                        self.coverage_state["per_file_coverage"][filename].get("content_hash")
+                        self.coverage_state.state["per_file_coverage"][filename].get("content_hash")
                         != current_hash
                     ):
                         print(f"[~] File content has changed for {filename}. Re-analyzing.")
-                        del self.coverage_state["per_file_coverage"][filename]
+                        del self.coverage_state.state["per_file_coverage"][filename]
                         files_to_analyze.add(filename)
                 except (IOError, KeyError) as e:
                     print(f"[!] Error processing existing file {filename}: {e}. Re-analyzing.")
-                    if filename in self.coverage_state["per_file_coverage"]:
-                        del self.coverage_state["per_file_coverage"][filename]
+                    if filename in self.coverage_state.state["per_file_coverage"]:
+                        del self.coverage_state.state["per_file_coverage"][filename]
                     files_to_analyze.add(filename)
         return files_to_analyze
 
@@ -293,7 +293,7 @@ class CorpusManager:
         Return the path to the selected parent and its calculated score, or
         None if the corpus is empty.
         """
-        corpus_files = list(self.coverage_state.get("per_file_coverage", {}).keys())
+        corpus_files = list(self.coverage_state.state.get("per_file_coverage", {}).keys())
         if not corpus_files:
             return None
 
@@ -341,7 +341,7 @@ class CorpusManager:
         print(f"[+] Added minimized file to corpus: {new_filename}")
 
         parent_metadata = (
-            self.coverage_state["per_file_coverage"].get(parent_id, {}) if parent_id else {}
+            self.coverage_state.state["per_file_coverage"].get(parent_id, {}) if parent_id else {}
         )
         lineage_depth = parent_metadata.get("lineage_depth", 0) + 1
         parent_lineage_profile = parent_metadata.get("lineage_coverage_profile", {})
@@ -363,11 +363,11 @@ class CorpusManager:
             "content_hash": content_hash,
             "coverage_hash": coverage_hash,
         }
-        self.coverage_state["per_file_coverage"][new_filename] = metadata
+        self.coverage_state.state["per_file_coverage"][new_filename] = metadata
         self.known_hashes.add((content_hash, coverage_hash))
 
         # The manager is now responsible for saving the state it modifies.
-        save_coverage_state(self.coverage_state)
+        save_coverage_state(self.coverage_state.state)
 
         return new_filename
 

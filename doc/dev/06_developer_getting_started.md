@@ -149,18 +149,26 @@ With the project installed, you can run the fuzzer from any directory on your sy
 
 ### Using the `state_tool.py`
 
-The fuzzer's main state file, `coverage/coverage_state.pkl`, is a binary file that is not human-readable. The `state_tool.py` script is provided to inspect and convert this file. See [05_state_and_data_formats.md](./05_state_and_data_formats.md) for a description of this file's format and interesting fields.
+The fuzzer's main state file, `coverage/coverage_state.pkl`, is a binary file that is not human-readable. The `state_tool.py` script is provided to inspect, convert, and migrate this file.
 
-  * **To view the state file as JSON:**
+* **To view the state file as JSON:**
+    This command will automatically handle both old (string-based) and new (integer-based) formats, printing a human-readable JSON representation to your console.
 
     ```bash
     python lafleur/state_tool.py coverage/coverage_state.pkl
     ```
 
-  * **To convert the state file to a human-readable JSON file:**
+* **To convert the state file to a JSON file:**
 
     ```bash
     python lafleur/state_tool.py coverage/coverage_state.pkl coverage/pretty_state.json
+    ```
+
+* **To manually migrate an old state file:**
+    If you need to manually convert an old, string-based state file to the new integer-based format, you can specify a `.pkl` output file.
+
+    ```bash
+    python lafleur/state_tool.py /path/to/old_state.pkl /path/to/new_state.pkl
     ```
 
 ### Interpreting the results

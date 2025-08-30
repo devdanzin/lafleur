@@ -236,6 +236,8 @@ class CorpusManager:
                     parent_id=None,
                     mutation_info={"strategy": "seed"},
                     mutation_seed=0,
+                    parent_file_size=0,
+                    parent_lineage_edge_count=0,
                 )
                 if analysis_data["status"] == "NEW_COVERAGE":
                     self.add_new_file(
@@ -434,6 +436,8 @@ class CorpusManager:
             parent_id=None,
             mutation_info={"strategy": "generative_seed"},
             mutation_seed=0,
+            parent_file_size=0,
+            parent_lineage_edge_count=0,
         )
         if analysis_data["status"] == "NEW_COVERAGE":
             self.add_new_file(

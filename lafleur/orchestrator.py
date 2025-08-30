@@ -23,6 +23,7 @@ import sys
 import time
 from collections import defaultdict
 from compression import zstd
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from textwrap import dedent, indent
@@ -68,6 +69,78 @@ ENV.update(
         "PYTHON_JIT": "1",
     }
 )
+
+
+@dataclass
+class NewCoverageInfo:
+    """A data class to hold the counts of new coverage found."""
+
+    global_uops: int = 0
+    relative_uops: int = 0
+    global_edges: int = 0
+    relative_edges: int = 0
+    global_rare_events: int = 0
+    relative_rare_events: int = 0
+    total_child_edges: int = 0
+
+    def is_interesting(self) -> bool:
+        """Return True if any new coverage was found."""
+        return (
+            self.global_uops > 0
+            or self.relative_uops > 0
+            or self.global_edges > 0
+            or self.relative_edges > 0
+            or self.global_rare_events > 0
+            or self.relative_rare_events > 0
+        )
+
+
+class InterestingnessScorer:
+    """Calculates a score to determine if a mutated child is worth keeping."""
+
+    MIN_INTERESTING_SCORE = 10.0
+
+    def __init__(
+        self,
+        coverage_info: NewCoverageInfo,
+        parent_file_size: int,
+        parent_lineage_edge_count: int,
+        child_file_size: int,
+    ):
+        self.info = coverage_info
+        self.parent_file_size = parent_file_size
+        self.parent_lineage_edge_count = parent_lineage_edge_count
+        self.child_file_size = child_file_size
+
+    def calculate_score(self) -> float:
+        """
+        Calculate a score based on new coverage, richness, and density.
+        """
+        score = 0.0
+
+        # 1. Heavily reward new global discoveries.
+        score += self.info.global_edges * 10.0
+        score += self.info.global_uops * 5.0
+        score += self.info.global_rare_events * 10.0
+
+        # 2. Add smaller rewards for new relative discoveries.
+        score += self.info.relative_edges * 1.0
+        score += self.info.relative_uops * 0.5
+
+        # 3. Reward for richness (% increase in total coverage).
+        if self.parent_lineage_edge_count > 0:
+            percent_increase = (self.info.total_child_edges / self.parent_lineage_edge_count) - 1.0
+            if percent_increase > 0.1:  # Reward if > 10% richer
+                score += percent_increase * 5.0  # Add up to 5 points for a 100% increase
+
+        # 4. Penalize for low coverage density (large size increase for little gain).
+        if self.info.global_edges == 0 and self.info.relative_edges > 0:
+            size_increase_ratio = (self.child_file_size / (self.parent_file_size + 1)) - 1.0
+            if size_increase_ratio > 0.5:  # Penalize if > 50% larger
+                # This penalty can offset the small gain from relative edges
+                score -= size_increase_ratio * 2.0
+
+        return score
 
 
 class LafleurOrchestrator:
@@ -773,6 +846,13 @@ except Exception:
             parent_metadata = self.coverage_manager.state["per_file_coverage"].get(parent_id, {})
             parent_lineage_profile = parent_metadata.get("lineage_coverage_profile", {})
 
+            parent_file_size = parent_metadata.get("file_size_bytes", 0)
+
+            # Calculate the total number of unique edges in the parent's lineage
+            parent_lineage_edge_count = 0
+            for harness_data in parent_lineage_profile.values():
+                parent_lineage_edge_count += len(harness_data.get("edges", set()))
+
             base_harness_node, parent_core_tree, setup_nodes = self._get_nodes_from_parent(
                 current_parent_path
             )
@@ -860,6 +940,8 @@ except Exception:
                             parent_id,
                             mutation_info,
                             mutation_seed,
+                            parent_file_size,
+                            parent_lineage_edge_count,
                             self.differential_testing,
                         )
 
@@ -999,17 +1081,19 @@ except Exception:
         child_coverage: dict,
         parent_lineage_profile: dict,
         parent_id: str | None,
-        mutation_info: dict,
-    ) -> bool:
+    ) -> NewCoverageInfo:
         """
-        Perform a read-only check to see if a child has new coverage.
+        Count all new global and relative coverage items from a child's run.
 
-        Return True if new coverage is found, False otherwise.
+        Return a NewCoverageInfo object containing detailed counts.
         """
-        is_interesting = False
-        # --- PASS 1: Unified Read-Only Check for Interestingness ---
+        info = NewCoverageInfo()
+        total_edges = 0
+
         for harness_id, child_data in child_coverage.items():
             lineage_harness_data = parent_lineage_profile.get(harness_id, {})
+
+            total_edges += len(child_data.get("edges", {}))
 
             # Helper to get the correct reverse map for a given coverage type
             def get_reverse_map(cov_type):
@@ -1017,38 +1101,33 @@ except Exception:
 
             for cov_type in ["uops", "edges", "rare_events"]:
                 lineage_set = lineage_harness_data.get(cov_type, set())
-                global_set = self.coverage_manager.state["global_coverage"].get(cov_type, {})
-                reverse_map = get_reverse_map(cov_type.rstrip("s"))  # 'uops' -> 'uop'
+                global_coverage_map = self.coverage_manager.state["global_coverage"].get(
+                    cov_type, {}
+                )
+                reverse_map = get_reverse_map(cov_type.rstrip("s"))
+
+                global_counter_attr = f"global_{cov_type}"
+                relative_counter_attr = f"relative_{cov_type}"
 
                 for item_id in child_data.get(cov_type, {}):
                     item_str = reverse_map.get(item_id, f"ID_{item_id}_(unknown)")
 
-                    if item_id not in global_set:
+                    if item_id not in global_coverage_map:
+                        setattr(info, global_counter_attr, getattr(info, global_counter_attr) + 1)
                         print(
                             f"[NEW GLOBAL {cov_type.upper()[:-1]}] '{item_str}' in harness '{harness_id}'",
                             file=sys.stderr,
                         )
-                        is_interesting = True
                     elif parent_id is not None and item_id not in lineage_set:
+                        setattr(
+                            info, relative_counter_attr, getattr(info, relative_counter_attr) + 1
+                        )
                         print(
                             f"[NEW RELATIVE {cov_type.upper()[:-1]}] '{item_str}' in harness '{harness_id}'",
                             file=sys.stderr,
                         )
-                        is_interesting = True
-            if is_interesting and parent_id is not None:
-                break
-
-        # --- Apply special rules for SEED files ---
-        if parent_id is None:
-            # We can have two kinds of seeds: "generative_seed" for generated
-            # files and "seed" for new corpus additions
-            is_seed = "seed" in mutation_info.get("strategy", "")
-            if child_coverage or is_seed:
-                is_interesting = True
-            elif not is_interesting:
-                print("  [~] Seed file produced no JIT coverage. Skipping.", file=sys.stderr)
-
-        return is_interesting
+        info.total_child_edges = total_edges
+        return info
 
     def _update_global_coverage(self, child_coverage: dict):
         """Commit the coverage from a new, interesting child to the global state."""
@@ -1073,6 +1152,39 @@ except Exception:
         canonical_string = ";".join(all_edges)
         return hashlib.sha256(canonical_string.encode("utf-8")).hexdigest()
 
+    def _score_and_decide_interestingness(
+        self,
+        coverage_info: NewCoverageInfo,
+        parent_id: str | None,
+        mutation_info: dict,
+        parent_file_size: int,
+        parent_lineage_edge_count: int,
+        child_file_size: int,
+    ) -> bool:
+        """Use the scorer to decide if a child is interesting."""
+
+        # Handle the special case for seed files first.
+        if parent_id is None:
+            is_seed = "seed" in mutation_info.get("strategy", "")
+            if coverage_info.is_interesting() or is_seed:
+                return True
+            else:
+                print("  [~] Seed file produced no JIT coverage. Skipping.", file=sys.stderr)
+                return False
+
+        # For normal mutations, use the scoring logic.
+        scorer = InterestingnessScorer(
+            coverage_info, parent_file_size, parent_lineage_edge_count, child_file_size
+        )
+        score = scorer.calculate_score()
+
+        if score >= scorer.MIN_INTERESTING_SCORE:
+            print(f"  [+] Child IS interesting with score: {score:.2f}", file=sys.stderr)
+            return True
+
+        print(f"  [+] Child IS NOT interesting with score: {score:.2f}", file=sys.stderr)
+        return False
+
     def analyze_run(
         self,
         exec_result: ExecutionResult,
@@ -1080,6 +1192,8 @@ except Exception:
         parent_id: str | None,
         mutation_info: dict,
         mutation_seed: int,
+        parent_file_size: int,
+        parent_lineage_edge_count: int,
         is_differential_mode: bool = False,
     ) -> dict:
         """Orchestrate the analysis of a run and return a dictionary of findings."""
@@ -1101,8 +1215,15 @@ except Exception:
 
         child_coverage = parse_log_for_edge_coverage(exec_result.log_path, self.coverage_manager)
 
-        is_interesting = self._find_new_coverage(
-            child_coverage, parent_lineage_profile, parent_id, mutation_info
+        coverage_info = self._find_new_coverage(child_coverage, parent_lineage_profile, parent_id)
+
+        is_interesting = self._score_and_decide_interestingness(
+            coverage_info,
+            parent_id,
+            mutation_info,
+            parent_file_size,
+            parent_lineage_edge_count,
+            len(exec_result.source_path.read_text().encode("utf-8")),
         )
 
         if is_interesting:

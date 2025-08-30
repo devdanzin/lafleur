@@ -35,7 +35,7 @@ All notable changes to this project should be documented in this file.
 - Do not record some known uninteresting crashes, by @devdanzin.
 - Allow disabling tweaks when running `jit_tuner.py`, by @devdanzin.
 - Store int ids for UOPs, edges, and rare events instead of strings in the coverage file, by @devdanzin.
-
+- Make interestingness more strict based on scores calculated by `InterestingnessScorer`, by @devdanzin.
 
 ### Fixed
 

@@ -22,6 +22,7 @@ All notable changes to this project should be documented in this file.
 - Tests for mutators.py, by @devdanzin.
 - A depth-first way of mutating code samples, by @devdanzin.
 - A `--keep-temp-logs` CLI option to keep temporary log files, by @devdanzin.
+- A `SlicingMutator` to only visit part of the AST of very big files, by @devdanzin.]
 
 
 ### Enhanced
@@ -36,6 +37,7 @@ All notable changes to this project should be documented in this file.
 - Allow disabling tweaks when running `jit_tuner.py`, by @devdanzin.
 - Store int ids for UOPs, edges, and rare events instead of strings in the coverage file, by @devdanzin.
 - Make interestingness more strict based on scores calculated by `InterestingnessScorer`, by @devdanzin.
+
 
 ### Fixed
 

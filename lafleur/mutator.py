@@ -1909,6 +1909,41 @@ class GuardRemover(ast.NodeTransformer):
         return node
 
 
+class SlicingMutator(ast.NodeTransformer):
+    """
+    A meta-mutator that applies a given mutation pipeline to only a small
+    slice of a very large function body.
+    """
+
+    MIN_STATEMENTS_FOR_SLICE = 100
+    SLICE_SIZE = 25
+
+    def __init__(self, transformer_instances: list[ast.NodeTransformer]):
+        self.pipeline = transformer_instances
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> ast.FunctionDef:
+        body_len = len(node.body)
+        if body_len < self.MIN_STATEMENTS_FOR_SLICE:
+            return node
+
+        print(f"    -> Slicing large function body of {body_len} statements.", file=sys.stderr)
+
+        start = random.randint(0, body_len - self.SLICE_SIZE)
+        end = start + self.SLICE_SIZE
+        body_slice = node.body[start:end]
+
+        temp_module = ast.Module(body=body_slice, type_ignores=[])
+
+        for transformer in self.pipeline:
+            temp_module = transformer.visit(temp_module)
+
+        mutated_slice = temp_module.body
+        node.body = node.body[:start] + mutated_slice + node.body[end:]
+
+        ast.fix_missing_locations(node)
+        return node
+
+
 class ASTMutator:
     """
     An engine for structurally modifying Python code at the AST level.

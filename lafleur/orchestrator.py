@@ -1524,7 +1524,8 @@ def main():
         help="Run the corpus pruning tool to find and report redundant test cases, then exit.",
     )
     parser.add_argument(
-        "-f", "--force",
+        "-f",
+        "--force",
         action="store_true",
         help="Used with --prune-corpus to actually delete the files. (Default: dry run)",
     )

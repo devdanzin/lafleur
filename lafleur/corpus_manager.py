@@ -483,11 +483,11 @@ class CorpusManager:
         # 3. Check for Efficiency.
         # File B must be better than file A in at least one metric (size or speed),
         # without being worse in the other.
-        size_a = file_a_meta.get("file_size_bytes", float('inf'))
-        size_b = file_b_meta.get("file_size_bytes", float('inf'))
+        size_a = file_a_meta.get("file_size_bytes", float("inf"))
+        size_b = file_b_meta.get("file_size_bytes", float("inf"))
 
-        time_a = file_a_meta.get("execution_time_ms", float('inf'))
-        time_b = file_b_meta.get("execution_time_ms", float('inf'))
+        time_a = file_a_meta.get("execution_time_ms", float("inf"))
+        time_b = file_b_meta.get("execution_time_ms", float("inf"))
 
         if size_b <= size_a and time_b <= time_a:
             # If B is smaller/faster in both, it's definitely better.

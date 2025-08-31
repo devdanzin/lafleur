@@ -396,10 +396,12 @@ class LafleurOrchestrator:
         self, base_ast: ast.AST, seed: int, **kwargs
     ) -> tuple[ast.AST, dict[str, Any]]:
         """Apply a single, seeded, deterministic mutation."""
-        harness_node = next((n for n in base_ast.body if isinstance(n, ast.FunctionDef)), None)
-        if harness_node and len(harness_node.body) > SlicingMutator.MIN_STATEMENTS_FOR_SLICE:
-            return self._run_slicing(base_ast, "deterministic", len(harness_node.body), seed=seed)
+        harness_node = base_ast
+        len_harness = len(harness_node.body) if harness_node else 0
+        if harness_node and len_harness > SlicingMutator.MIN_STATEMENTS_FOR_SLICE:
+            return self._run_slicing(base_ast, "deterministic", len_harness, seed=seed)
 
+        print(f"  [~] Running DETERMINISTIC stage ({len_harness} statements)...", file=sys.stderr)
         mutated_ast, transformers_used = self.ast_mutator.mutate_ast(base_ast, seed=seed)
         mutation_info = {
             "strategy": "deterministic",
@@ -409,11 +411,12 @@ class LafleurOrchestrator:
 
     def _run_havoc_stage(self, base_ast: ast.AST, **kwargs) -> tuple[ast.AST, dict[str, Any]]:
         """Apply a random stack of many different mutations to the AST."""
-        harness_node = next((n for n in base_ast.body if isinstance(n, ast.FunctionDef)), None)
-        if harness_node and len(harness_node.body) > SlicingMutator.MIN_STATEMENTS_FOR_SLICE:
-            return self._run_slicing(base_ast, "havoc", len(harness_node.body))
+        harness_node = base_ast
+        len_harness = len(harness_node.body) if harness_node else 0
+        if harness_node and len_harness > SlicingMutator.MIN_STATEMENTS_FOR_SLICE:
+            return self._run_slicing(base_ast, "havoc", len_harness)
 
-        print("  [~] Running HAVOC stage...", file=sys.stderr)
+        print(f"  [~] Running HAVOC stage ({len_harness} statements)...", file=sys.stderr)
         tree = base_ast  # Start with the copied tree from the dispatcher
         num_havoc_mutations = RANDOM.randint(15, 50)
         transformers_applied = []
@@ -437,11 +440,12 @@ class LafleurOrchestrator:
 
     def _run_spam_stage(self, base_ast: ast.AST, **kwargs) -> tuple[ast.AST, dict[str, Any]]:
         """Repeatedly apply the same type of mutation to the AST."""
-        harness_node = next((n for n in base_ast.body if isinstance(n, ast.FunctionDef)), None)
-        if harness_node and len(harness_node.body) > SlicingMutator.MIN_STATEMENTS_FOR_SLICE:
-            return self._run_slicing(base_ast, "spam", len(harness_node.body))
+        harness_node = base_ast
+        len_harness = len(harness_node.body) if harness_node else 0
+        if harness_node and len_harness > SlicingMutator.MIN_STATEMENTS_FOR_SLICE:
+            return self._run_slicing(base_ast, "spam", len_harness)
 
-        print("  [~] Running SPAM stage...", file=sys.stderr)
+        print(f"  [~] Running SPAM stage ({len_harness} statements)...", file=sys.stderr)
         tree = base_ast
         num_spam_mutations = RANDOM.randint(20, 50)
 

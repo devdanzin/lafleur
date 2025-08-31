@@ -1915,8 +1915,8 @@ class SlicingMutator(ast.NodeTransformer):
     slice of a very large function body.
     """
 
-    MIN_STATEMENTS_FOR_SLICE = 30
-    SLICE_SIZE = 15
+    MIN_STATEMENTS_FOR_SLICE = 100
+    SLICE_SIZE = 25
 
     def __init__(self, transformer_instances: list[ast.NodeTransformer]):
         self.pipeline = transformer_instances

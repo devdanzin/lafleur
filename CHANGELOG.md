@@ -22,7 +22,8 @@ All notable changes to this project should be documented in this file.
 - Tests for mutators.py, by @devdanzin.
 - A depth-first way of mutating code samples, by @devdanzin.
 - A `--keep-temp-logs` CLI option to keep temporary log files, by @devdanzin.
-- A `SlicingMutator` to only visit part of the AST of very big files, by @devdanzin.]
+- A `SlicingMutator` to only visit part of the AST of very big files, by @devdanzin.
+- Pruning (`--prune-corpus -f`) of the corpus by removing files that are subsumed by others, by @devdanzin.
 
 
 ### Enhanced

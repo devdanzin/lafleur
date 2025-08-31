@@ -167,6 +167,8 @@ class LafleurOrchestrator:
         num_runs: int = 1,
         use_dynamic_runs: bool = False,
         keep_tmp_logs: bool = False,
+        prune_corpus_flag: bool = False,
+        force_prune: bool = False,
     ):
         """Initialize the orchestrator and the corpus manager."""
         self.differential_testing = differential_testing
@@ -192,6 +194,11 @@ class LafleurOrchestrator:
         )
         # Synchronize the corpus and state at startup.
         self.corpus_manager.synchronize(self.analyze_run, self._build_lineage_profile)
+
+        if prune_corpus_flag:
+            self.corpus_manager.prune_corpus(dry_run=not force_prune)
+            print("[*] Pruning complete. Exiting.")
+            sys.exit(0)
 
         self.mutations_since_last_find = 0
         self.global_seed_counter = self.run_stats.get("global_seed_counter", 0)
@@ -1511,6 +1518,17 @@ def main():
         action="store_true",
         help="Retain temporary log files for all runs in the logs/run_logs/ directory for offline analysis.",
     )
+    parser.add_argument(
+        "--prune-corpus",
+        action="store_true",
+        help="Run the corpus pruning tool to find and report redundant test cases, then exit.",
+    )
+    parser.add_argument(
+        "-f",
+        "--force",
+        action="store_true",
+        help="Used with --prune-corpus to actually delete the files. (Default: dry run)",
+    )
     args = parser.parse_args()
 
     LOGS_DIR.mkdir(exist_ok=True)
@@ -1565,6 +1583,8 @@ Initial Stats:
             num_runs=args.runs,
             use_dynamic_runs=args.dynamic_runs,
             keep_tmp_logs=args.keep_tmp_logs,
+            prune_corpus_flag=args.prune_corpus,
+            force_prune=args.force,
         )
         orchestrator.run_evolutionary_loop()
     except KeyboardInterrupt:

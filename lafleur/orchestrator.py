@@ -32,7 +32,13 @@ from typing import Any
 from lafleur.corpus_manager import CORPUS_DIR, CorpusManager
 from lafleur.coverage import CoverageManager, parse_log_for_edge_coverage, load_coverage_state
 from lafleur.learning import MutatorScoreTracker
-from lafleur.mutator import ASTMutator, EmptyBodySanitizer, FuzzerSetupNormalizer, VariableRenamer
+from lafleur.mutator import (
+    ASTMutator,
+    EmptyBodySanitizer,
+    FuzzerSetupNormalizer,
+    SlicingMutator,
+    VariableRenamer,
+)
 from lafleur.utils import ExecutionResult, TeeLogger, load_run_stats, save_run_stats
 
 RANDOM = random.Random()
@@ -353,10 +359,47 @@ class LafleurOrchestrator:
 
         save_run_stats(self.run_stats)
 
+    def _run_slicing(
+        self, base_ast: ast.AST, stage_name: str, len_body: int, seed: int = None
+    ) -> tuple[ast.AST, dict[str, Any]]:
+        """A helper to apply a mutation pipeline to a slice of a large AST."""
+        print(
+            f"  [~] Large AST detected ({len_body} statements), running SLICING stage...",
+            file=sys.stderr,
+        )
+
+        if stage_name == "deterministic":
+            # For deterministic, we must re-seed the RNG to get the same choices
+            random.seed(seed)
+            num_mutations = random.randint(1, 3)
+            chosen_classes = random.choices(self.ast_mutator.transformers, k=num_mutations)
+            pipeline = [cls() for cls in chosen_classes]
+
+        elif stage_name == "spam":
+            num_mutations = random.randint(20, 50)
+            # Choose ONE transformer and create many instances of it
+            chosen_class = random.choices(self.ast_mutator.transformers, k=1)[0]
+            pipeline = [chosen_class() for _ in range(num_mutations)]
+            print(f"    -> Slicing and Spamming with: {chosen_class.__name__}", file=sys.stderr)
+
+        else:  # Havoc
+            num_mutations = random.randint(15, 50)
+            chosen_classes = random.choices(self.ast_mutator.transformers, k=num_mutations)
+            pipeline = [cls() for cls in chosen_classes]
+
+        slicer = SlicingMutator(pipeline)
+        tree = slicer.visit(base_ast)
+        mutation_info = {"strategy": f"slicing_{stage_name}", "transformers": ["SlicingMutator"]}
+        return tree, mutation_info
+
     def _run_deterministic_stage(
         self, base_ast: ast.AST, seed: int, **kwargs
     ) -> tuple[ast.AST, dict[str, Any]]:
         """Apply a single, seeded, deterministic mutation."""
+        harness_node = next((n for n in base_ast.body if isinstance(n, ast.FunctionDef)), None)
+        if harness_node and len(harness_node.body) > SlicingMutator.MIN_STATEMENTS_FOR_SLICE:
+            return self._run_slicing(base_ast, "deterministic", len(harness_node.body), seed=seed)
+
         mutated_ast, transformers_used = self.ast_mutator.mutate_ast(base_ast, seed=seed)
         mutation_info = {
             "strategy": "deterministic",
@@ -366,6 +409,10 @@ class LafleurOrchestrator:
 
     def _run_havoc_stage(self, base_ast: ast.AST, **kwargs) -> tuple[ast.AST, dict[str, Any]]:
         """Apply a random stack of many different mutations to the AST."""
+        harness_node = next((n for n in base_ast.body if isinstance(n, ast.FunctionDef)), None)
+        if harness_node and len(harness_node.body) > SlicingMutator.MIN_STATEMENTS_FOR_SLICE:
+            return self._run_slicing(base_ast, "havoc", len(harness_node.body))
+
         print("  [~] Running HAVOC stage...", file=sys.stderr)
         tree = base_ast  # Start with the copied tree from the dispatcher
         num_havoc_mutations = RANDOM.randint(15, 50)
@@ -390,6 +437,10 @@ class LafleurOrchestrator:
 
     def _run_spam_stage(self, base_ast: ast.AST, **kwargs) -> tuple[ast.AST, dict[str, Any]]:
         """Repeatedly apply the same type of mutation to the AST."""
+        harness_node = next((n for n in base_ast.body if isinstance(n, ast.FunctionDef)), None)
+        if harness_node and len(harness_node.body) > SlicingMutator.MIN_STATEMENTS_FOR_SLICE:
+            return self._run_slicing(base_ast, "spam", len(harness_node.body))
+
         print("  [~] Running SPAM stage...", file=sys.stderr)
         tree = base_ast
         num_spam_mutations = RANDOM.randint(20, 50)

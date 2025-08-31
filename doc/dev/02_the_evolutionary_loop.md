@@ -88,15 +88,17 @@ The orchestrator takes the mutated harness AST and reassembles the full script f
 
 ### Step 4: Analysis, Corpus Update, and Loop Control
 
-The result of each run is passed to the `analyze_run` method, which performs the final, critical steps:
+The result of each run is passed to the `analyze_run` method, which performs the final, critical steps. This process has been significantly enhanced to move beyond a simple "new or not new" check and now uses a multi-factor scoring system to evaluate the quality of a discovery.
 
-1.  **Error Checking:** It first checks for correctness divergences (if in differential mode) or crashes by scanning the log file for keywords and checking the exit code. If an error is found, the test case is saved to the appropriate directory (`divergences/` or `crashes/`), and the analysis for that run concludes.
-2.  **Coverage Parsing:** If no crash occurred, `parse_log_for_edge_coverage` is called on the log file to extract the child's coverage profile.
-3.  **Interestingness Check:** The orchestrator performs its two-pass analysis, comparing the child's coverage against the **global coverage map** and the parent's **lineage coverage profile** to determine if any new coverage has been found.
-4.  **Duplicate Check:** A child is now considered a duplicate only if it has both the same **`content_hash`** and the same **`coverage_hash`** as a previously seen test case. This allows the fuzzer to save multiple copies of the same source file if they produce different behaviors.
-5.  **Corpus Commit & Loop Control:** If a child is both interesting and unique, the process proceeds:
-      * The `MutatorScoreTracker` is notified of the success, increasing the scores of the mutators that were used.
-      * The new coverage is added to the in-memory `global_coverage` map.
-      * The `CorpusManager` saves the new test case to the corpus and updates the `coverage_state.pkl` file.
-      * **If in a Breadth-first Session:** The `break` from `_handle_analysis_data` causes the entire `execute_mutation_and_analysis_cycle` method to exit. The main loop then starts a new session with a new parent.
-      * **If in a Depth-first Session:** The new child immediately becomes the **new parent** for the current session. The `execute_mutation_and_analysis_cycle` method loops back and begins mutating this new file, continuing the "deepening" run.
+1.  **Error Checking:** The method first checks for crashes or correctness divergences. If an error is found, the test case is saved to the appropriate directory (`crashes/` or `divergences/`), and the analysis for that run concludes.
+2.  **Coverage Parsing:** If no crash occurred, the log file is parsed to extract the child's complete coverage profile.
+3.  **Interestingness Scoring:** The orchestrator no longer uses a simple boolean check. Instead, it uses a dedicated `InterestingnessScorer` to calculate a score based on several heuristics that measure the value of the mutation:
+    * **Global Discoveries**: The score is heavily weighted towards finding **new global coverage**—edges, uops, or rare events never before seen in the campaign. This is the most valuable outcome.
+    * **Relative Discoveries**: A smaller number of points are awarded for finding **new relative coverage**—items that are new to the parent's specific lineage but have been seen elsewhere.
+    * **Richness**: The scorer compares the child's total number of unique edges to its parent's lineage. Children that are significantly "richer" (i.e., have a higher percentage of total coverage) receive a score bonus.
+    * **Coverage Density**: The scorer penalizes mutations that result in a large file size increase for a minimal gain in new coverage. This helps keep the corpus small and efficient.
+4.  **Threshold Check:** A child is only considered "interesting" if its final score exceeds a predefined threshold. This ensures that only high-value mutations are added to the corpus.
+5.  **Duplicate Check:** An interesting child is still checked for duplication. It is considered a duplicate only if it has both the same **`content_hash`** and the same **`coverage_hash`** as a previously seen test case.
+6.  **Corpus Commit & Loop Control:** If a child is both interesting (its score is high enough) and unique, it is saved to the corpus, and the fuzzer's state is updated.
+    * **If in a Breadth-first Session:** The discovery of an interesting child causes the entire mutation cycle for the current parent to end, and the fuzzer moves on to select a new parent.
+    * **If in a Depth-first Session:** The new interesting child immediately becomes the **new parent**, and the loop continues by mutating this new file.

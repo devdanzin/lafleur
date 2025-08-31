@@ -147,6 +147,26 @@ With the project installed, you can run the fuzzer from any directory on your sy
     lafleur --fusil-path /path/to/fusil/fuzzers/fusil-python-threaded --keep-tmp-logs
     ```
 
+-----
+
+### Corpus Maintenance
+
+Over a long fuzzing campaign, the corpus can grow large with many redundant test cases. `lafleur` includes a tool to prune the corpus by finding and removing files whose coverage is a subset of other, more efficient files.
+
+* **To perform a safe "dry run"** that reports which files would be deleted without actually touching them:
+
+    ```bash
+    lafleur --prune-corpus
+    ```
+
+* **To permanently delete the redundant files**, use the `--force` flag. **Warning**: This action is irreversible and will delete files from your `corpus/` directory.
+
+    ```bash
+    lafleur --prune-corpus --force
+    ```
+
+-----
+
 ### Using the `state_tool.py`
 
 The fuzzer's main state file, `coverage/coverage_state.pkl`, is a binary file that is not human-readable. The `state_tool.py` script is provided to inspect, convert, and migrate this file.
@@ -170,6 +190,8 @@ The fuzzer's main state file, `coverage/coverage_state.pkl`, is a binary file th
     ```bash
     python lafleur/state_tool.py /path/to/old_state.pkl /path/to/new_state.pkl
     ```
+
+-----
 
 ### Interpreting the results
 

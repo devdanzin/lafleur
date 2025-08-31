@@ -23,6 +23,18 @@ Before mutations are applied, the parent's AST is first run through a series of 
 * **`FuzzerSetupNormalizer`**: This transformer scans the AST and removes any fuzzer-injected setup code from previous generations, such as `import gc`, `gc.set_threshold(...)`, and the `fuzzer_rng` initialization. This keeps the corpus clean and prevents redundant setup code from bloating test cases.
 * **`EmptyBodySanitizer`**: After all mutations are complete, this final pass is run on the AST. It finds any control flow statements (like `if` or `for`) that may have had their contents removed by other mutators and inserts a `pass` statement into their body. This is a critical step that guarantees the final generated code is always syntactically valid and prevents `IndentationError` crashes.
 
+### Slicing Strategy for Large Files
+
+To improve performance when mutating very large test cases, `lafleur` employs a meta-mutation strategy called slicing. When the orchestrator detects that a function's body has grown beyond a certain threshold (e.g., >100 statements), it can opt to apply a mutation pipeline to only a small, random slice of the AST instead of visiting the entire tree.
+
+This process works as follows:
+1. A random slice of the function's body is selected (e.g., 25 statements).
+2. A temporary, minimal AST is created containing only this slice.
+3. The normal mutation pipeline (e.g., "havoc" or "spam") is applied to this small, temporary AST.
+4. The full function body is then reconstructed with the mutated slice placed back in its original position.
+
+This strategy significantly speeds up the mutation of large files by avoiding a full, slow traversal of a huge AST, while still ensuring that different parts of the large test case are mutated over time.
+
 ### Generic Mutators
 
 This is a suite of simple, general-purpose mutators that provide basic structural changes to the code.

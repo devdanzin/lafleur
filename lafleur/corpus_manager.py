@@ -451,3 +451,97 @@ class CorpusManager:
                 mutation_seed=analysis_data["mutation_seed"],
                 build_lineage_func=orchestrator_build_lineage_func,
             )
+
+    def _get_edge_set_from_profile(self, lineage_profile: dict) -> set[int]:
+        """A helper to extract the set of all unique edge IDs from a lineage profile."""
+        all_edges = set()
+        for harness_data in lineage_profile.values():
+            all_edges.update(harness_data.get("edges", set()))
+        return all_edges
+
+    def _is_subsumed_by(self, file_a_meta: dict, file_b_meta: dict) -> bool:
+        """
+        Determine if file A is "subsumed" by file B.
+
+        File A is subsumed if its coverage is a proper subset of B's,
+        and B is more "efficient" (smaller or faster).
+        """
+        # 1. Get the full set of unique edges for each file's lineage.
+        edges_a = self._get_edge_set_from_profile(file_a_meta.get("lineage_coverage_profile", {}))
+        edges_b = self._get_edge_set_from_profile(file_b_meta.get("lineage_coverage_profile", {}))
+
+        # We can't prune a file if its edge set is empty (e.g., a fresh seed).
+        if not edges_a:
+            return False
+
+        # 2. Check for Coverage Subsumption.
+        # Edges of A must be a proper (strict) subset of B's edges.
+        # This means B covers everything A does, plus at least one more thing.
+        if not edges_a.issubset(edges_b) or edges_a == edges_b:
+            return False
+
+        # 3. Check for Efficiency.
+        # File B must be better than file A in at least one metric (size or speed),
+        # without being worse in the other.
+        size_a = file_a_meta.get("file_size_bytes", float('inf'))
+        size_b = file_b_meta.get("file_size_bytes", float('inf'))
+
+        time_a = file_a_meta.get("execution_time_ms", float('inf'))
+        time_b = file_b_meta.get("execution_time_ms", float('inf'))
+
+        if size_b <= size_a and time_b <= time_a:
+            # If B is smaller/faster in both, it's definitely better.
+            return True
+
+        # We could add more nuanced heuristics here, but this is a solid start.
+        return False
+
+    def prune_corpus(self, dry_run: bool = True):
+        """
+        Scan the corpus and remove redundant files.
+        A file is redundant if its coverage is a proper subset of another,
+        more efficient file in the corpus.
+        """
+        print("[*] Starting corpus pruning scan...")
+        if dry_run:
+            print("[!] Running in DRY RUN mode. No files will be deleted.")
+
+        all_files = list(self.coverage_state.state.get("per_file_coverage", {}).items())
+        files_to_prune = set()
+        prune_reasons = {}
+
+        # Use a nested loop to compare every file against every other file
+        for filename_a, meta_a in all_files:
+            if filename_a in files_to_prune:
+                continue
+
+            for filename_b, meta_b in all_files:
+                if filename_a == filename_b or filename_b in files_to_prune:
+                    continue
+
+                if self._is_subsumed_by(meta_a, meta_b):
+                    files_to_prune.add(filename_a)
+                    prune_reasons[filename_a] = f"subsumed by {filename_b}"
+
+                    meta_b.setdefault("subsumed_children_count", 0)
+                    meta_b["subsumed_children_count"] += 1
+
+                    # Once a file is marked for pruning, we break the inner loop
+                    # and move to the next candidate file.
+                    break
+
+        if not files_to_prune:
+            print("[+] No prunable files found in the corpus.")
+            return
+
+        print(f"\n[*] Found {len(files_to_prune)} files to prune:")
+        for filename in sorted(list(files_to_prune)):
+            print(f"  - {filename} ({prune_reasons[filename]})")
+
+        if not dry_run:
+            print("\n[*] Deleting files and updating state...")
+            for filename in files_to_prune:
+                (CORPUS_DIR / filename).unlink()
+                del self.coverage_state.state["per_file_coverage"][filename]
+            save_coverage_state(self.coverage_state.state)
+            print("[+] Corpus pruning complete.")

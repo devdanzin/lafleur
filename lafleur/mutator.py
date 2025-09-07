@@ -15,7 +15,6 @@ import builtins
 import random
 import copy
 import sys
-from math import log10
 from textwrap import dedent, indent
 
 

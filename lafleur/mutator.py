@@ -132,23 +132,34 @@ class BoundaryValuesMutator(ast.NodeTransformer):
         "-1j",
     ]
 
+    def _safe_unparse(self, node: ast.AST) -> str:
+        """
+        A helper to unparse an AST node to a string, with a fallback
+        for integers that are too large to be converted.
+        """
+        try:
+            return ast.unparse(node)
+        except ValueError as e:
+            if "int" in str(e) and "too large" in str(e):
+                return "(an extremely large integer)"
+            # Re-raise other unexpected ValueErrors
+            raise
+
     def visit_Constant(self, node: ast.Constant) -> ast.AST:
-        # We only want to mutate existing numbers, not None, strings, etc.
         if not isinstance(node.value, (int, float, complex)):
             return node
 
         if random.random() < 0.2:
             new_value_str = random.choice(self.BOUNDARY_VALUES)
+            original_value_str = self._safe_unparse(node)
             print(
-                f"    -> Mutating constant '{ast.unparse(node)}' to boundary value '{new_value_str}'",
+                f"    -> Mutating constant '{original_value_str}' to boundary value '{new_value_str}'",
                 file=sys.stderr,
             )
             try:
-                # We want the expression itself, not the module wrapper.
                 new_node = ast.parse(new_value_str, mode="eval").body
                 return new_node
             except (SyntaxError, ValueError):
-                # Fallback to the original node if parsing fails for any reason
                 return node
         return node
 

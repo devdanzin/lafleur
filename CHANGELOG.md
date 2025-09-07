@@ -25,6 +25,7 @@ All notable changes to this project should be documented in this file.
 - A `SlicingMutator` to only visit part of the AST of very big files, by @devdanzin.
 - Pruning (`--prune-corpus -f`) of the corpus by removing files that are subsumed by others, by @devdanzin.
 - A `BoundaryValuesMutator` that replaces numeric constants with interesting/boundary values, by @devdanzin.
+- A `BlockTransposerMutator` that moves code blocks within a function body, by @devdanzin.
 
 
 ### Enhanced

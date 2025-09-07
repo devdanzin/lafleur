@@ -24,6 +24,7 @@ All notable changes to this project should be documented in this file.
 - A `--keep-temp-logs` CLI option to keep temporary log files, by @devdanzin.
 - A `SlicingMutator` to only visit part of the AST of very big files, by @devdanzin.
 - Pruning (`--prune-corpus -f`) of the corpus by removing files that are subsumed by others, by @devdanzin.
+- A `BoundaryValuesMutator` that replaces numeric constants with interesting/boundary values, by @devdanzin.
 
 
 ### Enhanced

@@ -81,6 +81,78 @@ class ConstantPerturbator(ast.NodeTransformer):
         return node
 
 
+class BoundaryValuesMutator(ast.NodeTransformer):
+    """
+    Replaces numeric constants with interesting boundary values to stress
+    JIT specializations for numbers.
+    """
+
+    BOUNDARY_VALUES = [
+        # Integers
+        "0",
+        "-1",
+        "2**31 - 1",  # Max signed 32-bit int
+        "2**31",  # Signed 32-bit int overflow
+        "-2**31",  # Min signed 32-bit int
+        "-2**31 - 1",  # Signed 32-bit int underflow
+        "2**63 - 1",  # Max signed 64-bit int
+        "2**63",  # Signed 64-bit int overflow
+        "-2**63",  # Min signed 64-bit int
+        "-2**63 - 1",  # Signed 64-bit int underflow
+        "2 ** 1024",  # Large positive int
+        "-2 ** 1024",  # Large negative int
+        "sys.maxsize",
+        "sys.maxsize - 1",
+        "sys.maxsize + 1",
+        "-sys.maxsize",
+        "-sys.maxsize + 1",
+        "-sys.maxsize - 1",
+        # Floats
+        "0.0",
+        "-0.0",
+        "float('inf')",
+        "float('-inf')",
+        "float('nan')",
+        "sys.float_info.max",
+        "sys.float_info.min",
+        "sys.float_info.epsilon",
+        "float(10**15000)",
+        "-float(10**15000)",
+        "-sys.float_info.max",
+        "-sys.float_info.epsilon",
+        "sys.float_info.min / 2",
+        "-sys.float_info.min / 2",
+        "float('0.0000001')",
+        "-float('0.0000001')",
+        # Complex numbers
+        "complex(sys.maxsize, sys.maxsize)",
+        "complex(float('inf'), float('nan'))",
+        "complex(sys.float_info.max, sys.float_info.epsilon)",
+        "1j",
+        "-1j",
+    ]
+
+    def visit_Constant(self, node: ast.Constant) -> ast.AST:
+        # We only want to mutate existing numbers, not None, strings, etc.
+        if not isinstance(node.value, (int, float, complex)):
+            return node
+
+        if random.random() < 0.2:
+            new_value_str = random.choice(self.BOUNDARY_VALUES)
+            print(
+                f"    -> Mutating constant '{ast.unparse(node)}' to boundary value '{new_value_str}'",
+                file=sys.stderr,
+            )
+            try:
+                # We want the expression itself, not the module wrapper.
+                new_node = ast.parse(new_value_str, mode="eval").body
+                return new_node
+            except (SyntaxError, ValueError):
+                # Fallback to the original node if parsing fails for any reason
+                return node
+        return node
+
+
 class GuardInjector(ast.NodeTransformer):
     """Wrap a random statement in a seeded, reproducible 'if' block."""
 
@@ -1959,6 +2031,7 @@ class ASTMutator:
             OperatorSwapper,
             ComparisonSwapper,
             ConstantPerturbator,
+            BoundaryValuesMutator,
             GuardInjector,
             ContainerChanger,
             VariableSwapper,

@@ -2027,6 +2027,48 @@ class SlicingMutator(ast.NodeTransformer):
         return node
 
 
+class BlockTransposerMutator(ast.NodeTransformer):
+    """
+    Selects a random, contiguous block of statements from a function
+    body and moves it to a new random location within the same body.
+    """
+
+    MIN_STATEMENTS_FOR_TRANSPOSE = 6
+    BLOCK_SIZE = 3
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> ast.FunctionDef:
+        self.generic_visit(node)
+
+        body_len = len(node.body)
+        if body_len < self.MIN_STATEMENTS_FOR_TRANSPOSE:
+            return node
+
+        if random.random() < 0.05:
+            # 1. Select a random block of statements to move.
+            # We ensure the block doesn't exceed the list bounds.
+            start_index = random.randint(0, body_len - self.BLOCK_SIZE)
+            block = node.body[start_index : start_index + self.BLOCK_SIZE]
+
+            # 2. Remove the block from its original position.
+            del node.body[start_index : start_index + self.BLOCK_SIZE]
+
+            # 3. Choose a new, random insertion point in the now-shorter list.
+            new_len = len(node.body)
+            insert_index = random.randint(0, new_len)
+
+            print(
+                f"    -> Transposing block from index {start_index} to {insert_index}",
+                file=sys.stderr,
+            )
+
+            # 4. Insert the block at the new location.
+            node.body[insert_index:insert_index] = block
+
+            ast.fix_missing_locations(node)
+
+        return node
+
+
 class ASTMutator:
     """
     An engine for structurally modifying Python code at the AST level.
@@ -2067,6 +2109,7 @@ class ASTMutator:
             ExitStresser,
             DeepCallMutator,
             GuardRemover,
+            BlockTransposerMutator,
         ]
 
     def mutate_ast(

@@ -2120,6 +2120,119 @@ class UnpackingMutator(ast.NodeTransformer):
         return node
 
 
+def _create_logging_decorator_ast(decorator_name: str) -> ast.FunctionDef:
+    """
+    Programmatically create the AST for a simple logging decorator.
+
+    Equivalent to:
+    def logging_decorator(func):
+        def wrapper(*args, **kwargs):
+            print(f"Calling {func.__name__}")
+            return func(*args, **kwargs)
+        return wrapper
+    """
+    func_name_str = ast.Constant(value="Calling {func.__name__}")
+
+    decorator_def = ast.FunctionDef(
+        name=decorator_name,
+        args=ast.arguments(
+            args=[ast.arg(arg="func")], posonlyargs=[], kwonlyargs=[], kw_defaults=[], defaults=[]
+        ),
+        body=[
+            ast.FunctionDef(
+                name="wrapper",
+                args=ast.arguments(
+                    args=[],
+                    posonlyargs=[],
+                    vararg=ast.arg(arg="args"),
+                    kwarg=ast.arg(arg="kwargs"),
+                    kw_defaults=[],
+                    defaults=[],
+                ),
+                body=[
+                    ast.Expr(
+                        value=ast.Call(
+                            func=ast.Name(id="print", ctx=ast.Load()),
+                            args=[
+                                ast.Call(
+                                    func=ast.Attribute(
+                                        value=func_name_str, attr="format", ctx=ast.Load()
+                                    ),
+                                    args=[],
+                                    keywords=[
+                                        ast.keyword(
+                                            arg="func", value=ast.Name(id="func", ctx=ast.Load())
+                                        )
+                                    ],
+                                )
+                            ],
+                            keywords=[],
+                        )
+                    ),
+                    ast.Return(
+                        value=ast.Call(
+                            func=ast.Name(id="func", ctx=ast.Load()),
+                            args=[
+                                ast.Starred(
+                                    value=ast.Name(id="args", ctx=ast.Load()), ctx=ast.Load()
+                                )
+                            ],
+                            keywords=[
+                                ast.keyword(arg=None, value=ast.Name(id="kwargs", ctx=ast.Load()))
+                            ],
+                        )
+                    ),
+                ],
+                decorator_list=[],
+            ),
+            ast.Return(value=ast.Name(id="wrapper", ctx=ast.Load())),
+        ],
+        decorator_list=[],
+    )
+    return decorator_def
+
+
+class DecoratorMutator(ast.NodeTransformer):
+    """
+    Finds a nested function definition and wraps it with a simple,
+    dynamically-injected decorator.
+    """
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> ast.FunctionDef:
+        self.generic_visit(node)
+
+        # We only want to mutate our main harness function
+        if not node.name.startswith("uop_harness"):
+            return node
+
+        # Find a nested function to decorate
+        nested_func_target = None
+        for sub_node in node.body:
+            if isinstance(sub_node, ast.FunctionDef):
+                nested_func_target = sub_node
+                break
+
+        if nested_func_target and random.random() < 0.2:  # 20% chance
+            decorator_name = f"fuzzer_decorator_{random.randint(1000, 9999)}"
+            print(
+                f"    -> Decorating nested function '{nested_func_target.name}' with '@{decorator_name}'",
+                file=sys.stderr,
+            )
+
+            # 1. Create the decorator function's AST
+            decorator_ast = _create_logging_decorator_ast(decorator_name)
+
+            # 2. Inject the decorator's definition at the top of the harness body
+            node.body.insert(0, decorator_ast)
+
+            # 3. Apply the decorator to the nested function
+            nested_func_target.decorator_list.append(ast.Name(id=decorator_name, ctx=ast.Load()))
+
+            ast.fix_missing_locations(node)
+
+        return node
+
+
 class ASTMutator:
     """
     An engine for structurally modifying Python code at the AST level.
@@ -2162,6 +2275,7 @@ class ASTMutator:
             GuardRemover,
             BlockTransposerMutator,
             UnpackingMutator,
+            DecoratorMutator,
         ]
 
     def mutate_ast(

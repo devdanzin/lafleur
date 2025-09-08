@@ -26,7 +26,8 @@ All notable changes to this project should be documented in this file.
 - Pruning (`--prune-corpus -f`) of the corpus by removing files that are subsumed by others, by @devdanzin.
 - A `BoundaryValuesMutator` that replaces numeric constants with interesting/boundary values, by @devdanzin.
 - A `BlockTransposerMutator` that moves code blocks within a function body, by @devdanzin.
-- A `UnpackingMutator` that transforms simple assignments into complex unpacking ones, by @devdanzin.
+- An `UnpackingMutator` that transforms simple assignments into complex unpacking ones, by @devdanzin.
+- A `DecoratorMutator` that wraps functions inside our harness with simple decorators, by @devdanzin.
 
 
 ### Enhanced

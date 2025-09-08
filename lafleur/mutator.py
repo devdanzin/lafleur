@@ -2069,6 +2069,57 @@ class BlockTransposerMutator(ast.NodeTransformer):
         return node
 
 
+class UnpackingMutator(ast.NodeTransformer):
+    """
+    Finds simple assignments and rewrites them to use complex tuple unpacking,
+    including a starred expression.
+    """
+
+    def visit_Assign(self, node: ast.Assign) -> ast.Assign:
+        self.generic_visit(node)
+
+        # We only want to mutate simple assignments, e.g., `x = ...`
+        if len(node.targets) != 1 or not isinstance(node.targets[0], ast.Name):
+            return node
+
+        if random.random() < 0.01:
+            original_var = node.targets[0]
+            print(f"    -> Applying unpacking mutation to '{original_var.id}'", file=sys.stderr)
+
+            # 1. Create a new, complex unpacking target
+            # e.g., (var1, *, var2, original_var)
+            num_new_vars = random.randint(2, 30)
+            new_vars = [f"unpack_var_{random.randint(10000, 99999)}" for _ in range(num_new_vars)]
+
+            new_target_tuple = ast.Tuple(
+                elts=[
+                    ast.Name(id=new_vars[0], ctx=ast.Store()),
+                    ast.Starred(value=ast.Name(id=new_vars[1], ctx=ast.Store()), ctx=ast.Store()),
+                    original_var,
+                ]
+                + [ast.Name(id=new_vars[x], ctx=ast.Store()) for x in range(2, num_new_vars)],
+                ctx=ast.Store(),
+            )
+
+            # 2. Create a new value list that can be unpacked by the target
+            # The list must have at least 2 elements for this target.
+            num_elements = random.randint(num_new_vars, num_new_vars + 30)
+            new_value_list = ast.List(
+                elts=[
+                    ast.Constant(value=random.choice([1, "eggs", None, True, 3.14, b"spam"]))
+                    for _ in range(num_elements)
+                ],
+                ctx=ast.Load(),
+            )
+
+            # 3. Replace the original assignment node
+            node.targets = [new_target_tuple]
+            node.value = new_value_list
+            ast.fix_missing_locations(node)
+
+        return node
+
+
 class ASTMutator:
     """
     An engine for structurally modifying Python code at the AST level.
@@ -2110,6 +2161,7 @@ class ASTMutator:
             DeepCallMutator,
             GuardRemover,
             BlockTransposerMutator,
+            UnpackingMutator,
         ]
 
     def mutate_ast(

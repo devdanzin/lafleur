@@ -41,27 +41,6 @@ To make fuzzing easier and more effective, `lafleur` includes a script for adjus
     ./python -m venv ~/venvs/lafleur_venv
     ```
 
-#### 2. `sudoers` Configuration for the `fusil` Seeder
-
-`lafleur` uses the classic `fusil` fuzzer as a subprocess to generate initial seed files for the corpus. The `fusil` tool requires `root` privileges to operate correctly. To allow `lafleur` (running as a normal user) to call `fusil` with `sudo` without requiring a password prompt, you must add a specific rule to your system's `sudoers` configuration.
-
-**Warning:** Always use the `visudo` command to edit this file. It performs a syntax check before saving to prevent you from being locked out of your system.
-
-1.  Open the `sudoers` file for editing:
-
-    ```bash
-    sudo visudo
-    ```
-
-2.  Add the following line to the end of the file, replacing `your_username` and the paths with your actual system paths. **The paths must be absolute.**
-
-    ```bash
-    # Allow 'your_username' to run the fusil seed generator without a password
-    your_username ALL=(ALL) NOPASSWD: /path/to/fusil/fuzzers/fusil-python-threaded
-    ```
-
-(This step will become unnecessary once fusil supports running in seeder mode without requiring root)
-
 -----
 
 ### Installation and JIT tuning

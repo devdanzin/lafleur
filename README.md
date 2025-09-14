@@ -69,11 +69,6 @@ With the venv created, you can now install `lafleur` and use its JIT-tuning tool
     cd fusil
     pip install .
     ```
-2.  **Configure `sudoers`:** The `fusil` seeder requires root privileges. To allow `lafleur` to call it without a password, run `sudo visudo` and add the following line, replacing the placeholders with your absolute paths:
-    ```bash
-    # Allow your_username to run the fusil seed generator without a password
-    your_username ALL=(ALL) NOPASSWD: /path/to/fusil_venv/bin/python3 /path/to/fusil/fuzzers/fusil-python-threaded *
-    ```
 
   * **Alternative: Manual Seeding:** If you prefer not to install `fusil`, you can create a directory named `corpus/jit_interesting_tests/` in your working directory and place your own hand-crafted Python seed files inside it.
 

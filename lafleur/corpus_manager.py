@@ -383,7 +383,6 @@ class CorpusManager:
         python_executable = sys.executable
         # Use fusil to generate a new file
         command = [
-            "sudo",
             python_executable,
             self.fusil_path,
             "--jit-fuzz",
@@ -401,6 +400,7 @@ class CorpusManager:
             "--jit-loop-iterations=300",
             "--no-numpy",
             "--modules=encodings.ascii",
+            "--only-generate",
             # "--keep-sessions",
         ]
         print(f"[*] Generating new seed with command: {' '.join(command)}")

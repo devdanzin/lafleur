@@ -28,6 +28,7 @@ All notable changes to this project should be documented in this file.
 - A `BlockTransposerMutator` that moves code blocks within a function body, by @devdanzin.
 - An `UnpackingMutator` that transforms simple assignments into complex unpacking ones, by @devdanzin.
 - A `DecoratorMutator` that wraps functions inside our harness with simple decorators, by @devdanzin.
+- A `RecursionWrappingMutator` that wraps blocks of code in self-recursive functions, by @devdanzin.
 
 
 ### Enhanced

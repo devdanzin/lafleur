@@ -2233,6 +2233,88 @@ class DecoratorMutator(ast.NodeTransformer):
         return node
 
 
+class RecursionWrappingMutator(ast.NodeTransformer):
+    """
+    Selects a block of code, wraps it in a new self-recursive nested
+    function, and replaces the original block with a guarded call to it.
+    """
+
+    MIN_STATEMENTS_FOR_WRAP = 5
+    BLOCK_SIZE = 3
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> ast.FunctionDef:
+        self.generic_visit(node)
+
+        if not node.name.startswith("uop_harness"):
+            return node
+
+        body_len = len(node.body)
+        if body_len < self.MIN_STATEMENTS_FOR_WRAP:
+            return node
+
+        if random.random() < 0.05:
+            # 1. Select a random block of statements to wrap.
+            start_index = random.randint(0, body_len - self.BLOCK_SIZE)
+            original_block = node.body[start_index : start_index + self.BLOCK_SIZE]
+
+            # 2. Create a new, uniquely named recursive function.
+            recursive_func_name = f"recursive_wrapper_{random.randint(1000, 9999)}"
+            print(
+                f"    -> Wrapping block at index {start_index} in recursive function '{recursive_func_name}'",
+                file=sys.stderr,
+            )
+
+            # 3. Create the recursive call to the function itself.
+            recursive_call = ast.Expr(
+                value=ast.Call(
+                    func=ast.Name(id=recursive_func_name, ctx=ast.Load()), args=[], keywords=[]
+                )
+            )
+
+            # 4. Create the function definition, moving the original block into it.
+            recursive_func_def = ast.FunctionDef(
+                name=recursive_func_name,
+                args=ast.arguments(
+                    args=[], posonlyargs=[], kwonlyargs=[], kw_defaults=[], defaults=[]
+                ),
+                body=original_block + [recursive_call],
+                decorator_list=[],
+            )
+
+            # 5. Create the try/except block to make the initial call.
+            initial_call_try_block = ast.Try(
+                body=[
+                    ast.Expr(
+                        value=ast.Call(
+                            func=ast.Name(id=recursive_func_name, ctx=ast.Load()),
+                            args=[],
+                            keywords=[],
+                        )
+                    )
+                ],
+                handlers=[
+                    ast.ExceptHandler(
+                        type=ast.Name(id="RecursionError", ctx=ast.Load()),
+                        name=None,
+                        body=[ast.Pass()],
+                    )
+                ],
+                orelse=[],
+                finalbody=[],
+            )
+
+            # 6. Replace the original block with the new function and the try block.
+            node.body = (
+                node.body[:start_index]
+                + [recursive_func_def, initial_call_try_block]
+                + node.body[start_index + self.BLOCK_SIZE :]
+            )
+
+            ast.fix_missing_locations(node)
+
+        return node
+
+
 class ASTMutator:
     """
     An engine for structurally modifying Python code at the AST level.
@@ -2276,6 +2358,7 @@ class ASTMutator:
             BlockTransposerMutator,
             UnpackingMutator,
             DecoratorMutator,
+            RecursionWrappingMutator,
         ]
 
     def mutate_ast(

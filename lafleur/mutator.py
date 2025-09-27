@@ -2315,6 +2315,145 @@ class RecursionWrappingMutator(ast.NodeTransformer):
         return node
 
 
+def _create_evil_descriptor_ast(class_name: str) -> ast.ClassDef:
+    """
+    Programmatically create the AST for the EvilDescriptor class.
+
+    Equivalent to:
+    class EvilDescriptor:
+        def __get__(self, obj, owner):
+            self.count = getattr(self, 'count', 0) + 1
+            return "string" if self.count < 50 else 42
+    """
+    return ast.ClassDef(
+        name=class_name,
+        bases=[],
+        keywords=[],
+        body=[
+            ast.FunctionDef(
+                name="__get__",
+                args=ast.arguments(
+                    args=[ast.arg(arg="self"), ast.arg(arg="obj"), ast.arg(arg="owner")],
+                    posonlyargs=[],
+                    kwonlyargs=[],
+                    kw_defaults=[],
+                    defaults=[],
+                ),
+                body=[
+                    ast.Assign(
+                        targets=[
+                            ast.Attribute(
+                                value=ast.Name(id="self", ctx=ast.Load()),
+                                attr="count",
+                                ctx=ast.Store(),
+                            )
+                        ],
+                        value=ast.BinOp(
+                            left=ast.Call(
+                                func=ast.Name(id="getattr", ctx=ast.Load()),
+                                args=[
+                                    ast.Name(id="self", ctx=ast.Load()),
+                                    ast.Constant(value="count"),
+                                    ast.Constant(value=0),
+                                ],
+                                keywords=[],
+                            ),
+                            op=ast.Add(),
+                            right=ast.Constant(value=1),
+                        ),
+                    ),
+                    ast.Return(
+                        value=ast.IfExp(
+                            test=ast.Compare(
+                                left=ast.Attribute(
+                                    value=ast.Name(id="self", ctx=ast.Load()),
+                                    attr="count",
+                                    ctx=ast.Load(),
+                                ),
+                                ops=[ast.Lt()],
+                                comparators=[ast.Constant(value=50)],
+                            ),
+                            body=ast.Constant(value="string"),
+                            orelse=ast.Constant(value=42),
+                        )
+                    ),
+                ],
+                decorator_list=[],
+            )
+        ],
+        decorator_list=[],
+    )
+
+
+class DescriptorChaosGenerator(ast.NodeTransformer):
+    """
+    Injects a class with a stateful descriptor and a hot loop that
+    accesses it, stressing JIT's attribute access caches.
+    """
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> ast.FunctionDef:
+        self.generic_visit(node)
+
+        if not node.name.startswith("uop_harness") or not node.body:
+            return node
+
+        if random.random() < 0.15:  # 15% chance
+            # 1. Generate unique names for our classes and variables
+            p_prefix = f"chaos_{random.randint(1000, 9999)}"
+            descriptor_class_name = f"EvilDescriptor_{p_prefix}"
+            target_class_name = f"TargetClass_{p_prefix}"
+            instance_name = f"target_obj_{p_prefix}"
+
+            print(
+                f"    -> Injecting descriptor chaos pattern with prefix '{p_prefix}'",
+                file=sys.stderr,
+            )
+
+            # 2. Get the AST for the EvilDescriptor
+            descriptor_class_ast = _create_evil_descriptor_ast(descriptor_class_name)
+
+            # 3. Create the AST for the TargetClass that uses the descriptor
+            target_class_ast = ast.ClassDef(
+                name=target_class_name,
+                bases=[],
+                keywords=[],
+                body=[
+                    ast.Assign(
+                        targets=[ast.Name(id="chaos_attr", ctx=ast.Store())],
+                        value=ast.Call(
+                            func=ast.Name(id=descriptor_class_name, ctx=ast.Load()),
+                            args=[],
+                            keywords=[],
+                        ),
+                    )
+                ],
+                decorator_list=[],
+            )
+
+            # 4. Create the AST for the hot loop that triggers the chaos
+            hot_loop_ast = ast.parse(
+                dedent(f"""
+                {instance_name} = {target_class_name}()
+                for i in range(100):
+                    try:
+                        # This access will trigger the stateful __get__ method
+                        _ = {instance_name}.chaos_attr
+                    except Exception:
+                        pass
+            """)
+            ).body
+
+            # 5. Prepend the entire scenario to the function's body
+            injection_point = random.randint(0, len(node.body))
+            node.body[injection_point:injection_point] = [
+                descriptor_class_ast,
+                target_class_ast,
+            ] + hot_loop_ast
+            ast.fix_missing_locations(node)
+
+        return node
+
+
 class ASTMutator:
     """
     An engine for structurally modifying Python code at the AST level.
@@ -2359,6 +2498,7 @@ class ASTMutator:
             UnpackingMutator,
             DecoratorMutator,
             RecursionWrappingMutator,
+            DescriptorChaosGenerator,
         ]
 
     def mutate_ast(

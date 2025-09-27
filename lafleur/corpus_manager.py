@@ -28,6 +28,7 @@ ENV.update(
         "PYTHON_LLTRACE": "4",
         "PYTHON_OPT_DEBUG": "4",
         "PYTHON_JIT": "1",
+        "ASAN_OPTIONS": "detect_leaks=0",
     }
 )
 
@@ -404,7 +405,7 @@ class CorpusManager:
             # "--keep-sessions",
         ]
         print(f"[*] Generating new seed with command: {' '.join(command)}")
-        subprocess.run(command, capture_output=True)
+        subprocess.run(command, capture_output=True, env=ENV)
 
         # Execute it to get a log (also using the configurable timeout)
         try:

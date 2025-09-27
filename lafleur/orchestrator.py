@@ -73,6 +73,7 @@ ENV.update(
         "PYTHON_LLTRACE": "4",
         "PYTHON_OPT_DEBUG": "4",
         "PYTHON_JIT": "1",
+        "ASAN_OPTIONS": "detect_leaks=0"
     }
 )
 

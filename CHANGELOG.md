@@ -29,6 +29,7 @@ All notable changes to this project should be documented in this file.
 - An `UnpackingMutator` that transforms simple assignments into complex unpacking ones, by @devdanzin.
 - A `DecoratorMutator` that wraps functions inside our harness with simple decorators, by @devdanzin.
 - A `RecursionWrappingMutator` that wraps blocks of code in self-recursive functions, by @devdanzin.
+- Support to fuzzing Python builds with `ASAN` enabled, by @devdanzin.
 
 
 ### Enhanced

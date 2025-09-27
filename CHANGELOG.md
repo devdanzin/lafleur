@@ -30,6 +30,7 @@ All notable changes to this project should be documented in this file.
 - A `DecoratorMutator` that wraps functions inside our harness with simple decorators, by @devdanzin.
 - A `RecursionWrappingMutator` that wraps blocks of code in self-recursive functions, by @devdanzin.
 - Support to fuzzing Python builds with `ASAN` enabled, by @devdanzin.
+- A `DescriptorChaosGenerator` that injects a class with a stateful descriptor, by @devdanzin.
 
 
 ### Enhanced

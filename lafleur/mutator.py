@@ -2457,24 +2457,44 @@ class DescriptorChaosGenerator(ast.NodeTransformer):
 def _create_base_classes_ast(base1_name: str, base2_name: str) -> list[ast.ClassDef]:
     """Builds the AST for the two base classes in the MRO shuffle."""
     base1 = ast.ClassDef(
-        name=base1_name, bases=[], keywords=[],
-        body=[ast.FunctionDef(
-            name='method',
-            args=ast.arguments(args=[ast.arg(arg='self')], posonlyargs=[], kwonlyargs=[], kw_defaults=[], defaults=[]),
-            body=[ast.Return(value=ast.Constant(value=1))],
-            decorator_list=[]
-        )],
-        decorator_list=[]
+        name=base1_name,
+        bases=[],
+        keywords=[],
+        body=[
+            ast.FunctionDef(
+                name="method",
+                args=ast.arguments(
+                    args=[ast.arg(arg="self")],
+                    posonlyargs=[],
+                    kwonlyargs=[],
+                    kw_defaults=[],
+                    defaults=[],
+                ),
+                body=[ast.Return(value=ast.Constant(value=1))],
+                decorator_list=[],
+            )
+        ],
+        decorator_list=[],
     )
     base2 = ast.ClassDef(
-        name=base2_name, bases=[], keywords=[],
-        body=[ast.FunctionDef(
-            name='method',
-            args=ast.arguments(args=[ast.arg(arg='self')], posonlyargs=[], kwonlyargs=[], kw_defaults=[], defaults=[]),
-            body=[ast.Return(value=ast.Constant(value="two"))],
-            decorator_list=[]
-        )],
-        decorator_list=[]
+        name=base2_name,
+        bases=[],
+        keywords=[],
+        body=[
+            ast.FunctionDef(
+                name="method",
+                args=ast.arguments(
+                    args=[ast.arg(arg="self")],
+                    posonlyargs=[],
+                    kwonlyargs=[],
+                    kw_defaults=[],
+                    defaults=[],
+                ),
+                body=[ast.Return(value=ast.Constant(value="two"))],
+                decorator_list=[],
+            )
+        ],
+        decorator_list=[],
     )
     return [base1, base2]
 
@@ -2486,7 +2506,7 @@ def _create_evil_subclass_ast(class_name: str, base1_name: str, base2_name: str)
         bases=[ast.Name(id=base1_name, ctx=ast.Load()), ast.Name(id=base2_name, ctx=ast.Load())],
         keywords=[],
         body=[ast.Pass()],
-        decorator_list=[]
+        decorator_list=[],
     )
 
 
@@ -2516,7 +2536,8 @@ class MROShuffler(ast.NodeTransformer):
             evil_subclass_ast = _create_evil_subclass_ast(evil_class_name, base1_name, base2_name)
 
             # 2. Create the warm-up loop, MRO shuffle, and trigger call as an AST
-            attack_scenario_ast = ast.parse(dedent(f"""
+            attack_scenario_ast = ast.parse(
+                dedent(f"""
                 # Instantiate the class
                 {instance_name} = {evil_class_name}()
 
@@ -2535,7 +2556,8 @@ class MROShuffler(ast.NodeTransformer):
                     _ = {instance_name}.method()
                 except Exception:
                     pass
-            """)).body
+            """)
+            ).body
 
             # 3. Inject the entire scenario into a random part of the harness
             injection_point = random.randint(0, len(node.body))

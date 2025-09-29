@@ -2454,6 +2454,120 @@ class DescriptorChaosGenerator(ast.NodeTransformer):
         return node
 
 
+def _create_base_classes_ast(base1_name: str, base2_name: str) -> list[ast.ClassDef]:
+    """Builds the AST for the two base classes in the MRO shuffle."""
+    base1 = ast.ClassDef(
+        name=base1_name,
+        bases=[],
+        keywords=[],
+        body=[
+            ast.FunctionDef(
+                name="method",
+                args=ast.arguments(
+                    args=[ast.arg(arg="self")],
+                    posonlyargs=[],
+                    kwonlyargs=[],
+                    kw_defaults=[],
+                    defaults=[],
+                ),
+                body=[ast.Return(value=ast.Constant(value=1))],
+                decorator_list=[],
+            )
+        ],
+        decorator_list=[],
+    )
+    base2 = ast.ClassDef(
+        name=base2_name,
+        bases=[],
+        keywords=[],
+        body=[
+            ast.FunctionDef(
+                name="method",
+                args=ast.arguments(
+                    args=[ast.arg(arg="self")],
+                    posonlyargs=[],
+                    kwonlyargs=[],
+                    kw_defaults=[],
+                    defaults=[],
+                ),
+                body=[ast.Return(value=ast.Constant(value="two"))],
+                decorator_list=[],
+            )
+        ],
+        decorator_list=[],
+    )
+    return [base1, base2]
+
+
+def _create_evil_subclass_ast(class_name: str, base1_name: str, base2_name: str) -> ast.ClassDef:
+    """Builds the AST for the subclass that will have its MRO shuffled."""
+    return ast.ClassDef(
+        name=class_name,
+        bases=[ast.Name(id=base1_name, ctx=ast.Load()), ast.Name(id=base2_name, ctx=ast.Load())],
+        keywords=[],
+        body=[ast.Pass()],
+        decorator_list=[],
+    )
+
+
+class MROShuffler(ast.NodeTransformer):
+    """
+    Injects a class hierarchy and code that shuffles the Method Resolution
+    Order (MRO) mid-execution to attack JIT method caches.
+    """
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> ast.FunctionDef:
+        self.generic_visit(node)
+
+        if not node.name.startswith("uop_harness") or not node.body:
+            return node
+
+        if random.random() < 0.15:  # 15% chance
+            p_prefix = f"mro_{random.randint(1000, 9999)}"
+            base1_name = f"Base1_{p_prefix}"
+            base2_name = f"Base2_{p_prefix}"
+            evil_class_name = f"Evil_{p_prefix}"
+            instance_name = f"evil_obj_{p_prefix}"
+
+            print(f"    -> Injecting MRO shuffle pattern with prefix '{p_prefix}'", file=sys.stderr)
+
+            # 1. Create the class definitions
+            base_classes_ast = _create_base_classes_ast(base1_name, base2_name)
+            evil_subclass_ast = _create_evil_subclass_ast(evil_class_name, base1_name, base2_name)
+
+            # 2. Create the warm-up loop, MRO shuffle, and trigger call as an AST
+            attack_scenario_ast = ast.parse(
+                dedent(f"""
+                # Instantiate the class
+                {instance_name} = {evil_class_name}()
+
+                # Warm up the JIT to cache the lookup for Base1.method
+                for _ in range(100):
+                    try:
+                        {instance_name}.method()
+                    except Exception:
+                        pass
+
+                # Shuffle the MRO
+                {evil_class_name}.__bases__ = ({base2_name}, {base1_name})
+
+                # Call the method again to trigger a potential deoptimization bug
+                try:
+                    _ = {instance_name}.method()
+                except Exception:
+                    pass
+            """)
+            ).body
+
+            # 3. Inject the entire scenario into a random part of the harness
+            injection_point = random.randint(0, len(node.body))
+            full_injection = base_classes_ast + [evil_subclass_ast] + attack_scenario_ast
+            node.body[injection_point:injection_point] = full_injection
+            ast.fix_missing_locations(node)
+
+        return node
+
+
 class ASTMutator:
     """
     An engine for structurally modifying Python code at the AST level.
@@ -2499,6 +2613,7 @@ class ASTMutator:
             DecoratorMutator,
             RecursionWrappingMutator,
             DescriptorChaosGenerator,
+            MROShuffler,
         ]
 
     def mutate_ast(

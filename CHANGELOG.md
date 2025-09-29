@@ -31,6 +31,7 @@ All notable changes to this project should be documented in this file.
 - A `RecursionWrappingMutator` that wraps blocks of code in self-recursive functions, by @devdanzin.
 - Support to fuzzing Python builds with `ASAN` enabled, by @devdanzin.
 - A `DescriptorChaosGenerator` that injects a class with a stateful descriptor, by @devdanzin.
+- A `MROShuffler`that injects a scenario which changes MRO after a while, by @devdanzin.
 
 
 ### Enhanced

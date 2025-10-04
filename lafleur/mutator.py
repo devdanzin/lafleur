@@ -2568,6 +2568,86 @@ class MROShuffler(ast.NodeTransformer):
         return node
 
 
+def _create_evil_frame_modifier_ast(func_name: str, target_var: str) -> ast.FunctionDef:
+    """
+    Builds the AST for a function that uses sys._getframe() to modify a
+    local variable in its caller's frame.
+    """
+    return ast.parse(
+        dedent(f"""
+    def {func_name}():
+        try:
+            # Get the frame of the caller (the uop_harness)
+            caller_frame = sys._getframe(1)
+            # Corrupt the local variable in that frame
+            caller_frame.f_locals['{target_var}'] = "corrupted_by_frame_manipulation"
+        except (ValueError, KeyError):
+            # Fail gracefully if frame inspection is not possible
+            pass
+    """)
+    ).body[0]
+
+
+class FrameManipulator(ast.NodeTransformer):
+    """
+    Injects a function that uses sys._getframe() to maliciously modify the
+    local variables of its caller, attacking JIT assumptions about local state.
+    """
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> ast.FunctionDef:
+        self.generic_visit(node)
+
+        if not node.name.startswith("uop_harness") or len(node.body) < 3:
+            return node
+
+        if random.random() < 0.15:  # 15% chance
+            # 1. Select a target variable to corrupt.
+            # We'll look for simple names that are stored.
+            candidates = [
+                n.id
+                for n in ast.walk(node)
+                if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Store)
+            ]
+            if not candidates:
+                return node
+
+            target_var = random.choice(candidates)
+
+            p_prefix = f"frame_{random.randint(1000, 9999)}"
+            evil_func_name = f"evil_modifier_{p_prefix}"
+
+            print(
+                f"    -> Injecting frame manipulator pattern targeting '{target_var}'",
+                file=sys.stderr,
+            )
+
+            # 2. Get the AST for the evil function.
+            evil_func_ast = _create_evil_frame_modifier_ast(evil_func_name, target_var)
+
+            # 3. Create the AST for the hot loop and the guarded usage.
+            attack_scenario_ast = ast.parse(
+                dedent(f"""
+                # This loop triggers the corruption
+                for _ in range(50):
+                    {evil_func_name}()
+
+                # This usage will fail if the JIT's type assumption isn't invalidated
+                try:
+                    _ = {target_var} + 1
+                except TypeError:
+                    pass
+            """)
+            ).body
+
+            # 4. Inject the evil function and the attack scenario into the harness.
+            injection_point = random.randint(0, len(node.body))
+            full_injection = [evil_func_ast] + attack_scenario_ast
+            node.body[injection_point:injection_point] = full_injection
+            ast.fix_missing_locations(node)
+
+        return node
+
+
 class ASTMutator:
     """
     An engine for structurally modifying Python code at the AST level.
@@ -2614,6 +2694,7 @@ class ASTMutator:
             RecursionWrappingMutator,
             DescriptorChaosGenerator,
             MROShuffler,
+            FrameManipulator,
         ]
 
     def mutate_ast(

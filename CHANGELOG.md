@@ -32,6 +32,7 @@ All notable changes to this project should be documented in this file.
 - Support to fuzzing Python builds with `ASAN` enabled, by @devdanzin.
 - A `DescriptorChaosGenerator` that injects a class with a stateful descriptor, by @devdanzin.
 - A `MROShuffler`that injects a scenario which changes MRO after a while, by @devdanzin.
+- A `FrameManipulator` that injects a function that modifies a local variable up the call stack, by @devdanzin.
 
 
 ### Enhanced

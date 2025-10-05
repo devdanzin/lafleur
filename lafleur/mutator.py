@@ -2727,6 +2727,87 @@ class ComprehensionBomb(ast.NodeTransformer):
         return node
 
 
+def _create_super_attack_hierarchy_ast(base_name: str, subclass_name: str) -> list[ast.ClassDef]:
+    """
+    Builds the AST for the class hierarchy by parsing a string of Python code.
+    """
+    call_or_attr = "f()" if random.random() < 0.5 else "counter"
+
+    source_code = dedent(f"""
+    class {base_name}:
+        def __init__(self):
+            self.counter = 0
+        def f(self):
+            self.counter += 1
+            return "A"
+
+    class {subclass_name}({base_name}):
+        def __init__(self):
+            super().__init__()
+        def f(self):
+            res = super().{call_or_attr}
+            super().f()
+            if self.counter > 400:
+                # The attack: modify the MRO right before the super() call
+                {subclass_name}.__bases__ = (object,)
+                super().f()
+            return res
+    """)
+
+    # ast.parse() returns a Module node; the class definitions are in its body.
+    return ast.parse(source_code).body
+
+
+class SuperResolutionAttacker(ast.NodeTransformer):
+    """
+    Injects a class hierarchy where a method modifies its own class's MRO
+    before a super() call, attacking JIT caches for super() resolution.
+    """
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> ast.FunctionDef:
+        self.generic_visit(node)
+
+        if not node.name.startswith("uop_harness") or not node.body:
+            return node
+
+        if random.random() < 0.15:  # 15% chance
+            p_prefix = f"super_{random.randint(1000, 9999)}"
+            base_name = f"Base_{p_prefix}"
+            subclass_name = f"Sub_{p_prefix}"
+            instance_name = f"instance_{p_prefix}"
+
+            print(
+                f"    -> Injecting super() resolution attack with prefix '{p_prefix}'",
+                file=sys.stderr,
+            )
+
+            # 1. Create the class definitions
+            class_asts = _create_super_attack_hierarchy_ast(base_name, subclass_name)
+
+            # 2. Create the trigger code
+            trigger_ast = ast.parse(
+                dedent(f"""
+                {instance_name} = {subclass_name}()
+                for x in range(500): 
+                    try:
+                        # This call triggers the MRO modification and super() call
+                        _ = {instance_name}.f()
+                    except AttributeError:
+                        # This is the expected exception, as super().f() will resolve
+                        # to object.f after the MRO shuffle.
+                        pass
+            """)
+            ).body
+
+            # 3. Inject the entire scenario into the harness
+            injection_point = random.randint(0, len(node.body))
+            full_injection = class_asts + trigger_ast
+            node.body[injection_point:injection_point] = full_injection
+            ast.fix_missing_locations(node)
+
+        return node
+
+
 class ASTMutator:
     """
     An engine for structurally modifying Python code at the AST level.
@@ -2775,6 +2856,7 @@ class ASTMutator:
             MROShuffler,
             FrameManipulator,
             ComprehensionBomb,
+            SuperResolutionAttacker,
         ]
 
     def mutate_ast(

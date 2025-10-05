@@ -3142,6 +3142,76 @@ class BuiltinNamespaceCorruptor(ast.NodeTransformer):
         return node
 
 
+def _create_code_swap_functions_ast(
+    original_name: str, replacement_name: str
+) -> list[ast.FunctionDef]:
+    """Builds the AST for the original and replacement functions."""
+    return ast.parse(
+        dedent(f"""
+    def {original_name}():
+        return 1
+
+    def {replacement_name}():
+        return "a_string"
+    """)
+    ).body
+
+
+class CodeObjectSwapper(ast.NodeTransformer):
+    """
+    Injects two functions and code that swaps their __code__ objects
+    mid-execution to attack JIT assumptions about function calls.
+    """
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> ast.FunctionDef:
+        self.generic_visit(node)
+
+        if not node.name.startswith("uop_harness") or not node.body:
+            return node
+
+        if random.random() < 0.15:  # 15% chance
+            p_prefix = f"code_{random.randint(1000, 9999)}"
+            original_name = f"original_{p_prefix}"
+            replacement_name = f"replacement_{p_prefix}"
+
+            print(f"    -> Injecting code object swap with prefix '{p_prefix}'", file=sys.stderr)
+
+            # 1. Get the AST for the two functions
+            function_asts = _create_code_swap_functions_ast(original_name, replacement_name)
+
+            # 2. Create the AST for the full attack scenario
+            scenario_ast = ast.parse(
+                dedent(f"""
+                # Warm-up loop to encourage the JIT to specialize the call
+                for i in range(100):
+                    try:
+                        res = {original_name}()
+                        _ = res + 1 # Use the result in an integer-specific operation
+                    except Exception:
+                        pass
+
+                # The attack: swap the code objects
+                {original_name}.__code__ = {replacement_name}.__code__
+
+                # The trigger: call the function again and use the result
+                try:
+                    res = {original_name}() # Now returns a string
+                    _ = res + 1          # This will raise a TypeError
+                except TypeError:
+                    # This is the expected outcome. A JIT bug might cause a crash.
+                    pass
+            """)
+            ).body
+
+            # 3. Inject the entire scenario
+            injection_point = random.randint(0, len(node.body))
+            full_injection = function_asts + scenario_ast
+            node.body[injection_point:injection_point] = full_injection
+            ast.fix_missing_locations(node)
+
+        return node
+
+
 class ASTMutator:
     """
     An engine for structurally modifying Python code at the AST level.
@@ -3195,6 +3265,7 @@ class ASTMutator:
             WeakRefCallbackChaos,
             ExceptionHandlerMaze,
             BuiltinNamespaceCorruptor,
+            CodeObjectSwapper,
         ]
 
     def mutate_ast(

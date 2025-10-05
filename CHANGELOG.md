@@ -39,6 +39,7 @@ All notable changes to this project should be documented in this file.
 - A `WeakRefCallbackChaos` to use a weakref callback that violates a variable's type assumption, by @devdanzin.
 - An `ExceptionHandlerMaze` to add an exception with a metaclass to make except blocks stateful, by @devdanzin.
 - A `BuiltinNamespaceCorruptor` to replace built-in functions with malicious versions, by @devdanzin.
+- A `CodeObjectSwapper` to swap the code object of a function with that of another, by @devdanzin.
 
 
 ### Enhanced

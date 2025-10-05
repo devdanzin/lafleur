@@ -3058,6 +3058,90 @@ class ExceptionHandlerMaze(ast.NodeTransformer):
         return node
 
 
+class BuiltinNamespaceCorruptor(ast.NodeTransformer):
+    """
+    Temporarily replaces a built-in function with a malicious version to
+    attack JIT specializations for builtins. Ensures restoration via a
+    try...finally block.
+    """
+
+    ATTACK_SCENARIOS = [
+        {
+            "builtin": "len",
+            "warm_up": "for i in range(100): _ = len([0]*i)",
+            "malicious_lambda": 'lambda x: "evil_string"',
+            "trigger": "_ = len([])",
+        },
+        {
+            "builtin": "range",
+            "warm_up": "for i in range(100): _ = list(range(i))",
+            "malicious_lambda": "lambda x: [x, x, x]",  # Returns a list, not an iterator
+            "trigger": "_ = list(range(10))",
+        },
+        {
+            "builtin": "isinstance",
+            "warm_up": "for i in range(100): _ = isinstance(i, int)",
+            "malicious_lambda": "lambda obj, cls, orig_func=original_isinstance_...: not orig_func(obj, cls)",
+            "trigger": "_ = isinstance(1, int)",
+        },
+        {
+            "builtin": "sum",
+            "warm_up": "for i in range(100): _ = sum(range(i))",
+            "malicious_lambda": "lambda x: float('inf')",
+            "trigger": "_ = sum([1, 2, 3])",
+        },
+    ]
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> ast.FunctionDef:
+        self.generic_visit(node)
+
+        if not node.name.startswith("uop_harness") or not node.body:
+            return node
+
+        if random.random() < 0.15:  # 15% chance
+            # 1. Select a random attack scenario
+            attack = random.choice(self.ATTACK_SCENARIOS)
+            builtin_name = attack["builtin"]
+
+            p_prefix = f"builtin_{random.randint(1000, 9999)}"
+            original_var_name = f"original_{builtin_name}_{p_prefix}"
+
+            malicious_lambda = attack["malicious_lambda"].replace(
+                "original_isinstance_...", original_var_name
+            )
+
+            print(f"    -> Injecting builtin corruption for '{builtin_name}'", file=sys.stderr)
+
+            # 2. Construct the full attack scenario AST
+            scenario_ast = ast.parse(
+                dedent(f"""
+                {original_var_name} = builtins.{builtin_name}
+                try:
+                    # Warm-up loop to encourage JIT specialization
+                    {attack["warm_up"]}
+
+                    # Corrupt the builtin
+                    builtins.{builtin_name} = {malicious_lambda}
+
+                    # Trigger the corrupted builtin
+                    {attack["trigger"]}
+                except Exception:
+                    pass
+                finally:
+                    # This is guaranteed to run, restoring the original
+                    builtins.{builtin_name} = {original_var_name}
+            """)
+            ).body
+
+            # 3. Inject the scenario
+            node.body.insert(0, ast.Import(names=[ast.alias(name="builtins")]))
+            injection_point = random.randint(1, len(node.body))
+            node.body[injection_point:injection_point] = scenario_ast
+            ast.fix_missing_locations(node)
+
+        return node
+
+
 class ASTMutator:
     """
     An engine for structurally modifying Python code at the AST level.
@@ -3110,6 +3194,7 @@ class ASTMutator:
             CoroutineStateCorruptor,
             WeakRefCallbackChaos,
             ExceptionHandlerMaze,
+            BuiltinNamespaceCorruptor,
         ]
 
     def mutate_ast(

@@ -2648,6 +2648,85 @@ class FrameManipulator(ast.NodeTransformer):
         return node
 
 
+def _create_chaotic_iterator_ast(class_name: str) -> ast.ClassDef:
+    """
+    Builds the AST for a custom iterator that can return an
+    unexpected type mid-iteration.
+    """
+    return ast.parse(
+        dedent(f"""
+    class {class_name}:
+        def __init__(self, items):
+            self._items = list(items)
+            self._index = 0
+
+        def __iter__(self):
+            return self
+
+        def __next__(self):
+            if random.random() < 0.01: # 1% chance, avoids an infinite loop
+                self._items.clear()
+
+            if self._index >= len(self._items):
+                raise StopIteration
+
+            # This side effect is triggered on every step of the iteration
+            if random.random() < 0.1: # 10% chance
+                return "unexpected_type_from_iterator"
+
+            item = self._items[self._index]
+            self._index += 1
+            return item
+    """)
+    ).body[0]
+
+
+class ComprehensionBomb(ast.NodeTransformer):
+    """
+    Injects a nested list comprehension that iterates over a custom iterator
+    which has side effects, attacking JIT optimizations for iterators.
+    """
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> ast.FunctionDef:
+        self.generic_visit(node)
+
+        if not node.name.startswith("uop_harness") or not node.body:
+            return node
+
+        if random.random() < 0.15:  # 15% chance
+            p_prefix = f"comp_{random.randint(1000, 9999)}"
+            class_name = f"ChaoticIterator_{p_prefix}"
+            iter_name = f"evil_iter_{p_prefix}"
+
+            print(f"    -> Injecting comprehension bomb with prefix '{p_prefix}'", file=sys.stderr)
+
+            # 1. Get the AST for the ChaoticIterator class
+            class_ast = _create_chaotic_iterator_ast(class_name)
+
+            # 2. Create the AST for the setup and the comprehension bomb
+            bomb_ast = ast.parse(
+                dedent(f"""
+                # Instantiate the iterator
+                {iter_name} = {class_name}(range(200))
+                try:
+                    # The __next__ method of the iterator will be called for every
+                    # item access, potentially returning a non-integer,
+                    # which would cause a TypeError in the 'x + y' expression.
+                    _ = [x + y for x in {iter_name} for y in {iter_name} if ({iter_name}._items.append(x) or True)]
+                except Exception:
+                    pass
+            """)
+            ).body
+
+            # 3. Inject the entire scenario into the harness
+            injection_point = random.randint(0, len(node.body))
+            full_injection = [class_ast] + bomb_ast
+            node.body[injection_point:injection_point] = full_injection
+            ast.fix_missing_locations(node)
+
+        return node
+
+
 class ASTMutator:
     """
     An engine for structurally modifying Python code at the AST level.
@@ -2695,6 +2774,7 @@ class ASTMutator:
             DescriptorChaosGenerator,
             MROShuffler,
             FrameManipulator,
+            ComprehensionBomb,
         ]
 
     def mutate_ast(

@@ -36,6 +36,7 @@ All notable changes to this project should be documented in this file.
 - A `ComprehensionBomb` that runs a list comprehension over a stateful iterator, by @devdanzin.
 - A `SuperResolutionAttacker` to stress the caches that the JIT uses for super() calls, by @devdanzin.
 - A `CoroutineStateCorruptor` to create a coroutine where a local variable is corrupted, by @devdanzin.
+- A `WeakRefCallbackChaos` to use a weakref callback that violates a variable's type assumption, by @devdanzin.
 
 
 ### Enhanced

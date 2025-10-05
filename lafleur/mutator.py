@@ -2808,6 +2808,93 @@ class SuperResolutionAttacker(ast.NodeTransformer):
         return node
 
 
+def _create_evil_frame_corruptor_ast(func_name: str, target_var: str) -> ast.FunctionDef:
+    """
+    Builds the AST for a function that uses sys._getframe() to modify a
+    local variable in its caller's frame.
+    """
+    return ast.parse(
+        dedent(f"""
+    def {func_name}(value):
+        try:
+            # Get the frame of the caller (the coroutine)
+            caller_frame = sys._getframe(1)
+            # Corrupt the local variable in that frame
+            caller_frame.f_locals['{target_var}'] = value
+        except (ValueError, KeyError):
+            pass
+    """)
+    ).body[0]
+
+
+class CoroutineStateCorruptor(ast.NodeTransformer):
+    """
+    Injects an async function that has its local state corrupted
+    across an await point, attacking JIT assumptions about local
+    variable stability in coroutines.
+    """
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> ast.FunctionDef:
+        self.generic_visit(node)
+
+        if not node.name.startswith("uop_harness") or not node.body:
+            return node
+
+        if random.random() < 0.15:  # 15% chance
+            p_prefix = f"async_{random.randint(1000, 9999)}"
+            corruptor_name = f"sync_corruptor_{p_prefix}"
+            coroutine_name = f"evil_coro_{p_prefix}"
+
+            print(
+                f"    -> Injecting coroutine state corruption with prefix '{p_prefix}'",
+                file=sys.stderr,
+            )
+
+            # 1. Get the AST for the synchronous corrupting function
+            corruptor_ast = _create_evil_frame_corruptor_ast(corruptor_name, "x")
+
+            # 2. Create the AST for the evil coroutine, including the warm-up loop
+            coroutine_ast = ast.parse(
+                dedent(f"""
+            async def {coroutine_name}():
+                x = 0
+                # Warm-up loop to make the JIT specialize the type of 'x'
+                for i in range(100):
+                    x = i + 1
+
+                # Corrupt 'x' before the await point
+                {corruptor_name}("corrupted_string")
+
+                await asyncio.sleep(0)
+
+                # After resuming, the JIT's assumption about 'x' is violated
+                _ = x + 1
+            """)
+            ).body[0]
+
+            # 3. Create the AST to run the scenario
+            trigger_ast = ast.parse(
+                dedent(f"""
+                try:
+                    asyncio.run({coroutine_name}())
+                except Exception:
+                    pass
+            """)
+            ).body
+
+            # 4. Inject the entire scenario
+            # Ensure imports are present
+            node.body.insert(0, ast.Import(names=[ast.alias(name="sys")]))
+            node.body.insert(0, ast.Import(names=[ast.alias(name="asyncio")]))
+
+            injection_point = random.randint(2, len(node.body))
+            full_injection = [corruptor_ast, coroutine_ast] + trigger_ast
+            node.body[injection_point:injection_point] = full_injection
+            ast.fix_missing_locations(node)
+
+        return node
+
+
 class ASTMutator:
     """
     An engine for structurally modifying Python code at the AST level.
@@ -2857,6 +2944,7 @@ class ASTMutator:
             FrameManipulator,
             ComprehensionBomb,
             SuperResolutionAttacker,
+            CoroutineStateCorruptor,
         ]
 
     def mutate_ast(

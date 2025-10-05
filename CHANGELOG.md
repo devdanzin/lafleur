@@ -34,6 +34,7 @@ All notable changes to this project should be documented in this file.
 - A `MROShuffler`that injects a scenario which changes MRO after a while, by @devdanzin.
 - A `FrameManipulator` that injects a function that modifies a local variable up the call stack, by @devdanzin.
 - A `ComprehensionBomb` that runs a list comprehension over a stateful iterator, by @devdanzin.
+- A `SuperResolutionAttacker` to stress the caches that the JIT uses for super() calls, by @devdanzin.
 
 
 ### Enhanced

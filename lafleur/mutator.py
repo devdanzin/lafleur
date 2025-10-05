@@ -2895,6 +2895,93 @@ class CoroutineStateCorruptor(ast.NodeTransformer):
         return node
 
 
+def _create_gc_callback_ast(func_name: str) -> ast.FunctionDef:
+    """Builds the AST for the weakref callback function."""
+    return ast.parse(
+        dedent(f"""
+    def {func_name}(ref, var_name):
+        # This function is triggered by the GC when the weakref's
+        # target is collected. It modifies a global variable.
+        globals()[var_name] = "modified_by_gc"
+    """)
+    ).body[0]
+
+
+def _create_target_object_ast(class_name: str) -> ast.ClassDef:
+    """Builds the AST for a simple, empty class to be garbage collected."""
+    return ast.parse(
+        dedent(f"""
+    class {class_name}:
+        pass
+    """)
+    ).body[0]
+
+
+class WeakRefCallbackChaos(ast.NodeTransformer):
+    """
+    Injects a scenario that uses a weakref callback to modify a global
+    variable during garbage collection, attacking JIT assumptions about
+    the stability of globals.
+    """
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> ast.FunctionDef:
+        self.generic_visit(node)
+
+        if not node.name.startswith("uop_harness") or not node.body:
+            return node
+
+        if random.random() < 0.15:  # 15% chance
+            p_prefix = f"gc_{random.randint(1000, 9999)}"
+            class_name = f"TargetObject_{p_prefix}"
+            callback_name = f"evil_callback_{p_prefix}"
+            instance_name = f"target_obj_{p_prefix}"
+            var_name = f"gc_var_{p_prefix}"
+
+            print(
+                f"    -> Injecting weakref callback chaos with prefix '{p_prefix}'", file=sys.stderr
+            )
+
+            # 1. Get the AST for the callback and target class
+            callback_ast = _create_gc_callback_ast(callback_name)
+            class_ast = _create_target_object_ast(class_name)
+
+            # 2. Create the AST for the full attack scenario
+            scenario_ast = ast.parse(
+                dedent(f"""
+                # Setup the global variable and weakref
+                {var_name} = 100
+                {instance_name} = {class_name}()
+                callback = lambda ref: {callback_name}(ref, '{var_name}')
+                weak_ref = weakref.ref({instance_name}, callback)
+
+                # Warm-up loop to encourage the JIT to specialize the global var's type
+                for i in range(100):
+                    _ = {var_name} + i
+
+                # Trigger the garbage collection and the callback
+                del {instance_name}
+                gc.collect()
+
+                # Use the (now corrupted) global variable
+                try:
+                    _ = {var_name} + 1
+                except TypeError:
+                    pass
+            """)
+            ).body
+
+            # 3. Inject the entire scenario
+            node.body.insert(0, ast.Import(names=[ast.alias(name="gc")]))
+            node.body.insert(0, ast.Import(names=[ast.alias(name="weakref")]))
+
+            injection_point = random.randint(2, len(node.body))
+            full_injection = [callback_ast, class_ast] + scenario_ast
+            node.body[injection_point:injection_point] = full_injection
+            ast.fix_missing_locations(node)
+
+        return node
+
+
 class ASTMutator:
     """
     An engine for structurally modifying Python code at the AST level.
@@ -2945,6 +3032,7 @@ class ASTMutator:
             ComprehensionBomb,
             SuperResolutionAttacker,
             CoroutineStateCorruptor,
+            WeakRefCallbackChaos,
         ]
 
     def mutate_ast(

@@ -2982,6 +2982,82 @@ class WeakRefCallbackChaos(ast.NodeTransformer):
         return node
 
 
+def _create_exception_maze_classes_ast(meta_name: str, exception_name: str) -> list[ast.ClassDef]:
+    """
+    Builds the AST for the metaclass and custom exception used in the maze.
+    """
+    return ast.parse(
+        dedent(f"""
+    class {meta_name}(type):
+        def __instancecheck__(cls, instance):
+            # This makes exception matching unpredictable for the JIT.
+            cls.count = getattr(cls, 'count', 0) + 1
+            return cls.count % 10 == 0
+
+    class {exception_name}(Exception, metaclass={meta_name}):
+        pass
+    """)
+    ).body
+
+
+class ExceptionHandlerMaze(ast.NodeTransformer):
+    """
+    Injects a nested try/except block with a custom exception whose
+    matching behavior is non-deterministic, attacking JIT's control
+    flow optimizations for exception handling.
+    """
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> ast.FunctionDef:
+        self.generic_visit(node)
+
+        if not node.name.startswith("uop_harness") or not node.body:
+            return node
+
+        if random.random() < 0.15:  # 15% chance
+            p_prefix = f"exc_{random.randint(1000, 9999)}"
+            meta_name = f"MetaException_{p_prefix}"
+            exception_name = f"EvilException_{p_prefix}"
+
+            print(
+                f"    -> Injecting exception handler maze with prefix '{p_prefix}'", file=sys.stderr
+            )
+
+            # 1. Get the AST for the metaclass and exception class
+            class_asts = _create_exception_maze_classes_ast(meta_name, exception_name)
+
+            # 2. Create the AST for the "maze" itself
+            maze_ast = ast.parse(
+                dedent(f"""
+                for i in range(400):
+                    x = i
+                    try:
+                        try:
+                            # Alternate between raising our evil exception and a normal one
+                            if i % 100 == 0:
+                                raise {exception_name}()
+                            else:
+                                raise ValueError("A normal error")
+                        except {exception_name}:
+                            # This block will be entered unpredictably
+                            x = i + 1
+                    except ValueError:
+                        # This block is entered predictably
+                        x = i + 2
+                    except Exception:
+                        # Catch any other unexpected outcomes
+                        pass
+            """)
+            ).body
+
+            # 3. Inject the entire scenario into the harness
+            injection_point = random.randint(0, len(node.body))
+            full_injection = class_asts + maze_ast
+            node.body[injection_point:injection_point] = full_injection
+            ast.fix_missing_locations(node)
+
+        return node
+
+
 class ASTMutator:
     """
     An engine for structurally modifying Python code at the AST level.
@@ -3033,6 +3109,7 @@ class ASTMutator:
             SuperResolutionAttacker,
             CoroutineStateCorruptor,
             WeakRefCallbackChaos,
+            ExceptionHandlerMaze,
         ]
 
     def mutate_ast(

@@ -37,6 +37,7 @@ All notable changes to this project should be documented in this file.
 - A `SuperResolutionAttacker` to stress the caches that the JIT uses for super() calls, by @devdanzin.
 - A `CoroutineStateCorruptor` to create a coroutine where a local variable is corrupted, by @devdanzin.
 - A `WeakRefCallbackChaos` to use a weakref callback that violates a variable's type assumption, by @devdanzin.
+- An `ExceptionHandlerMaze` to add an exception with a metaclass to make except blocks stateful, by @devdanzin.
 
 
 ### Enhanced

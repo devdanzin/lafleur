@@ -35,6 +35,7 @@ All notable changes to this project should be documented in this file.
 - A `FrameManipulator` that injects a function that modifies a local variable up the call stack, by @devdanzin.
 - A `ComprehensionBomb` that runs a list comprehension over a stateful iterator, by @devdanzin.
 - A `SuperResolutionAttacker` to stress the caches that the JIT uses for super() calls, by @devdanzin.
+- A `CoroutineStateCorruptor` to create a coroutine where a local variable is corrupted, by @devdanzin.
 
 
 ### Enhanced

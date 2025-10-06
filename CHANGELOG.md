@@ -66,11 +66,12 @@ All notable changes to this project should be documented in this file.
 - Avoid IndentationErrors after mutation with `GuardRemover`, by @devdanzin.
 - Delete temporary compressed files, by @devdanzin.
 - Avoid overwriting new files manually added to the corpus, by @devdanzin.
-- Code generation bugs in FuzzerSetupNormalizer, DeepCallMutator and ExitStresser, by @devdanzin.
+- Code generation bugs in `FuzzerSetupNormalizer`, `DeepCallMutator` and `ExitStresser`, by @devdanzin.
 - Detect interestingness of manually added files to the corpus, by @devdanzin.
 - Use `FuzzerSetupNormalizer` to remove extraneous GC and RNG tuning, by @devdanzin.
 - Sanitize all blocks that would have an empty block to contain `pass`, by @devdanzin.
 - Avoid overwriting crash files by giving them unique names, by @devdanzin.
+- UOP are validated against the set of known UOPs to avoid recording cut names, by @devdanzin.
 
 
 ## [0.0.1] - 2024-11-20

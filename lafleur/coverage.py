@@ -19,6 +19,8 @@ from enum import Enum, auto
 from pathlib import Path
 from typing import Any
 
+from lafleur.uop_names import UOP_NAMES
+
 try:
     from lafleur.state_tool import migrate_state_to_integers
 except ImportError:
@@ -176,18 +178,28 @@ def parse_log_for_edge_coverage(
             if uop_match:
                 current_uop = uop_match.group(1)
 
-                if current_state == JitState.OPTIMIZED and current_uop in ("_DEOPT", "_EXIT_TRACE"):
-                    current_side_exits += 1
+                if current_uop not in UOP_NAMES:
+                    # Spurious UOP detected. Discard it and break the edge chain.
+                    previous_uop = None
+                else:
+                    # UOP is valid, proceed with coverage tracking.
+                    if current_state == JitState.OPTIMIZED and current_uop in (
+                        "_DEOPT",
+                        "_EXIT_TRACE",
+                    ):
+                        current_side_exits += 1
 
-                uop_id = coverage_manager.get_or_create_id("uop", current_uop)
-                coverage_by_harness[current_harness_id]["uops"][uop_id] += 1
+                    uop_id = coverage_manager.get_or_create_id("uop", current_uop)
+                    coverage_by_harness[current_harness_id]["uops"][uop_id] += 1
 
-                if previous_uop:
-                    edge_str = f"{previous_uop}->{current_uop}"
-                    stateful_edge_str = str((current_state.name, edge_str))
-                    edge_id = coverage_manager.get_or_create_id("edge", stateful_edge_str)
-                    coverage_by_harness[current_harness_id]["edges"][edge_id] += 1
-                previous_uop = current_uop
+                    if previous_uop:
+                        edge_str = f"{previous_uop}->{current_uop}"
+                        stateful_edge_str = str((current_state.name, edge_str))
+                        edge_id = coverage_manager.get_or_create_id("edge", stateful_edge_str)
+                        coverage_by_harness[current_harness_id]["edges"][edge_id] += 1
+
+                    # Only update previous_uop if the current one was valid.
+                    previous_uop = current_uop
 
             if rare_event_match := RARE_EVENT_REGEX.search(line):
                 rare_event = rare_event_match.group(1)

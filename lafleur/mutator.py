@@ -2317,72 +2317,21 @@ class RecursionWrappingMutator(ast.NodeTransformer):
 
 def _create_evil_descriptor_ast(class_name: str) -> ast.ClassDef:
     """
-    Programmatically create the AST for the EvilDescriptor class.
-
-    Equivalent to:
-    class EvilDescriptor:
+    Builds the AST for a descriptor with a chaotic, stateful __get__ method
+    that cycles through multiple return types.
+    """
+    source_code = dedent(f"""
+    class {class_name}:
         def __get__(self, obj, owner):
             self.count = getattr(self, 'count', 0) + 1
-            return "string" if self.count < 50 else 42
-    """
-    return ast.ClassDef(
-        name=class_name,
-        bases=[],
-        keywords=[],
-        body=[
-            ast.FunctionDef(
-                name="__get__",
-                args=ast.arguments(
-                    args=[ast.arg(arg="self"), ast.arg(arg="obj"), ast.arg(arg="owner")],
-                    posonlyargs=[],
-                    kwonlyargs=[],
-                    kw_defaults=[],
-                    defaults=[],
-                ),
-                body=[
-                    ast.Assign(
-                        targets=[
-                            ast.Attribute(
-                                value=ast.Name(id="self", ctx=ast.Load()),
-                                attr="count",
-                                ctx=ast.Store(),
-                            )
-                        ],
-                        value=ast.BinOp(
-                            left=ast.Call(
-                                func=ast.Name(id="getattr", ctx=ast.Load()),
-                                args=[
-                                    ast.Name(id="self", ctx=ast.Load()),
-                                    ast.Constant(value="count"),
-                                    ast.Constant(value=0),
-                                ],
-                                keywords=[],
-                            ),
-                            op=ast.Add(),
-                            right=ast.Constant(value=1),
-                        ),
-                    ),
-                    ast.Return(
-                        value=ast.IfExp(
-                            test=ast.Compare(
-                                left=ast.Attribute(
-                                    value=ast.Name(id="self", ctx=ast.Load()),
-                                    attr="count",
-                                    ctx=ast.Load(),
-                                ),
-                                ops=[ast.Lt()],
-                                comparators=[ast.Constant(value=50)],
-                            ),
-                            body=ast.Constant(value="string"),
-                            orelse=ast.Constant(value=42),
-                        )
-                    ),
-                ],
-                decorator_list=[],
-            )
-        ],
-        decorator_list=[],
-    )
+            # A list of diverse types to cycle through
+            type_options = [42, "a_string", 3.14, None, [1, 2, 3]]
+            # Change the return type every 10 accesses
+            index = (self.count // 10) % len(type_options)
+            return type_options[index]
+    """)
+    # ast.parse() returns a Module node; the class definition is in its body.
+    return ast.parse(source_code).body[0]
 
 
 class DescriptorChaosGenerator(ast.NodeTransformer):
@@ -2592,6 +2541,17 @@ class FrameManipulator(ast.NodeTransformer):
     """
     Injects a function that uses sys._getframe() to maliciously modify the
     local variables of its caller, attacking JIT assumptions about local state.
+
+    Note on CPython Internals:
+    In CPython, modifications to a frame's `f_locals` dictionary do not
+    reliably propagate back to the function's optimized "fast locals"
+    (the C array holding local variables). This discrepancy is an intentional
+    performance optimization in the interpreter.
+
+    For our fuzzing purposes, this inconsistency is a feature, not a bug.
+    It creates a scenario where the JIT's view of a variable's state might
+    diverge from the state that other Python code sees, which is a potent
+    source of potential bugs.
     """
 
     def visit_FunctionDef(self, node: ast.FunctionDef) -> ast.FunctionDef:
@@ -2651,10 +2611,9 @@ class FrameManipulator(ast.NodeTransformer):
 def _create_chaotic_iterator_ast(class_name: str) -> ast.ClassDef:
     """
     Builds the AST for a custom iterator that can return an
-    unexpected type mid-iteration.
+    unexpected type, clear itself, or extend itself mid-iteration.
     """
-    return ast.parse(
-        dedent(f"""
+    source_code = dedent(f"""
     class {class_name}:
         def __init__(self, items):
             self._items = list(items)
@@ -2664,21 +2623,24 @@ def _create_chaotic_iterator_ast(class_name: str) -> ast.ClassDef:
             return self
 
         def __next__(self):
-            if random.random() < 0.01: # 1% chance, avoids an infinite loop
-                self._items.clear()
+            # Multiple, independent chances to cause chaos on each step
+            if fuzzer_rng.random() < 0.05:
+                self._items.clear()  # Prematurely end the iteration
+
+            if fuzzer_rng.random() < 0.05:
+                self._items.extend([999, 'chaos', None])  # Unexpectedly prolong the iteration
+
+            if fuzzer_rng.random() < 0.1:
+                return "unexpected_type_from_iterator"  # Corrupt the yielded value
 
             if self._index >= len(self._items):
                 raise StopIteration
-
-            # This side effect is triggered on every step of the iteration
-            if random.random() < 0.1: # 10% chance
-                return "unexpected_type_from_iterator"
 
             item = self._items[self._index]
             self._index += 1
             return item
     """)
-    ).body[0]
+    return ast.parse(source_code).body[0]
 
 
 class ComprehensionBomb(ast.NodeTransformer):
@@ -2784,24 +2746,38 @@ class SuperResolutionAttacker(ast.NodeTransformer):
             # 1. Create the class definitions
             class_asts = _create_super_attack_hierarchy_ast(base_name, subclass_name)
 
-            # 2. Create the trigger code
-            trigger_ast = ast.parse(
+            # 2. Create the trigger code with the new post-shuffle stress loop
+            scenario_ast = ast.parse(
                 dedent(f"""
                 {instance_name} = {subclass_name}()
-                for x in range(500): 
+
+                # Phase 1: WARM-UP LOOP
+                # Encourage the JIT to specialize the call to the original super().f()
+                for _ in range(300):
                     try:
-                        # This call triggers the MRO modification and super() call
+                        _ = {instance_name}.f()
+                    except Exception:
+                        pass # The shuffle hasn't happened yet, so this is safe
+
+                # Phase 2: THE SHUFFLE
+                # The attack: modify the MRO
+                {subclass_name}.__bases__ = (object,)
+
+                # Phase 3: STRESS LOOP (The Improvement)
+                # Repeatedly call the method *after* the shuffle to stress the
+                # JIT's deoptimization and recovery path.
+                for _ in range(100):
+                    try:
                         _ = {instance_name}.f()
                     except AttributeError:
-                        # This is the expected exception, as super().f() will resolve
-                        # to object.f after the MRO shuffle.
+                        # This is the expected exception after the shuffle
                         pass
             """)
             ).body
 
             # 3. Inject the entire scenario into the harness
             injection_point = random.randint(0, len(node.body))
-            full_injection = class_asts + trigger_ast
+            full_injection = class_asts + scenario_ast
             node.body[injection_point:injection_point] = full_injection
             ast.fix_missing_locations(node)
 
@@ -2861,6 +2837,8 @@ class CoroutineStateCorruptor(ast.NodeTransformer):
                 # Warm-up loop to make the JIT specialize the type of 'x'
                 for i in range(100):
                     x = i + 1
+                    await asyncio.sleep(0)
+                    x = x + 1 # Resume and use x as an int
 
                 # Corrupt 'x' before the await point
                 {corruptor_name}("corrupted_string")
@@ -2958,9 +2936,10 @@ class WeakRefCallbackChaos(ast.NodeTransformer):
                 for i in range(100):
                     _ = {var_name} + i
 
-                # Trigger the garbage collection and the callback
                 del {instance_name}
-                gc.collect()
+                for _ in range(3):
+                    gc.collect()
+                    gc.collect()
 
                 # Use the (now corrupted) global variable
                 try:
@@ -2970,7 +2949,7 @@ class WeakRefCallbackChaos(ast.NodeTransformer):
             """)
             ).body
 
-            # 3. Inject the entire scenario
+            # 3. Inject the entire scenario (unchanged)
             node.body.insert(0, ast.Import(names=[ast.alias(name="gc")]))
             node.body.insert(0, ast.Import(names=[ast.alias(name="weakref")]))
 
@@ -3068,25 +3047,31 @@ class BuiltinNamespaceCorruptor(ast.NodeTransformer):
     ATTACK_SCENARIOS = [
         {
             "builtin": "len",
-            "warm_up": "for i in range(100): _ = len([0]*i)",
+            "warm_up": "for i in range(50): _ = len([0]*i); _ = len('x'*i)",
             "malicious_lambda": 'lambda x: "evil_string"',
             "trigger": "_ = len([])",
         },
         {
             "builtin": "range",
-            "warm_up": "for i in range(100): _ = list(range(i))",
-            "malicious_lambda": "lambda x: [x, x, x]",  # Returns a list, not an iterator
+            "warm_up": "for i in range(50): _ = list(range(i)); _ = sum(range(i))",
+            "malicious_lambda": "lambda x: [x, x, x]",
             "trigger": "_ = list(range(10))",
         },
         {
             "builtin": "isinstance",
-            "warm_up": "for i in range(100): _ = isinstance(i, int)",
-            "malicious_lambda": "lambda obj, cls, orig_func=original_isinstance_...: not orig_func(obj, cls)",
+            "warm_up": "for i in range(50): _ = isinstance(i, int); _ = isinstance('s', str)",
+            "setup": dedent("""
+                {original_var_name} = builtins.isinstance
+                def evil_isinstance(obj, cls):
+                    # This function closes over the original and inverts the logic
+                    return not {original_var_name}(obj, cls)
+            """),
+            "malicious_assignment": "builtins.isinstance = evil_isinstance",
             "trigger": "_ = isinstance(1, int)",
         },
         {
             "builtin": "sum",
-            "warm_up": "for i in range(100): _ = sum(range(i))",
+            "warm_up": "for i in range(50): _ = sum(range(i)); _ = sum([i, i, i])",
             "malicious_lambda": "lambda x: float('inf')",
             "trigger": "_ = sum([1, 2, 3])",
         },
@@ -3099,41 +3084,45 @@ class BuiltinNamespaceCorruptor(ast.NodeTransformer):
             return node
 
         if random.random() < 0.15:  # 15% chance
-            # 1. Select a random attack scenario
             attack = random.choice(self.ATTACK_SCENARIOS)
             builtin_name = attack["builtin"]
 
             p_prefix = f"builtin_{random.randint(1000, 9999)}"
             original_var_name = f"original_{builtin_name}_{p_prefix}"
 
-            malicious_lambda = attack["malicious_lambda"].replace(
-                "original_isinstance_...", original_var_name
-            )
-
             print(f"    -> Injecting builtin corruption for '{builtin_name}'", file=sys.stderr)
 
-            # 2. Construct the full attack scenario AST
-            scenario_ast = ast.parse(
-                dedent(f"""
-                {original_var_name} = builtins.{builtin_name}
-                try:
-                    # Warm-up loop to encourage JIT specialization
-                    {attack["warm_up"]}
+            if "malicious_lambda" in attack:
+                # Simple case: build from a lambda
+                scenario_str = dedent(f"""
+                    {original_var_name} = builtins.{builtin_name}
+                    try:
+                        {attack["warm_up"]}
+                        builtins.{builtin_name} = {attack["malicious_lambda"]}
+                        {attack["trigger"]}
+                    except Exception:
+                        pass
+                    finally:
+                        builtins.{builtin_name} = {original_var_name}
+                """)
+            else:
+                # Complex case: build from setup and assignment strings
+                setup_code = attack["setup"].format(original_var_name=original_var_name)
+                scenario_str = dedent(f"""
+{indent(setup_code, prefix=" " * 20)}
+                    try:
+                        {attack["warm_up"]}
+                        {attack["malicious_assignment"]}
+                        {attack["trigger"]}
+                    except Exception:
+                        pass
+                    finally:
+                        builtins.{builtin_name} = {original_var_name}
+                """)
 
-                    # Corrupt the builtin
-                    builtins.{builtin_name} = {malicious_lambda}
+            scenario_ast = ast.parse(scenario_str).body
 
-                    # Trigger the corrupted builtin
-                    {attack["trigger"]}
-                except Exception:
-                    pass
-                finally:
-                    # This is guaranteed to run, restoring the original
-                    builtins.{builtin_name} = {original_var_name}
-            """)
-            ).body
-
-            # 3. Inject the scenario
+            # Inject the scenario
             node.body.insert(0, ast.Import(names=[ast.alias(name="builtins")]))
             injection_point = random.randint(1, len(node.body))
             node.body[injection_point:injection_point] = scenario_ast
@@ -3194,12 +3183,13 @@ class CodeObjectSwapper(ast.NodeTransformer):
                 {original_name}.__code__ = {replacement_name}.__code__
 
                 # The trigger: call the function again and use the result
-                try:
-                    res = {original_name}() # Now returns a string
-                    _ = res + 1          # This will raise a TypeError
-                except TypeError:
-                    # This is the expected outcome. A JIT bug might cause a crash.
-                    pass
+                for _ in range(100):
+                    try:
+                        res = {original_name}() # Now returns a string
+                        _ = res + 1          # This will raise a TypeError
+                    except TypeError:
+                        # This is the expected outcome.
+                        pass
             """)
             ).body
 

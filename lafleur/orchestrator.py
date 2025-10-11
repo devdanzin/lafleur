@@ -36,10 +36,53 @@ from lafleur.mutator import (
     ASTMutator,
     EmptyBodySanitizer,
     FuzzerSetupNormalizer,
+    HarnessInstrumentor,
     SlicingMutator,
     VariableRenamer,
 )
 from lafleur.utils import ExecutionResult, TeeLogger, load_run_stats, save_run_stats
+
+SERIALIZATION_SNIPPET = dedent("""
+    # --- BEGIN INJECTED SERIALIZATION CODE ---
+    import types
+    import inspect
+    import json
+
+    def serialize_state(state_dict: dict) -> dict:
+        serializable_state = {}
+        IGNORE_KEYS = {
+            '__name__', '__doc__', '__package__', '__loader__',
+            '__spec__', '__builtins__', 'serialize_state', 'json',
+            'types', 'inspect'
+        }
+        for key, value in sorted(state_dict.items()):
+            if key in IGNORE_KEYS or key.startswith('__'):
+                continue
+            if isinstance(value, (int, str, bool, type(None), float, list, tuple)):
+                serializable_state[key] = value
+            elif isinstance(value, dict):
+                serializable_state[key] = dict(sorted(value.items()))
+            elif isinstance(value, set):
+                serializable_state[key] = sorted(list(value))
+            elif inspect.isfunction(value):
+                serializable_state[key] = f"<function: {value.__name__}>"
+            elif inspect.isclass(value):
+                serializable_state[key] = f"<class: {value.__name__}>"
+            elif inspect.ismodule(value):
+                continue
+            else:
+                if hasattr(value, '__class__') and hasattr(value.__class__, '__module__') and value.__class__.__module__ == '__main__':
+                    serializable_state[key] = f"<instance of: {value.__class__.__name__}>"
+                else:
+                    serializable_state[key] = f"<unknown type: {type(value).__name__}>"
+        return serializable_state
+
+    # Check if the harness loop actually ran and produced a result
+    if 'final_harness_locals' in locals():
+        final_state = serialize_state(final_harness_locals)
+        print(json.dumps(final_state, sort_keys=True, indent=2))
+    # --- END INJECTED SERIALIZATION CODE ---
+""")
 
 RANDOM = random.Random()
 
@@ -73,7 +116,7 @@ ENV.update(
         "PYTHON_LLTRACE": "4",
         "PYTHON_OPT_DEBUG": "4",
         "PYTHON_JIT": "1",
-        "ASAN_OPTIONS": "detect_leaks=0"
+        "ASAN_OPTIONS": "detect_leaks=0",
     }
 )
 
@@ -636,16 +679,12 @@ class LafleurOrchestrator:
         self,
         parent_core_tree: ast.Module,
         mutated_harness_node: ast.AST,
-        setup_code: str,
-        prefix: str,
-        current_seed: int,
-        parent_id: str,
         runtime_seed: int,
     ) -> str | None:
         """Reassemble the AST and generate the final Python source code for the child."""
         try:
             gc_tuning_code = ""
-            if random.random() < 0.25:  # 25% chance to prepend GC tuning
+            if random.random() < 0.25:
                 print("    -> Prepending GC pressure to test case", file=sys.stderr)
                 # This logic is the same as in GCInjector
                 thresholds = [1, 10, 100, None]
@@ -653,7 +692,6 @@ class LafleurOrchestrator:
                 chosen_threshold = random.choices(thresholds, weights=weights, k=1)[0]
                 if chosen_threshold is None:
                     chosen_threshold = random.randint(1, 150)
-
                 gc_tuning_code = f"import gc\ngc.set_threshold({chosen_threshold})\n"
 
             rng_setup_code = dedent(f"""
@@ -661,51 +699,18 @@ class LafleurOrchestrator:
                 fuzzer_rng = random.Random({runtime_seed})
             """)
 
+            child_core_tree = copy.deepcopy(parent_core_tree)
+            for i, node in enumerate(child_core_tree.body):
+                if isinstance(node, ast.FunctionDef) and node.name == mutated_harness_node.name:
+                    child_core_tree.body[i] = mutated_harness_node
+                    break
+
             if self.differential_testing:
-                mutated_core_code = ast.unparse(mutated_harness_node.body)
-                mutated_core_code += "\n    return locals().copy()"
-                diff_boilerplate = self._get_differential_test_boilerplate()
-                return dedent(f"""
-# Fuzzer-generated differential test
-# Seed: {current_seed}, Parent: {parent_id}
-from gc import collect
-import sys
-from textwrap import indent
-{self.boilerplate_code}
-{diff_boilerplate}
-{rng_setup_code}
-{setup_code}
+                instrumentor = HarnessInstrumentor()
+                child_core_tree = instrumentor.visit(child_core_tree)
 
-def jit_target_{prefix}():
-{indent(mutated_core_code, "    ")}
-
-def control_{prefix}():
-{indent(mutated_core_code, "    ")}
-
-# --- Execute the 'Twin Execution' harness ---
-try:
-    jit_harness(jit_target_{prefix}, 500)
-    jit_result = jit_target_{prefix}()
-    control_result = no_jit_harness(control_{prefix})
-
-    if not compare_results(jit_result, control_result):
-        # Use repr() to get a more detailed string representation of the dicts
-        raise JITCorrectnessError(f"JIT DIVERGENCE! JIT: {{repr(jit_result)}}, Control: {{repr(control_result)}}")
-except JITCorrectnessError:
-    # Re-raise our specific error to be caught by the log scanner
-    raise
-except Exception:
-    # Ignore other benign errors in the generated code
-    pass
-""")
-            else:
-                child_core_tree = copy.deepcopy(parent_core_tree)
-                for i, node in enumerate(child_core_tree.body):
-                    if isinstance(node, ast.FunctionDef) and node.name == mutated_harness_node.name:
-                        child_core_tree.body[i] = mutated_harness_node
-                        break
-                mutated_core_code = ast.unparse(child_core_tree)
-                return f"{self.boilerplate_code}\n{gc_tuning_code}{rng_setup_code}\n{mutated_core_code}"
+            mutated_core_code = ast.unparse(child_core_tree)
+            return f"{self.boilerplate_code}\n{gc_tuning_code}{rng_setup_code}\n{mutated_core_code}"
         except RecursionError:
             print(
                 "  [!] Warning: Skipping mutation due to RecursionError during ast.unparse.",
@@ -716,9 +721,71 @@ except Exception:
     def _execute_child(
         self, source_code: str, child_source_path: Path, child_log_path: Path, parent_path: Path
     ) -> ExecutionResult | None:
-        """Write the child script to a temp file, execute it, and return results."""
+        """
+        Execute a child script, handling both JIT differential and normal fuzzing.
+        """
+        # --- PHASE 1: JIT Differential Fuzzing (if enabled) ---
+        if self.differential_testing:
+            instrumented_code = source_code + "\n" + SERIALIZATION_SNIPPET
+            child_source_path.write_text(instrumented_code)
 
+            jit_output = None
+            nojit_output = None
+
+            try:
+                # Run 1: JIT Enabled
+                jit_env = ENV.copy()
+                jit_env["PYTHON_JIT"] = "1"
+                jit_env["PYTHON_LLTRACE"] = "0"
+                jit_env["PYTHON_OPT_DEBUG"] = "0"
+                jit_run = subprocess.run(
+                    ["python3", str(child_source_path)],
+                    capture_output=True,
+                    text=True,
+                    timeout=self.timeout,
+                    env=jit_env,
+                )
+                jit_output = jit_run.stdout
+
+                # Run 2: JIT Disabled
+                nojit_env = ENV.copy()
+                nojit_env["PYTHON_JIT"] = "0"
+                nojit_run = subprocess.run(
+                    ["python3", str(child_source_path)],
+                    capture_output=True,
+                    text=True,
+                    timeout=self.timeout,
+                    env=nojit_env,
+                )
+                nojit_output = nojit_run.stdout
+
+            except subprocess.TimeoutExpired:
+                # A timeout during the differential check is itself an interesting result.
+                # We'll treat it like a normal timeout for now.
+                print(
+                    "  [!] Timeout occurred during JIT differential check. Proceeding with normal timeout handling.",
+                    file=sys.stderr,
+                )
+                # We fall through to the normal execution path, which will re-run the code
+                # and trigger the full timeout handling logic.
+
+            # Compare stdout. If different, we have found a divergence.
+            if jit_output is not None and nojit_output is not None and jit_output != nojit_output:
+                return ExecutionResult(
+                    source_path=child_source_path,
+                    log_path=child_log_path,  # Not used, but required
+                    returncode=0,
+                    execution_time_ms=0,
+                    is_divergence=True,
+                    jit_stdout=jit_output,
+                    nojit_stdout=nojit_output,
+                )
+
+        # --- PHASE 2: Normal Coverage-Gathering Run ---
+        # This code runs if differential testing is off, OR if the differential
+        # check passed without finding a divergence.
         try:
+            # We always write the original, non-instrumented code for coverage runs
             child_source_path.write_text(source_code)
             with open(child_log_path, "w") as log_file:
                 start_time = time.monotonic()
@@ -982,10 +1049,6 @@ except Exception:
                         child_source = self._prepare_child_script(
                             parent_core_tree,
                             mutated_harness_node,
-                            setup_code,
-                            prefix,
-                            mutation_seed,
-                            parent_id,
                             runtime_seed,
                         )
                         if not child_source:
@@ -1095,16 +1158,6 @@ except Exception:
             # Exit condition for the while True loop
             if not is_deepening_session or not found_new_coverage_in_cycle:
                 break
-
-    def _check_for_divergence(self, log_content: str, source_path: Path, log_path: Path) -> bool:
-        """Check for correctness divergences and save artifacts."""
-        if "JITCorrectnessError" in log_content:
-            print("  [!!!] DIVERGENCE DETECTED! Saving test case and log.", file=sys.stderr)
-            divergence_path = DIVERGENCES_DIR / f"divergence_{source_path.name}"
-            shutil.copy(source_path, divergence_path)
-            shutil.copy(log_path, divergence_path.with_suffix(".log"))
-            return True
-        return False
 
     def _check_for_crash(
         self, return_code: int, log_content: str, source_path: Path, log_path: Path
@@ -1260,16 +1313,18 @@ except Exception:
         is_differential_mode: bool = False,
     ) -> dict:
         """Orchestrate the analysis of a run and return a dictionary of findings."""
+
+        if exec_result.is_divergence:
+            self._save_divergence(
+                exec_result.source_path, exec_result.jit_stdout, exec_result.nojit_stdout
+            )
+            return {"status": "DIVERGENCE"}
+
         log_content = ""
         try:
             log_content = exec_result.log_path.read_text()
         except IOError as e:
             print(f"  [!] Warning: Could not read log file for analysis: {e}", file=sys.stderr)
-
-        if is_differential_mode and self._check_for_divergence(
-            log_content, exec_result.source_path, exec_result.log_path
-        ):
-            return {"status": "DIVERGENCE"}
 
         if self._check_for_crash(
             exec_result.returncode, log_content, exec_result.source_path, exec_result.log_path
@@ -1317,6 +1372,32 @@ except Exception:
             }
 
         return {"status": "NO_CHANGE"}
+
+    def _save_divergence(self, source_path: Path, jit_stdout: str, nojit_stdout: str):
+        """Saves the source code and differing outputs from a JIT divergence."""
+        self.run_stats["divergences_found"] = self.run_stats.get("divergences_found", 0) + 1
+        print(f"  [!!!] JIT DIVERGENCE DETECTED! Saving test case.", file=sys.stderr)
+
+        # 1. Define the unique base name for the set of output files.
+        base_filename = f"divergence_{source_path.stem}"
+
+        # 2. Define the destination paths in the DIVERGENCES_DIR.
+        dest_source_path = DIVERGENCES_DIR / f"{base_filename}.py"
+        dest_jit_out_path = DIVERGENCES_DIR / f"{base_filename}.jit.out"
+        dest_nojit_out_path = DIVERGENCES_DIR / f"{base_filename}.nojit.out"
+
+        try:
+            # 3. Copy the source code that caused the divergence.
+            shutil.copy(source_path, dest_source_path)
+
+            # 4. Save the two differing stdout captures.
+            dest_jit_out_path.write_text(jit_stdout)
+            dest_nojit_out_path.write_text(nojit_stdout)
+
+            print(f"  [+] Divergence artifacts saved to {dest_source_path.parent}", file=sys.stderr)
+
+        except IOError as e:
+            print(f"  [!] CRITICAL: Could not save divergence files: {e}", file=sys.stderr)
 
     def _log_timeseries_datapoint(self):
         """Append a snapshot of the current run statistics to the time-series log."""
@@ -1366,50 +1447,6 @@ except Exception:
             )
 
         return lineage
-
-    def _get_differential_test_boilerplate(self) -> str:
-        """Return the boilerplate code required for differential testing."""
-        return dedent("""
-            import math
-            import types
-
-            # Define a custom exception to distinguish our check from others.
-            class JITCorrectnessError(AssertionError): pass
-
-            # This function is called only once, so it will not be JIT-compiled.
-            def no_jit_harness(func, *args, **kwargs):
-                return func(*args, **kwargs)
-
-            # This function calls its target in a loop to make it 'hot' for the JIT.
-            def jit_harness(func, iterations, *args, **kwargs):
-                for _ in range(iterations):
-                    func(*args, **kwargs)
-
-            # Helper for correctness testing that handles NaN, lambdas, and complex numbers.
-            def compare_results(a, b):
-                if isinstance(a, types.FunctionType) and a.__name__ == '<lambda>' and \\
-                   isinstance(b, types.FunctionType) and b.__name__ == '<lambda>':
-                    return True # Treat two lambdas as equal for our purposes
-
-                if isinstance(a, complex) and isinstance(b, complex):
-                    a_real_nan = math.isnan(a.real)
-                    b_real_nan = math.isnan(b.real)
-                    a_imag_nan = math.isnan(a.imag)
-                    b_imag_nan = math.isnan(b.imag)
-                    real_match = (a.real == b.real) or (a_real_nan and b_real_nan)
-                    imag_match = (a.imag == b.imag) or (a_imag_nan and b_imag_nan)
-                    return real_match and imag_match
-
-                if isinstance(a, float) and isinstance(b, float) and math.isnan(a) and math.isnan(b):
-                    return True
-
-                # For generic objects, we can't reliably compare, so we assume they are equivalent
-                # if they are not one of the well-defined types we can compare.
-                if type(a).__module__ != 'builtins' or type(b).__module__ != 'builtins':
-                    return True
-
-                return a == b
-        """)
 
     def debug_mutation_differences(self, original_ast: ast.AST, mutated_ast: ast.AST, seed: int):
         """Verify that mutations are producing different code."""

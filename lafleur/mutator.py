@@ -3616,3 +3616,57 @@ def genSimpleObject(var_name: str) -> str:
         {var_name} = {class_name}()
     """)
     return setup_code
+
+
+class HarnessInstrumentor(ast.NodeTransformer):
+    """
+    A special transformer that instruments a fuzzed AST for differential testing.
+    It is NOT a mutator and should not be added to the main transformer list.
+
+    This instrumentor does two things:
+    1. Modifies the `uop_harness_f...` function to return its `locals()`.
+    2. Modifies the main loop to capture this return value in a variable.
+    """
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> ast.FunctionDef:
+        self.generic_visit(node)
+        # Find the main harness function and append the return statement
+        if node.name.startswith("uop_harness_f"):
+            if node.body and isinstance(node.body[-1], ast.Return):
+                return node
+
+            return_node = ast.parse("return locals().copy()").body[0]
+            node.body.append(return_node)
+            ast.fix_missing_locations(node)
+        return node
+
+    def visit_For(self, node: ast.For) -> ast.For:
+        self.generic_visit(node)
+        # Find the main execution loop, which calls the harness
+        if (
+            isinstance(node.iter, ast.Call)
+            and isinstance(node.iter.func, ast.Name)
+            and node.iter.func.id == "range"
+        ):
+            # Look for the try block that calls the harness
+            for i, sub_node in enumerate(node.body):
+                if (
+                    isinstance(sub_node, ast.Try)
+                    and sub_node.body
+                    and isinstance(sub_node.body[0], ast.Expr)
+                    and isinstance(sub_node.body[0].value, ast.Call)
+                    and isinstance(sub_node.body[0].value.func, ast.Name)
+                    and sub_node.body[0].value.func.id.startswith("uop_harness_f")
+                ):
+                    # original call is in an Expr node: `uop_harness_f1()`
+                    # We need to change it to an Assign node: `final_harness_locals = uop_harness_f1()`
+                    call_node = sub_node.body[0].value
+                    assign_node = ast.Assign(
+                        targets=[ast.Name(id="final_harness_locals", ctx=ast.Store())],
+                        value=call_node,
+                    )
+                    # Replace the old Expr node with our new Assign node
+                    sub_node.body[0] = assign_node
+                    ast.fix_missing_locations(node)
+                    break
+        return node

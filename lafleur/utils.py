@@ -97,3 +97,6 @@ class ExecutionResult:
     log_path: Path
     source_path: Path
     execution_time_ms: int
+    is_divergence: bool = False
+    jit_stdout: str | None = None
+    nojit_stdout: str | None = None

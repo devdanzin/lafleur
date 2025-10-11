@@ -55,7 +55,8 @@ All notable changes to this project should be documented in this file.
 - Store int ids for UOPs, edges, and rare events instead of strings in the coverage file, by @devdanzin.
 - Make interestingness more strict based on scores calculated by `InterestingnessScorer`, by @devdanzin.
 - Update calling of `fusil` to use `--only-generate` instead of `sudo`.
-- Many mutators based on Claude suggestions.
+- Many mutators based on Claude suggestions, by @devdanzin.
+- Differential testing mode to use different processes, by @devdanzin.
 
 
 ### Fixed

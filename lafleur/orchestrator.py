@@ -90,6 +90,7 @@ RANDOM = random.Random()
 # This allows running multiple fuzzer instances from different directories.
 TMP_DIR = Path("tmp_fuzz_run")
 CRASHES_DIR = Path("crashes")
+REGRESSIONS_DIR = Path("regressions")
 TIMEOUTS_DIR = Path("timeouts")
 DIVERGENCES_DIR = Path("divergences")
 LOGS_DIR = Path("logs")
@@ -156,17 +157,36 @@ class InterestingnessScorer:
         parent_file_size: int,
         parent_lineage_edge_count: int,
         child_file_size: int,
+        is_timing_mode: bool,
+        jit_avg_time_ms: float | None,
+        nojit_avg_time_ms: float | None,
     ):
         self.info = coverage_info
         self.parent_file_size = parent_file_size
         self.parent_lineage_edge_count = parent_lineage_edge_count
         self.child_file_size = child_file_size
+        self.is_timing_mode = is_timing_mode
+        self.jit_avg_time_ms = jit_avg_time_ms
+        self.nojit_avg_time_ms = nojit_avg_time_ms
 
     def calculate_score(self) -> float:
         """
         Calculate a score based on new coverage, richness, and density.
         """
         score = 0.0
+
+        if self.is_timing_mode and self.jit_avg_time_ms and self.nojit_avg_time_ms:
+            # Avoid division by zero for extremely fast non-JIT runs
+            if self.nojit_avg_time_ms > 0:
+                slowdown_ratio = self.jit_avg_time_ms / self.nojit_avg_time_ms
+
+                # Only reward if the JIT is at least 10% slower
+                if slowdown_ratio > 1.1:
+                    # The score bonus is proportional to how much slower the JIT is.
+                    # A 20% slowdown (ratio 1.2) adds 10 points, meeting the threshold.
+                    # A 100% slowdown (ratio 2.0) adds 50 points.
+                    performance_bonus = (slowdown_ratio - 1.0) * 50.0
+                    score += performance_bonus
 
         # 1. Heavily reward new global discoveries.
         score += self.info.global_edges * 10.0
@@ -213,6 +233,7 @@ class LafleurOrchestrator:
         keep_tmp_logs: bool = False,
         prune_corpus_flag: bool = False,
         force_prune: bool = False,
+        timing_fuzz: bool = False,
     ):
         """Initialize the orchestrator and the corpus manager."""
         self.differential_testing = differential_testing
@@ -229,6 +250,14 @@ class LafleurOrchestrator:
         self.coverage_manager = CoverageManager(coverage_state)
 
         self.run_stats = load_run_stats()
+
+        self.timing_fuzz = timing_fuzz
+        if self.timing_fuzz and self.differential_testing:
+            print(
+                "[!] Warning: --timing-fuzz and --differential-testing are mutually exclusive. Disabling differential testing.",
+                file=sys.stderr,
+            )
+            self.differential_testing = False
 
         self.score_tracker = MutatorScoreTracker(self.ast_mutator.transformers)
 
@@ -250,6 +279,7 @@ class LafleurOrchestrator:
         # Ensure temporary and corpus directories exist
         TMP_DIR.mkdir(exist_ok=True)
         CRASHES_DIR.mkdir(exist_ok=True)
+        REGRESSIONS_DIR.mkdir(exist_ok=True)
         TIMEOUTS_DIR.mkdir(exist_ok=True)
         DIVERGENCES_DIR.mkdir(exist_ok=True)
         LOGS_DIR.mkdir(exist_ok=True)
@@ -718,15 +748,132 @@ class LafleurOrchestrator:
             )
             return None
 
+    def _run_timed_trial(
+        self, source_path: Path, num_runs: int, jit_enabled: bool
+    ) -> tuple[float | None, bool]:
+        """Runs a script multiple times to get a stable execution time."""
+        timings_ms = []
+        env = ENV.copy()
+        env["PYTHON_JIT"] = "1" if jit_enabled else "0"
+
+        # Run N+2 times and discard the min/max runs as outliers
+        for _ in range(num_runs + 2):
+            try:
+                start_time = time.monotonic()
+                subprocess.run(
+                    ["python3", str(source_path)],
+                    capture_output=True,  # We only care about time, not output
+                    timeout=self.timeout,
+                    env=env,
+                    check=True,  # Raise exception on non-zero exit code
+                )
+                end_time = time.monotonic()
+                timings_ms.append((end_time - start_time) * 1000)
+            except subprocess.TimeoutExpired:
+                return None, True  # Signal a timeout
+            except subprocess.CalledProcessError:
+                # The script crashed during a timing run. This is a bug, but not a
+                # performance regression. We'll treat it as unstable.
+                print("  [~] Child crashed during timing run, aborting.", file=sys.stderr)
+                return None, False
+
+        if not timings_ms:
+            return None, False
+
+        timings_ms.sort()
+        stable_timings = timings_ms[1:-1]  # Discard min and max
+        return sum(stable_timings) / len(stable_timings), False
+
+    def _handle_timeout(
+        self, child_source_path: Path, child_log_path: Path, parent_path: Path
+    ) -> None:
+        """Handles a standard timeout by saving the test case and compressing the log."""
+        # This is your original timeout logic, extracted into a helper.
+        self.run_stats["timeouts_found"] = self.run_stats.get("timeouts_found", 0) + 1
+        print("  [!!!] TIMEOUT DETECTED! Saving test case.", file=sys.stderr)
+        log_to_save = child_log_path
+        try:
+            if child_log_path.stat().st_size > TIMEOUT_LOG_COMPRESSION_THRESHOLD:
+                print("  [*] Timeout log is large, compressing with zstd...", file=sys.stderr)
+                compressed_log_path = child_log_path.with_suffix(".log.zst")
+
+                log_content = child_log_path.read_bytes()
+                compressed_content = zstd.compress(log_content)
+                compressed_log_path.write_bytes(compressed_content)
+
+                log_to_save = compressed_log_path
+                # Clean up the original large log file
+                child_log_path.unlink()
+        except Exception as e:
+            print(f"  [!] Warning: Could not compress timeout log: {e}", file=sys.stderr)
+
+        timeout_source_path = TIMEOUTS_DIR / f"timeout_{child_source_path.stem}_{parent_path.name}"
+        timeout_log_path = timeout_source_path.with_suffix(
+            log_to_save.suffix
+        )  # Use the correct suffix
+
+        if log_to_save.exists():
+            shutil.copy(child_source_path, timeout_source_path)
+            shutil.copy(log_to_save, timeout_log_path)
+
+            if log_to_save != child_log_path:
+                log_to_save.unlink()
+        return None
+
+    def _save_regression_timeout(self, source_path: Path, parent_path: Path):
+        """Saves a test case that timed out with the JIT but not without."""
+        self.run_stats["regression_timeouts_found"] = (
+            self.run_stats.get("regression_timeouts_found", 0) + 1
+        )
+        print(f"  [!!!] JIT-INDUCED TIMEOUT DETECTED! Saving test case.", file=sys.stderr)
+
+        dest_dir = REGRESSIONS_DIR / "timeouts"
+        dest_dir.mkdir(parents=True, exist_ok=True)
+
+        dest_path = dest_dir / f"timeout_{source_path.stem}_{parent_path.name}.py"
+        try:
+            shutil.copy(source_path, dest_path)
+            print(f"  [+] Regression timeout saved to {dest_path}", file=sys.stderr)
+        except IOError as e:
+            print(f"  [!] CRITICAL: Could not save regression timeout file: {e}", file=sys.stderr)
+
     def _execute_child(
         self, source_code: str, child_source_path: Path, child_log_path: Path, parent_path: Path
     ) -> ExecutionResult | None:
         """
-        Execute a child script, handling both JIT differential and normal fuzzing.
+        Execute a child script, handling JIT performance, differential, and normal fuzzing.
         """
-        # --- PHASE 1: JIT Differential Fuzzing (if enabled) ---
-        if self.differential_testing:
-            instrumented_code = source_code + "\n" + SERIALIZATION_SNIPPET
+        # We always write the original, non-instrumented code first.
+        child_source_path.write_text(source_code)
+
+        jit_avg_ms = None
+        nojit_avg_ms = None
+
+        if self.timing_fuzz:
+            num_timing_runs = 5
+
+            # 1. Non-JIT run (Control)
+            nojit_avg_ms, timed_out = self._run_timed_trial(
+                child_source_path, num_timing_runs, jit_enabled=False
+            )
+            if timed_out:
+                return self._handle_timeout(child_source_path, child_log_path, parent_path)
+            if nojit_avg_ms is None:
+                return None  # Unstable script
+
+            # 2. JIT run (Experiment)
+            jit_avg_ms, timed_out = self._run_timed_trial(
+                child_source_path, num_timing_runs, jit_enabled=True
+            )
+            if timed_out:
+                self._save_regression_timeout(child_source_path, parent_path)
+                return None
+            if jit_avg_ms is None:
+                return None  # Unstable script
+
+        elif self.differential_testing:
+            # This logic is from our previous step and remains unchanged.
+            instrumented_code = source_code + "\\n" + SERIALIZATION_SNIPPET
             child_source_path.write_text(instrumented_code)
 
             jit_output = None
@@ -781,12 +928,9 @@ class LafleurOrchestrator:
                     nojit_stdout=nojit_output,
                 )
 
-        # --- PHASE 2: Normal Coverage-Gathering Run ---
-        # This code runs if differential testing is off, OR if the differential
-        # check passed without finding a divergence.
+        # --- Normal Coverage-Gathering Run ---
+        # This path is taken for normal fuzzing, or after a successful timing/diff run.
         try:
-            # We always write the original, non-instrumented code for coverage runs
-            child_source_path.write_text(source_code)
             with open(child_log_path, "w") as log_file:
                 start_time = time.monotonic()
                 result = subprocess.run(
@@ -803,40 +947,11 @@ class LafleurOrchestrator:
                 log_path=child_log_path,
                 source_path=child_source_path,
                 execution_time_ms=int((end_time - start_time) * 1000),
+                jit_avg_time_ms=jit_avg_ms,
+                nojit_avg_time_ms=nojit_avg_ms,
             )
         except subprocess.TimeoutExpired:
-            self.run_stats["timeouts_found"] = self.run_stats.get("timeouts_found", 0) + 1
-            print("  [!!!] TIMEOUT DETECTED! Saving test case.", file=sys.stderr)
-            log_to_save = child_log_path
-            try:
-                if child_log_path.stat().st_size > TIMEOUT_LOG_COMPRESSION_THRESHOLD:
-                    print("  [*] Timeout log is large, compressing with zstd...", file=sys.stderr)
-                    compressed_log_path = child_log_path.with_suffix(".log.zst")
-
-                    log_content = child_log_path.read_bytes()
-                    compressed_content = zstd.compress(log_content)
-                    compressed_log_path.write_bytes(compressed_content)
-
-                    log_to_save = compressed_log_path
-                    # Clean up the original large log file
-                    child_log_path.unlink()
-            except Exception as e:
-                print(f"  [!] Warning: Could not compress timeout log: {e}", file=sys.stderr)
-
-            timeout_source_path = (
-                TIMEOUTS_DIR / f"timeout_{child_source_path.stem}_{parent_path.name}"
-            )
-            timeout_log_path = timeout_source_path.with_suffix(
-                log_to_save.suffix
-            )  # Use the correct suffix
-
-            if log_to_save.exists():
-                shutil.copy(child_source_path, timeout_source_path)
-                shutil.copy(log_to_save, timeout_log_path)
-
-                if log_to_save != child_log_path:
-                    log_to_save.unlink()
-            return None
+            return self._handle_timeout(child_source_path, child_log_path, parent_path)
         except Exception as e:
             # Instead of letting the exception propagate, we create a "failure"
             # result so the analyzer can inspect the log and non-zero exit code.
@@ -887,6 +1002,14 @@ class LafleurOrchestrator:
                 mutation_seed=analysis_data["mutation_seed"],
                 build_lineage_func=self._build_lineage_profile,
             )
+
+            if self.timing_fuzz:
+                jit_time = analysis_data.get("jit_avg_time_ms")
+                nojit_time = analysis_data.get("nojit_avg_time_ms")
+                if jit_time is not None and nojit_time is not None:
+                    # new_filename is the Path object for the newly saved corpus file
+                    self._save_regression(new_filename, jit_time, nojit_time)
+
             analysis_data["new_filename"] = new_filename
             return "BREAK"
         else:  # NO_CHANGE
@@ -1276,6 +1399,8 @@ class LafleurOrchestrator:
         parent_file_size: int,
         parent_lineage_edge_count: int,
         child_file_size: int,
+        jit_avg_time_ms: float | None,
+        nojit_avg_time_ms: float | None,
     ) -> bool:
         """Use the scorer to decide if a child is interesting."""
 
@@ -1290,7 +1415,13 @@ class LafleurOrchestrator:
 
         # For normal mutations, use the scoring logic.
         scorer = InterestingnessScorer(
-            coverage_info, parent_file_size, parent_lineage_edge_count, child_file_size
+            coverage_info,
+            parent_file_size,
+            parent_lineage_edge_count,
+            child_file_size,
+            self.timing_fuzz,
+            jit_avg_time_ms,
+            nojit_avg_time_ms,
         )
         score = scorer.calculate_score()
 
@@ -1342,6 +1473,8 @@ class LafleurOrchestrator:
             parent_file_size,
             parent_lineage_edge_count,
             len(exec_result.source_path.read_text().encode("utf-8")),
+            exec_result.jit_avg_time_ms,
+            exec_result.nojit_avg_time_ms,
         )
 
         if is_interesting:
@@ -1398,6 +1531,23 @@ class LafleurOrchestrator:
 
         except IOError as e:
             print(f"  [!] CRITICAL: Could not save divergence files: {e}", file=sys.stderr)
+
+    def _save_regression(self, source_path: Path, jit_time: float, nojit_time: float):
+        """Saves a test case that causes a significant JIT performance regression."""
+        self.run_stats["regressions_found"] = self.run_stats.get("regressions_found", 0) + 1
+        print(f"  [!!!] JIT PERFORMANCE REGRESSION DETECTED! Saving test case.", file=sys.stderr)
+
+        REGRESSIONS_DIR.mkdir(parents=True, exist_ok=True)
+
+        # Create a descriptive filename with the timing data
+        filename = f"regression_jit_{jit_time:.0f}ms_nojit_{nojit_time:.0f}ms_{source_path.stem}.py"
+        dest_path = REGRESSIONS_DIR / filename
+
+        try:
+            shutil.copy(source_path, dest_path)
+            print(f"  [+] Regression saved to {dest_path}", file=sys.stderr)
+        except IOError as e:
+            print(f"  [!] CRITICAL: Could not save regression file: {e}", file=sys.stderr)
 
     def _log_timeseries_datapoint(self):
         """Append a snapshot of the current run statistics to the time-series log."""
@@ -1567,6 +1717,11 @@ def main():
         action="store_true",
         help="Used with --prune-corpus to actually delete the files. (Default: dry run)",
     )
+    parser.add_argument(
+        "--timing-fuzz",
+        action="store_true",
+        help="Enable JIT performance regression fuzzing mode.",
+    )
     args = parser.parse_args()
 
     LOGS_DIR.mkdir(exist_ok=True)
@@ -1623,6 +1778,7 @@ Initial Stats:
             keep_tmp_logs=args.keep_tmp_logs,
             prune_corpus_flag=args.prune_corpus,
             force_prune=args.force,
+            timing_fuzz=args.timing_fuzz,
         )
         orchestrator.run_evolutionary_loop()
     except KeyboardInterrupt:

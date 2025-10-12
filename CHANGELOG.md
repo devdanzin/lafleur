@@ -40,6 +40,7 @@ All notable changes to this project should be documented in this file.
 - An `ExceptionHandlerMaze` to add an exception with a metaclass to make except blocks stateful, by @devdanzin.
 - A `BuiltinNamespaceCorruptor` to replace built-in functions with malicious versions, by @devdanzin.
 - A `CodeObjectSwapper` to swap the code object of a function with that of another, by @devdanzin.
+- A timing fuzzing mode to search for code samples where the JIT is slower than no JIT, by @devdanzin.
 
 
 ### Enhanced

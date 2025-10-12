@@ -100,3 +100,5 @@ class ExecutionResult:
     is_divergence: bool = False
     jit_stdout: str | None = None
     nojit_stdout: str | None = None
+    jit_avg_time_ms: float | None = None
+    nojit_avg_time_ms: float | None = None

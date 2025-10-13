@@ -10,6 +10,7 @@ results for new and interesting JIT behavior.
 import argparse
 import ast
 import copy
+import difflib
 import hashlib
 import json
 import math
@@ -755,6 +756,8 @@ class LafleurOrchestrator:
         timings_ms = []
         env = ENV.copy()
         env["PYTHON_JIT"] = "1" if jit_enabled else "0"
+        env["PYTHON_LLTRACE"] = "0"
+        env["PYTHON_OPT_DEBUG"] = "0"
 
         # Run N+2 times and discard the min/max runs as outliers
         for _ in range(num_runs + 2):
@@ -837,6 +840,34 @@ class LafleurOrchestrator:
         except IOError as e:
             print(f"  [!] CRITICAL: Could not save regression timeout file: {e}", file=sys.stderr)
 
+    def _save_jit_hang(self, source_path: Path, parent_path: Path):
+        """Saves a test case that timed out with the JIT enabled but not disabled."""
+        self.run_stats["jit_hangs_found"] = self.run_stats.get("jit_hangs_found", 0) + 1
+        print(f"  [!!!] JIT-INDUCED HANG DETECTED! Saving test case.", file=sys.stderr)
+
+        dest_dir = DIVERGENCES_DIR / "jit_hangs"
+        dest_dir.mkdir(parents=True, exist_ok=True)
+
+        dest_path = dest_dir / f"hang_{source_path.stem}_{parent_path.name}.py"
+        try:
+            shutil.copy(source_path, dest_path)
+            print(f"  [+] JIT hang saved to {dest_path}", file=sys.stderr)
+        except IOError as e:
+            print(f"  [!] CRITICAL: Could not save JIT hang file: {e}", file=sys.stderr)
+
+    def _filter_jit_stderr(self, stderr_content: str) -> str:
+        """Removes known, benign JIT debug messages from stderr output."""
+        lines = stderr_content.splitlines()
+        # Filter out lines that are known to be part of the JIT's tracing output
+        filtered_lines = [
+            line
+            for line in lines
+            if not line.strip().startswith(
+                ("Created a proto-trace", "Optimized trace", "SIDE EXIT")
+            )
+        ]
+        return "\n".join(filtered_lines)
+
     def _execute_child(
         self, source_code: str, child_source_path: Path, child_log_path: Path, parent_path: Path
     ) -> ExecutionResult | None:
@@ -849,38 +880,52 @@ class LafleurOrchestrator:
         jit_avg_ms = None
         nojit_avg_ms = None
 
+        # --- MODE 1: Performance Timing Fuzzing ---
         if self.timing_fuzz:
             num_timing_runs = 5
 
-            # 1. Non-JIT run (Control)
+            # Run Non-JIT (Control)
             nojit_avg_ms, timed_out = self._run_timed_trial(
                 child_source_path, num_timing_runs, jit_enabled=False
             )
             if timed_out:
+                # The control run timed out, so the test case is fundamentally flawed.
                 return self._handle_timeout(child_source_path, child_log_path, parent_path)
             if nojit_avg_ms is None:
-                return None  # Unstable script
+                return None  # Script was unstable (crashed), discard.
 
-            # 2. JIT run (Experiment)
+            # Run JIT (Experiment)
             jit_avg_ms, timed_out = self._run_timed_trial(
                 child_source_path, num_timing_runs, jit_enabled=True
             )
             if timed_out:
+                # The control succeeded, but the JIT timed out. This is a major regression.
                 self._save_regression_timeout(child_source_path, parent_path)
-                return None
+                return None  # Stop analysis for this child.
             if jit_avg_ms is None:
-                return None  # Unstable script
+                return None  # Script was unstable (crashed), discard.
 
+        # --- MODE 2: Differential Correctness Fuzzing ---
         elif self.differential_testing:
-            # This logic is from our previous step and remains unchanged.
-            instrumented_code = source_code + "\\n" + SERIALIZATION_SNIPPET
+            instrumented_code = source_code + "\n" + SERIALIZATION_SNIPPET
             child_source_path.write_text(instrumented_code)
 
-            jit_output = None
-            nojit_output = None
-
+            # Run Non-JIT
             try:
-                # Run 1: JIT Enabled
+                nojit_env = ENV.copy()
+                nojit_env["PYTHON_JIT"] = "0"
+                nojit_run = subprocess.run(
+                    ["python3", str(child_source_path)],
+                    capture_output=True,
+                    text=True,
+                    timeout=self.timeout,
+                    env=nojit_env,
+                )
+            except subprocess.TimeoutExpired:
+                return self._handle_timeout(child_source_path, child_log_path, parent_path)
+
+            # Run JIT
+            try:
                 jit_env = ENV.copy()
                 jit_env["PYTHON_JIT"] = "1"
                 jit_env["PYTHON_LLTRACE"] = "0"
@@ -892,44 +937,55 @@ class LafleurOrchestrator:
                     timeout=self.timeout,
                     env=jit_env,
                 )
-                jit_output = jit_run.stdout
-
-                # Run 2: JIT Disabled
-                nojit_env = ENV.copy()
-                nojit_env["PYTHON_JIT"] = "0"
-                nojit_run = subprocess.run(
-                    ["python3", str(child_source_path)],
-                    capture_output=True,
-                    text=True,
-                    timeout=self.timeout,
-                    env=nojit_env,
-                )
-                nojit_output = nojit_run.stdout
-
             except subprocess.TimeoutExpired:
-                # A timeout during the differential check is itself an interesting result.
-                # We'll treat it like a normal timeout for now.
-                print(
-                    "  [!] Timeout occurred during JIT differential check. Proceeding with normal timeout handling.",
-                    file=sys.stderr,
-                )
-                # We fall through to the normal execution path, which will re-run the code
-                # and trigger the full timeout handling logic.
+                self._save_jit_hang(child_source_path, parent_path)
+                return None
 
-            # Compare stdout. If different, we have found a divergence.
-            if jit_output is not None and nojit_output is not None and jit_output != nojit_output:
+            is_divergence = False
+
+            # 1. Check for exit code mismatch
+            if jit_run.returncode != nojit_run.returncode:
+                self._save_divergence(
+                    child_source_path,
+                    f"Exit Code: {jit_run.returncode}",
+                    f"Exit Code: {nojit_run.returncode}",
+                    "exit_code_mismatch",
+                )
+                is_divergence = True
+
+            # 2. Check for stderr mismatch (after filtering)
+            if not is_divergence:
+                filtered_jit_stderr = self._filter_jit_stderr(jit_run.stderr)
+                filtered_nojit_stderr = self._filter_jit_stderr(nojit_run.stderr)
+                if filtered_jit_stderr != filtered_nojit_stderr:
+                    self._save_divergence(
+                        child_source_path,
+                        filtered_jit_stderr,
+                        filtered_nojit_stderr,
+                        "stderr_mismatch",
+                    )
+                    is_divergence = True
+
+            # 3. Check for stdout mismatch
+            if not is_divergence and jit_run.stdout != nojit_run.stdout:
+                self._save_divergence(
+                    child_source_path, jit_run.stdout, nojit_run.stdout, "stdout_mismatch"
+                )
+                is_divergence = True
+
+            if is_divergence:
+                # Return a simple result; the details are now saved to disk
                 return ExecutionResult(
                     source_path=child_source_path,
                     log_path=child_log_path,  # Not used, but required
                     returncode=0,
                     execution_time_ms=0,
                     is_divergence=True,
-                    jit_stdout=jit_output,
-                    nojit_stdout=nojit_output,
                 )
 
-        # --- Normal Coverage-Gathering Run ---
-        # This path is taken for normal fuzzing, or after a successful timing/diff run.
+        # --- MODE 3: Normal Coverage-Gathering Run ---
+        # This is the final step for ALL modes. For timing/differential modes, it runs
+        # after the initial checks have passed.
         try:
             with open(child_log_path, "w") as log_file:
                 start_time = time.monotonic()
@@ -1506,28 +1562,34 @@ class LafleurOrchestrator:
 
         return {"status": "NO_CHANGE"}
 
-    def _save_divergence(self, source_path: Path, jit_stdout: str, nojit_stdout: str):
-        """Saves the source code and differing outputs from a JIT divergence."""
+    def _save_divergence(self, source_path: Path, jit_output: str, nojit_output: str, reason: str):
+        """Saves artifacts from a JIT divergence for a given reason."""
         self.run_stats["divergences_found"] = self.run_stats.get("divergences_found", 0) + 1
-        print(f"  [!!!] JIT DIVERGENCE DETECTED! Saving test case.", file=sys.stderr)
+        print(f"  [!!!] JIT DIVERGENCE DETECTED ({reason})! Saving test case.", file=sys.stderr)
 
-        # 1. Define the unique base name for the set of output files.
+        # Create a subdirectory for this type of divergence
+        dest_dir = DIVERGENCES_DIR / reason
+        dest_dir.mkdir(parents=True, exist_ok=True)
+
         base_filename = f"divergence_{source_path.stem}"
+        dest_source_path = dest_dir / f"{base_filename}.py"
 
-        # 2. Define the destination paths in the DIVERGENCES_DIR.
-        dest_source_path = DIVERGENCES_DIR / f"{base_filename}.py"
-        dest_jit_out_path = DIVERGENCES_DIR / f"{base_filename}.jit.out"
-        dest_nojit_out_path = DIVERGENCES_DIR / f"{base_filename}.nojit.out"
+        # Create a .diff file to show the difference
+        diff_path = dest_dir / f"{base_filename}.diff"
 
         try:
-            # 3. Copy the source code that caused the divergence.
             shutil.copy(source_path, dest_source_path)
 
-            # 4. Save the two differing stdout captures.
-            dest_jit_out_path.write_text(jit_stdout)
-            dest_nojit_out_path.write_text(nojit_stdout)
+            # Use difflib to create a clear diff of the outputs
+            diff = difflib.unified_diff(
+                nojit_output.splitlines(keepends=True),
+                jit_output.splitlines(keepends=True),
+                fromfile="nojit_output",
+                tofile="jit_output",
+            )
+            diff_path.write_text("".join(diff))
 
-            print(f"  [+] Divergence artifacts saved to {dest_source_path.parent}", file=sys.stderr)
+            print(f"  [+] Divergence artifacts saved to {dest_dir}", file=sys.stderr)
 
         except IOError as e:
             print(f"  [!] CRITICAL: Could not save divergence files: {e}", file=sys.stderr)

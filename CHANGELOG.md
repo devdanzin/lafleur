@@ -58,6 +58,7 @@ All notable changes to this project should be documented in this file.
 - Update calling of `fusil` to use `--only-generate` instead of `sudo`.
 - Many mutators based on Claude suggestions, by @devdanzin.
 - Differential testing mode to use different processes, by @devdanzin.
+- Deeper analysis of differences in differential testing mode, by @devdanzin.
 
 
 ### Fixed
@@ -74,6 +75,8 @@ All notable changes to this project should be documented in this file.
 - Sanitize all blocks that would have an empty block to contain `pass`, by @devdanzin.
 - Avoid overwriting crash files by giving them unique names, by @devdanzin.
 - UOP are validated against the set of known UOPs to avoid recording cut names, by @devdanzin.
+- Wrong concatenation in `_execute_child` using escaped `"\\n"`, by @devdanzin.
+- Wrong environment values in `_run_timed_trial` making JIT run mistakenly verbose, by @devdanzin.
 
 
 ## [0.0.1] - 2024-11-20

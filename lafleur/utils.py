@@ -102,3 +102,4 @@ class ExecutionResult:
     nojit_stdout: str | None = None
     jit_avg_time_ms: float | None = None
     nojit_avg_time_ms: float | None = None
+    nojit_cv: float | None = None

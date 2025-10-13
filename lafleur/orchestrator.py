@@ -18,6 +18,7 @@ import os
 import platform
 import random
 import shutil
+import statistics
 import subprocess
 import socket
 import sys
@@ -161,6 +162,7 @@ class InterestingnessScorer:
         is_timing_mode: bool,
         jit_avg_time_ms: float | None,
         nojit_avg_time_ms: float | None,
+        nojit_cv: float | None,
     ):
         self.info = coverage_info
         self.parent_file_size = parent_file_size
@@ -169,10 +171,11 @@ class InterestingnessScorer:
         self.is_timing_mode = is_timing_mode
         self.jit_avg_time_ms = jit_avg_time_ms
         self.nojit_avg_time_ms = nojit_avg_time_ms
+        self.nojit_cv = nojit_cv
 
     def calculate_score(self) -> float:
         """
-        Calculate a score based on new coverage, richness, and density.
+        Calculate a score based on new coverage, richness, density, and performance.
         """
         score = 0.0
 
@@ -181,11 +184,17 @@ class InterestingnessScorer:
             if self.nojit_avg_time_ms > 0:
                 slowdown_ratio = self.jit_avg_time_ms / self.nojit_avg_time_ms
 
-                # Only reward if the JIT is at least 10% slower
-                if slowdown_ratio > 1.1:
-                    # The score bonus is proportional to how much slower the JIT is.
-                    # A 20% slowdown (ratio 1.2) adds 10 points, meeting the threshold.
-                    # A 100% slowdown (ratio 2.0) adds 50 points.
+                # Only reward if the slowdown is statistically significant
+                # relative to the noise of the baseline measurement.
+                # We require the slowdown to be at least 3x the noise.
+                dynamic_threshold = 1.0 + (3 * self.nojit_cv)
+
+                print(
+                    f"  [~] Timing slowdown ratio (JIT/non-JIT) is {slowdown_ratio:.3f} (minimum: {dynamic_threshold:.3f}).",
+                    file=sys.stderr,
+                )
+
+                if slowdown_ratio > dynamic_threshold:
                     performance_bonus = (slowdown_ratio - 1.0) * 50.0
                     score += performance_bonus
 
@@ -751,13 +760,21 @@ class LafleurOrchestrator:
 
     def _run_timed_trial(
         self, source_path: Path, num_runs: int, jit_enabled: bool
-    ) -> tuple[float | None, bool]:
-        """Runs a script multiple times to get a stable execution time."""
+    ) -> tuple[float | None, bool, float | None]:
+        """
+        Run a script multiple times to get a stable execution time.
+
+        Return a tuple of (average_time_ms, did_timeout, coefficient_of_variation).
+        Return None for time and CV if measurements are unstable.
+        """
         timings_ms = []
-        env = ENV.copy()
+        env = os.environ.copy()
         env["PYTHON_JIT"] = "1" if jit_enabled else "0"
+        # Explicitly disable our noisy debug logs for timing runs
         env["PYTHON_LLTRACE"] = "0"
         env["PYTHON_OPT_DEBUG"] = "0"
+
+        print(f"[TIMING] Running timed trial with JIT={jit_enabled}.", file=sys.stderr)
 
         # Run N+2 times and discard the min/max runs as outliers
         for _ in range(num_runs + 2):
@@ -773,19 +790,36 @@ class LafleurOrchestrator:
                 end_time = time.monotonic()
                 timings_ms.append((end_time - start_time) * 1000)
             except subprocess.TimeoutExpired:
-                return None, True  # Signal a timeout
+                return None, True, None  # Signal a timeout
             except subprocess.CalledProcessError:
                 # The script crashed during a timing run. This is a bug, but not a
                 # performance regression. We'll treat it as unstable.
                 print("  [~] Child crashed during timing run, aborting.", file=sys.stderr)
-                return None, False
+                return None, False, None
 
-        if not timings_ms:
-            return None, False
+        if len(timings_ms) < 3:
+            return None, False, None  # Not enough data points
 
         timings_ms.sort()
-        stable_timings = timings_ms[1:-1]  # Discard min and max
-        return sum(stable_timings) / len(stable_timings), False
+        stable_timings = timings_ms[1:-1]  # Discard min and max outliers
+
+        mean = statistics.mean(stable_timings)
+        if mean == 0:
+            return 0.0, False, 0.0  # Extremely fast, no variation
+
+        stdev = statistics.stdev(stable_timings)
+        cv = stdev / mean  # Coefficient of Variation
+
+        # If variation is > 20%, the measurement is too noisy to be reliable.
+        CV_THRESHOLD = 0.20
+        if cv > CV_THRESHOLD:
+            print(
+                f"  [~] Timing measurements too noisy (CV={cv:.2f}). Discarding run.",
+                file=sys.stderr,
+            )
+            return None, False, None
+
+        return mean, False, cv
 
     def _handle_timeout(
         self, child_source_path: Path, child_log_path: Path, parent_path: Path
@@ -879,13 +913,14 @@ class LafleurOrchestrator:
 
         jit_avg_ms = None
         nojit_avg_ms = None
+        nojit_cv = None
 
         # --- MODE 1: Performance Timing Fuzzing ---
         if self.timing_fuzz:
             num_timing_runs = 5
 
             # Run Non-JIT (Control)
-            nojit_avg_ms, timed_out = self._run_timed_trial(
+            nojit_avg_ms, timed_out, nojit_cv = self._run_timed_trial(
                 child_source_path, num_timing_runs, jit_enabled=False
             )
             if timed_out:
@@ -895,7 +930,7 @@ class LafleurOrchestrator:
                 return None  # Script was unstable (crashed), discard.
 
             # Run JIT (Experiment)
-            jit_avg_ms, timed_out = self._run_timed_trial(
+            jit_avg_ms, timed_out, _ = self._run_timed_trial(
                 child_source_path, num_timing_runs, jit_enabled=True
             )
             if timed_out:
@@ -1005,6 +1040,7 @@ class LafleurOrchestrator:
                 execution_time_ms=int((end_time - start_time) * 1000),
                 jit_avg_time_ms=jit_avg_ms,
                 nojit_avg_time_ms=nojit_avg_ms,
+                nojit_cv=nojit_cv,
             )
         except subprocess.TimeoutExpired:
             return self._handle_timeout(child_source_path, child_log_path, parent_path)
@@ -1457,6 +1493,7 @@ class LafleurOrchestrator:
         child_file_size: int,
         jit_avg_time_ms: float | None,
         nojit_avg_time_ms: float | None,
+        nojit_cv: float | None,
     ) -> bool:
         """Use the scorer to decide if a child is interesting."""
 
@@ -1478,6 +1515,7 @@ class LafleurOrchestrator:
             self.timing_fuzz,
             jit_avg_time_ms,
             nojit_avg_time_ms,
+            nojit_cv,
         )
         score = scorer.calculate_score()
 
@@ -1531,6 +1569,7 @@ class LafleurOrchestrator:
             len(exec_result.source_path.read_text().encode("utf-8")),
             exec_result.jit_avg_time_ms,
             exec_result.nojit_avg_time_ms,
+            exec_result.nojit_cv,
         )
 
         if is_interesting:

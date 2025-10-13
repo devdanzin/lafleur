@@ -78,6 +78,7 @@ All notable changes to this project should be documented in this file.
 - UOP are validated against the set of known UOPs to avoid recording cut names, by @devdanzin.
 - Wrong concatenation in `_execute_child` using escaped `"\\n"`, by @devdanzin.
 - Wrong environment values in `_run_timed_trial` making JIT run mistakenly verbose, by @devdanzin.
+- Not passing `reason` when detecting a divergence and then terminating, by @devdanzin.
 
 
 ## [0.0.1] - 2024-11-20

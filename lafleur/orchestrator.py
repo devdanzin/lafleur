@@ -976,47 +976,48 @@ class LafleurOrchestrator:
                 self._save_jit_hang(child_source_path, parent_path)
                 return None
 
-            is_divergence = False
+            # If both runs completed, compare their results sequentially.
+            if nojit_run and jit_run:
+                # 1. Check for exit code mismatch
+                if jit_run.returncode != nojit_run.returncode:
+                    return ExecutionResult(
+                        source_path=child_source_path,
+                        log_path=child_log_path,
+                        returncode=0,
+                        execution_time_ms=0,
+                        is_divergence=True,
+                        divergence_reason="exit_code_mismatch",
+                        jit_output=f"Exit Code: {jit_run.returncode}",
+                        nojit_output=f"Exit Code: {nojit_run.returncode}",
+                    )
 
-            # 1. Check for exit code mismatch
-            if jit_run.returncode != nojit_run.returncode:
-                self._save_divergence(
-                    child_source_path,
-                    f"Exit Code: {jit_run.returncode}",
-                    f"Exit Code: {nojit_run.returncode}",
-                    "exit_code_mismatch",
-                )
-                is_divergence = True
-
-            # 2. Check for stderr mismatch (after filtering)
-            if not is_divergence:
+                # 2. Check for stderr mismatch (after filtering)
                 filtered_jit_stderr = self._filter_jit_stderr(jit_run.stderr)
                 filtered_nojit_stderr = self._filter_jit_stderr(nojit_run.stderr)
                 if filtered_jit_stderr != filtered_nojit_stderr:
-                    self._save_divergence(
-                        child_source_path,
-                        filtered_jit_stderr,
-                        filtered_nojit_stderr,
-                        "stderr_mismatch",
+                    return ExecutionResult(
+                        source_path=child_source_path,
+                        log_path=child_log_path,
+                        returncode=0,
+                        execution_time_ms=0,
+                        is_divergence=True,
+                        divergence_reason="stderr_mismatch",
+                        jit_output=filtered_jit_stderr,
+                        nojit_output=filtered_nojit_stderr,
                     )
-                    is_divergence = True
 
-            # 3. Check for stdout mismatch
-            if not is_divergence and jit_run.stdout != nojit_run.stdout:
-                self._save_divergence(
-                    child_source_path, jit_run.stdout, nojit_run.stdout, "stdout_mismatch"
-                )
-                is_divergence = True
-
-            if is_divergence:
-                # Return a simple result; the details are now saved to disk
-                return ExecutionResult(
-                    source_path=child_source_path,
-                    log_path=child_log_path,  # Not used, but required
-                    returncode=0,
-                    execution_time_ms=0,
-                    is_divergence=True,
-                )
+                # 3. Check for stdout mismatch
+                if jit_run.stdout != nojit_run.stdout:
+                    return ExecutionResult(
+                        source_path=child_source_path,
+                        log_path=child_log_path,
+                        returncode=0,
+                        execution_time_ms=0,
+                        is_divergence=True,
+                        divergence_reason="stdout_mismatch",
+                        jit_output=jit_run.stdout,
+                        nojit_output=nojit_run.stdout,
+                    )
 
         # --- MODE 3: Normal Coverage-Gathering Run ---
         # This is the final step for ALL modes. For timing/differential modes, it runs
@@ -1541,7 +1542,10 @@ class LafleurOrchestrator:
 
         if exec_result.is_divergence:
             self._save_divergence(
-                exec_result.source_path, exec_result.jit_stdout, exec_result.nojit_stdout
+                exec_result.source_path,
+                exec_result.jit_output,
+                exec_result.nojit_output,
+                exec_result.divergence_reason,
             )
             return {"status": "DIVERGENCE"}
 

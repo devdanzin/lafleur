@@ -59,6 +59,7 @@ All notable changes to this project should be documented in this file.
 - Many mutators based on Claude suggestions, by @devdanzin.
 - Differential testing mode to use different processes, by @devdanzin.
 - Deeper analysis of differences in differential testing mode, by @devdanzin.
+- Implemented statistical comparisons in timing fuzzing mode, by @devdanzin.
 
 
 ### Fixed

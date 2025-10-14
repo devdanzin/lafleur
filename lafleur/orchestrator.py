@@ -1101,7 +1101,7 @@ class LafleurOrchestrator:
                 nojit_time = analysis_data.get("nojit_avg_time_ms")
                 # We only save if there was a JIT slowdown worth noting
                 if jit_time is not None and nojit_time is not None and jit_time > nojit_time:
-                    self._save_regression(Path(new_filename), jit_time, nojit_time)
+                    self._save_regression(CORPUS_DIR / new_filename, jit_time, nojit_time)
 
             analysis_data["new_filename"] = new_filename
             return "BREAK"

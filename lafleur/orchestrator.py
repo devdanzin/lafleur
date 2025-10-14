@@ -1099,9 +1099,9 @@ class LafleurOrchestrator:
             if self.timing_fuzz:
                 jit_time = analysis_data.get("jit_avg_time_ms")
                 nojit_time = analysis_data.get("nojit_avg_time_ms")
-                if jit_time is not None and nojit_time is not None:
-                    # new_filename is the Path object for the newly saved corpus file
-                    self._save_regression(new_filename, jit_time, nojit_time)
+                # We only save if there was a JIT slowdown worth noting
+                if jit_time is not None and nojit_time is not None and jit_time > nojit_time:
+                    self._save_regression(Path(new_filename), jit_time, nojit_time)
 
             analysis_data["new_filename"] = new_filename
             return "BREAK"
@@ -1521,7 +1521,17 @@ class LafleurOrchestrator:
         score = scorer.calculate_score()
 
         if score >= scorer.MIN_INTERESTING_SCORE:
-            print(f"  [+] Child IS interesting with score: {score:.2f}", file=sys.stderr)
+            valid_timings = (
+                scorer.jit_avg_time_ms and scorer.nojit_avg_time_ms and scorer.nojit_avg_time_ms > 0
+            )
+            if self.timing_fuzz and valid_timings:
+                slowdown_ratio = scorer.jit_avg_time_ms / scorer.nojit_avg_time_ms
+                print(
+                    f"  [+] Child is interesting with score: {score:.2f} (JIT slowdown: {slowdown_ratio:.2f}x)",
+                    file=sys.stderr,
+                )
+            else:
+                print(f"  [+] Child is interesting with score: {score:.2f}", file=sys.stderr)
             return True
 
         print(f"  [+] Child IS NOT interesting with score: {score:.2f}", file=sys.stderr)
@@ -1601,6 +1611,8 @@ class LafleurOrchestrator:
                 "parent_id": parent_id,
                 "mutation_info": mutation_info,
                 "mutation_seed": mutation_seed,
+                "jit_avg_time_ms": exec_result.jit_avg_time_ms,
+                "nojit_avg_time_ms": exec_result.nojit_avg_time_ms,
             }
 
         return {"status": "NO_CHANGE"}
@@ -1645,7 +1657,7 @@ class LafleurOrchestrator:
         REGRESSIONS_DIR.mkdir(parents=True, exist_ok=True)
 
         # Create a descriptive filename with the timing data
-        filename = f"regression_jit_{jit_time:.0f}ms_nojit_{nojit_time:.0f}ms_{source_path.stem}.py"
+        filename = f"regression_jit_{jit_time:.0f}ms_nojit_{nojit_time:.0f}ms_{source_path.name}"
         dest_path = REGRESSIONS_DIR / filename
 
         try:

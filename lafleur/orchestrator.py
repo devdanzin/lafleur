@@ -262,13 +262,6 @@ class LafleurOrchestrator:
         self.run_stats = load_run_stats()
 
         self.timing_fuzz = timing_fuzz
-        if self.timing_fuzz and self.differential_testing:
-            print(
-                "[!] Warning: --timing-fuzz and --differential-testing are mutually exclusive. Disabling differential testing.",
-                file=sys.stderr,
-            )
-            self.differential_testing = False
-
         self.score_tracker = MutatorScoreTracker(self.ast_mutator.transformers)
 
         self.min_corpus_files = min_corpus_files
@@ -804,6 +797,7 @@ class LafleurOrchestrator:
         stable_timings = timings_ms[1:-1]  # Discard min and max outliers
 
         mean = statistics.mean(stable_timings)
+        print(f"  [~] Mean for JIT={jit_enabled}: {mean / 1000:.3f}s.", file=sys.stderr)
         if mean == 0:
             return 0.0, False, 0.0  # Extremely fast, no variation
 
@@ -906,49 +900,27 @@ class LafleurOrchestrator:
         self, source_code: str, child_source_path: Path, child_log_path: Path, parent_path: Path
     ) -> ExecutionResult | None:
         """
-        Execute a child script, handling JIT performance, differential, and normal fuzzing.
+        Execute a child script, sequentially checking for correctness divergences,
+        then performance regressions, and finally gathering coverage.
         """
-        # We always write the original, non-instrumented code first.
-        child_source_path.write_text(source_code)
-
         jit_avg_ms = None
         nojit_avg_ms = None
         nojit_cv = None
 
-        # --- MODE 1: Performance Timing Fuzzing ---
-        if self.timing_fuzz:
-            num_timing_runs = 5
-
-            # Run Non-JIT (Control)
-            nojit_avg_ms, timed_out, nojit_cv = self._run_timed_trial(
-                child_source_path, num_timing_runs, jit_enabled=False
-            )
-            if timed_out:
-                # The control run timed out, so the test case is fundamentally flawed.
-                return self._handle_timeout(child_source_path, child_log_path, parent_path)
-            if nojit_avg_ms is None:
-                return None  # Script was unstable (crashed), discard.
-
-            # Run JIT (Experiment)
-            jit_avg_ms, timed_out, _ = self._run_timed_trial(
-                child_source_path, num_timing_runs, jit_enabled=True
-            )
-            if timed_out:
-                # The control succeeded, but the JIT timed out. This is a major regression.
-                self._save_regression_timeout(child_source_path, parent_path)
-                return None  # Stop analysis for this child.
-            if jit_avg_ms is None:
-                return None  # Script was unstable (crashed), discard.
-
-        # --- MODE 2: Differential Correctness Fuzzing ---
-        elif self.differential_testing:
+        # --- Stage 1: Differential Correctness Fuzzing (if enabled) ---
+        if self.differential_testing:
             instrumented_code = source_code + "\n" + SERIALIZATION_SNIPPET
             child_source_path.write_text(instrumented_code)
 
             # Run Non-JIT
+            nojit_run = None
             try:
                 nojit_env = ENV.copy()
                 nojit_env["PYTHON_JIT"] = "0"
+                # Disable debug logs for a clean stderr comparison
+                nojit_env["PYTHON_LLTRACE"] = "0"
+                nojit_env["PYTHON_OPT_DEBUG"] = "0"
+                print("[DIFFERENTIAL] Running child with JIT=False.", file=sys.stderr)
                 nojit_run = subprocess.run(
                     ["python3", str(child_source_path)],
                     capture_output=True,
@@ -960,11 +932,13 @@ class LafleurOrchestrator:
                 return self._handle_timeout(child_source_path, child_log_path, parent_path)
 
             # Run JIT
+            jit_run = None
             try:
                 jit_env = ENV.copy()
                 jit_env["PYTHON_JIT"] = "1"
                 jit_env["PYTHON_LLTRACE"] = "0"
                 jit_env["PYTHON_OPT_DEBUG"] = "0"
+                print("[DIFFERENTIAL] Running child with JIT=True.", file=sys.stderr)
                 jit_run = subprocess.run(
                     ["python3", str(child_source_path)],
                     capture_output=True,
@@ -1018,19 +992,45 @@ class LafleurOrchestrator:
                         jit_output=jit_run.stdout,
                         nojit_output=nojit_run.stdout,
                     )
+            print("  [~] No divergences found.", file=sys.stderr)
 
-        # --- MODE 3: Normal Coverage-Gathering Run ---
-        # This is the final step for ALL modes. For timing/differential modes, it runs
-        # after the initial checks have passed.
+        # --- Stage 2: Performance Timing Fuzzing (if enabled) ---
+        # This runs if differential testing is off, or if it found no divergence.
+        if self.timing_fuzz:
+            child_source_path.write_text(source_code)  # Ensure original code is used
+            num_timing_runs = 5
+
+            nojit_avg_ms, timed_out, nojit_cv = self._run_timed_trial(
+                child_source_path, num_timing_runs, jit_enabled=False
+            )
+            if timed_out:
+                return self._handle_timeout(child_source_path, child_log_path, parent_path)
+            if nojit_avg_ms is None:
+                return None
+
+            jit_avg_ms, timed_out, _ = self._run_timed_trial(
+                child_source_path, num_timing_runs, jit_enabled=True
+            )
+            if timed_out:
+                self._save_regression_timeout(child_source_path, parent_path)
+                return None
+            if jit_avg_ms is None:
+                return None
+
+        # --- Stage 3: Normal Coverage-Gathering Run ---
+        # This always runs unless a critical bug was found in a previous stage.
         try:
+            print("[COVERAGE] Running child with JIT=True.", file=sys.stderr)
+            # Re-write the original source to ensure we're not running instrumented code
+            child_source_path.write_text(source_code)
             with open(child_log_path, "w") as log_file:
                 start_time = time.monotonic()
                 result = subprocess.run(
                     ["python3", str(child_source_path)],
                     stdout=log_file,
                     stderr=subprocess.STDOUT,
-                    timeout=self.timeout,  # Use the configurable timeout here
-                    env=ENV,
+                    timeout=self.timeout,
+                    env=ENV,  # Use the global ENV with debug flags for coverage
                 )
                 end_time = time.monotonic()
 

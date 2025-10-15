@@ -60,6 +60,7 @@ All notable changes to this project should be documented in this file.
 - Differential testing mode to use different processes, by @devdanzin.
 - Deeper analysis of differences in differential testing mode, by @devdanzin.
 - Implemented statistical comparisons in timing fuzzing mode, by @devdanzin.
+- Allow timing and differential modes to run together, by @devdanzin.
 
 
 ### Fixed

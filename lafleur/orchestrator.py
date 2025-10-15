@@ -1059,7 +1059,7 @@ class LafleurOrchestrator:
             )
 
     def _handle_analysis_data(
-        self, analysis_data: dict, i: int, parent_metadata: dict
+        self, analysis_data: dict, i: int, parent_metadata: dict, nojit_cv: float | None
     ) -> str | None:
         """Process the result from analyze_run and update fuzzer state."""
         status = analysis_data.get("status")
@@ -1099,9 +1099,17 @@ class LafleurOrchestrator:
             if self.timing_fuzz:
                 jit_time = analysis_data.get("jit_avg_time_ms")
                 nojit_time = analysis_data.get("nojit_avg_time_ms")
-                # We only save if there was a JIT slowdown worth noting
-                if jit_time is not None and nojit_time is not None and jit_time > nojit_time:
-                    self._save_regression(CORPUS_DIR / new_filename, jit_time, nojit_time)
+                if jit_time is not None and nojit_time is not None and nojit_time > 0:
+                    slowdown_ratio = jit_time / nojit_time
+
+                    # Define the threshold, preferring the dynamic one if available.
+                    if nojit_cv is not None:
+                        dynamic_threshold = 1.0 + (3 * nojit_cv)  # Same as in InterestingnessScorer
+                    else:
+                        dynamic_threshold = 1.2  # Fallback to a 20% slowdown threshold
+
+                    if slowdown_ratio > dynamic_threshold:
+                        self._save_regression(CORPUS_DIR / new_filename, jit_time, nojit_time)
 
             analysis_data["new_filename"] = new_filename
             return "BREAK"
@@ -1287,8 +1295,9 @@ class LafleurOrchestrator:
                             self.differential_testing,
                         )
 
+                        nojit_cv = exec_result.nojit_cv
                         flow_control = self._handle_analysis_data(
-                            analysis_data, mutation_index, parent_metadata
+                            analysis_data, mutation_index, parent_metadata, nojit_cv
                         )
 
                         if flow_control == "BREAK" or flow_control == "CONTINUE":

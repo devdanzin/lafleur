@@ -82,6 +82,7 @@ All notable changes to this project should be documented in this file.
 - Not passing `reason` when detecting a divergence and then terminating, by @devdanzin.
 - Not saving regressions to their separate directory, by @devdanzin.
 - Errors trying to serialize objects JSON doesn't know how to encode, by @devdanzin.
+- When a crash happens in a timed run, continue to the coverage run to try to record it, by @devdanzin.
 
 
 ## [0.0.1] - 2024-11-20

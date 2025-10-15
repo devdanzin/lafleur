@@ -1008,16 +1008,12 @@ class LafleurOrchestrator:
             )
             if timed_out:
                 return self._handle_timeout(child_source_path, child_log_path, parent_path)
-            if nojit_avg_ms is None:
-                return None
 
             jit_avg_ms, timed_out, _ = self._run_timed_trial(
                 child_source_path, num_timing_runs, jit_enabled=True
             )
             if timed_out:
                 self._save_regression_timeout(child_source_path, parent_path)
-                return None
-            if jit_avg_ms is None:
                 return None
 
         # --- Stage 3: Normal Coverage-Gathering Run ---

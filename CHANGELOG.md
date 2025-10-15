@@ -81,6 +81,7 @@ All notable changes to this project should be documented in this file.
 - Wrong environment values in `_run_timed_trial` making JIT run mistakenly verbose, by @devdanzin.
 - Not passing `reason` when detecting a divergence and then terminating, by @devdanzin.
 - Not saving regressions to their separate directory, by @devdanzin.
+- Errors trying to serialize objects JSON doesn't know how to encode, by @devdanzin.
 
 
 ## [0.0.1] - 2024-11-20

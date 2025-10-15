@@ -50,39 +50,42 @@ SERIALIZATION_SNIPPET = dedent("""
     import inspect
     import json
 
-    def serialize_state(state_dict: dict) -> dict:
-        serializable_state = {}
-        IGNORE_KEYS = {
-            '__name__', '__doc__', '__package__', '__loader__',
-            '__spec__', '__builtins__', 'serialize_state', 'json',
-            'types', 'inspect'
-        }
-        for key, value in sorted(state_dict.items()):
-            if key in IGNORE_KEYS or key.startswith('__'):
-                continue
-            if isinstance(value, (int, str, bool, type(None), float, list, tuple)):
-                serializable_state[key] = value
-            elif isinstance(value, dict):
-                serializable_state[key] = dict(sorted(value.items()))
-            elif isinstance(value, set):
-                serializable_state[key] = sorted(list(value))
-            elif inspect.isfunction(value):
-                serializable_state[key] = f"<function: {value.__name__}>"
-            elif inspect.isclass(value):
-                serializable_state[key] = f"<class: {value.__name__}>"
-            elif inspect.ismodule(value):
-                continue
-            else:
-                if hasattr(value, '__class__') and hasattr(value.__class__, '__module__') and value.__class__.__module__ == '__main__':
-                    serializable_state[key] = f"<instance of: {value.__class__.__name__}>"
-                else:
-                    serializable_state[key] = f"<unknown type: {type(value).__name__}>"
-        return serializable_state
+    class LafleurStateEncoder(json.JSONEncoder):
+        '''A custom JSON encoder that handles complex types found in locals().'''
+        def default(self, o):
+            if isinstance(o, bytes):
+                try:
+                    # Try to decode as UTF-8, with a fallback for binary data
+                    return o.decode('utf-8', errors='replace')
+                except Exception:
+                    return repr(o)
+            elif inspect.isfunction(o):
+                return f"<function: {o.__name__}>"
+            elif inspect.isclass(o):
+                return f"<class: {o.__name__}>"
+            elif inspect.ismodule(o):
+                return None  # Exclude modules entirely
+            elif hasattr(o, '__class__') and hasattr(o.__class__, '__module__') and o.__class__.__module__ == '__main__':
+                 return f"<instance of: {o.__class__.__name__}>"
+
+            # For any other unknown types, use a generic repr
+            try:
+                return super().default(o)
+            except TypeError:
+                return f"<unserializable type: {type(o).__name__}>"
+
+    # Filter out keys we don't care about before serialization
+    state_dict = locals().copy()
+    IGNORE_KEYS = {
+        '__name__', '__doc__', '__package__', '__loader__',
+        '__spec__', '__builtins__', 'LafleurStateEncoder', 'json',
+        'types', 'inspect'
+    }
+    filtered_state = {k: v for k, v in state_dict.items() if k not in IGNORE_KEYS and not k.startswith('__')}
 
     # Check if the harness loop actually ran and produced a result
-    if 'final_harness_locals' in locals():
-        final_state = serialize_state(final_harness_locals)
-        print(json.dumps(final_state, sort_keys=True, indent=2))
+    if 'final_harness_locals' in filtered_state:
+        print(json.dumps(filtered_state['final_harness_locals'], sort_keys=True, indent=2, cls=LafleurStateEncoder))
     # --- END INJECTED SERIALIZATION CODE ---
 """)
 

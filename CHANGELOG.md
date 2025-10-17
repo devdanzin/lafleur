@@ -41,6 +41,7 @@ All notable changes to this project should be documented in this file.
 - A `BuiltinNamespaceCorruptor` to replace built-in functions with malicious versions, by @devdanzin.
 - A `CodeObjectSwapper` to swap the code object of a function with that of another, by @devdanzin.
 - A timing fuzzing mode to search for code samples where the JIT is slower than no JIT, by @devdanzin.
+- An `analyze_uop_coverage.py` script to analyze and report on seen UOPs in our campaigns.
 
 
 ### Enhanced

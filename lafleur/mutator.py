@@ -3213,7 +3213,7 @@ class SliceMutator(ast.NodeTransformer):
         slice_parts = [
             None,
             ast.Constant(value=random.randint(-5, 5)),
-            ast.Constant(value=random.randint(-5, 5))
+            ast.Constant(value=random.randint(-5, 5)),
         ]
         lower = random.choice(slice_parts)
         upper = random.choice(slice_parts)
@@ -3233,8 +3233,11 @@ class SliceMutator(ast.NodeTransformer):
         list_vars = []
         sequence_vars = []
         for sub_node in node.body:
-            if (isinstance(sub_node, ast.Assign) and len(sub_node.targets) == 1 and
-                    isinstance(sub_node.targets[0], ast.Name)):
+            if (
+                isinstance(sub_node, ast.Assign)
+                and len(sub_node.targets) == 1
+                and isinstance(sub_node.targets[0], ast.Name)
+            ):
                 var_name = sub_node.targets[0].id
                 if isinstance(sub_node.value, ast.List):
                     list_vars.append(var_name)
@@ -3247,10 +3250,10 @@ class SliceMutator(ast.NodeTransformer):
 
         if random.random() < 0.25:  # 25% chance to apply
             target_var = random.choice(sequence_vars)
-            operation_choices = ['read', 'read_slice_obj']
+            operation_choices = ["read", "read_slice_obj"]
             if target_var in list_vars:
                 # Write and delete are only valid for lists
-                operation_choices.extend(['write', 'delete'])
+                operation_choices.extend(["write", "delete"])
 
             operation = random.choice(operation_choices)
 
@@ -3258,32 +3261,35 @@ class SliceMutator(ast.NodeTransformer):
             nodes_to_inject = []
 
             # Create a read operation: new_var = target_var[...]
-            if operation == 'read':
+            if operation == "read":
                 print(f"    -> Injecting slice read on '{target_var}'", file=sys.stderr)
                 random_slice = self._create_random_slice()
-                new_node = \
-                ast.parse(f"slice_var_{random.randint(1000, 9999)} = {target_var}[{ast.unparse(random_slice)}]").body[0]
+                new_node = ast.parse(
+                    f"slice_var_{random.randint(1000, 9999)} = {target_var}[{ast.unparse(random_slice)}]"
+                ).body[0]
                 nodes_to_inject = [new_node]
 
             # Create a write operation: target_var[...] = [1, 2, 3]
-            elif operation == 'write':
+            elif operation == "write":
                 print(f"    -> Injecting slice write on '{target_var}'", file=sys.stderr)
                 random_slice = self._create_random_slice()
-                new_node = ast.parse(f"{target_var}[{ast.unparse(random_slice)}] = [1, 2, 3]").body[0]
+                new_node = ast.parse(f"{target_var}[{ast.unparse(random_slice)}] = [1, 2, 3]").body[
+                    0
+                ]
                 nodes_to_inject = [new_node]
 
             # Create a delete operation: del target_var[...]
-            elif operation == 'delete':
+            elif operation == "delete":
                 print(f"    -> Injecting slice delete on '{target_var}'", file=sys.stderr)
                 random_slice = self._create_random_slice()
                 new_node = ast.parse(f"del {target_var}[{ast.unparse(random_slice)}]").body[0]
                 nodes_to_inject = [new_node]
 
-            elif operation == 'read_slice_obj':
+            elif operation == "read_slice_obj":
                 print(f"    -> Injecting slice object read on '{target_var}'", file=sys.stderr)
                 slice_var_name = f"slice_obj_{random.randint(1000, 9999)}"
-                start = random.choice(['None', str(random.randint(-5, 5))])
-                stop = random.choice(['None', str(random.randint(-5, 5))])
+                start = random.choice(["None", str(random.randint(-5, 5))])
+                stop = random.choice(["None", str(random.randint(-5, 5))])
 
                 # This injects a variable assignment and a hot loop that uses it.
                 scenario_str = dedent(f"""

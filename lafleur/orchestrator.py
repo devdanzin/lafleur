@@ -251,7 +251,8 @@ class LafleurOrchestrator:
         prune_corpus_flag: bool = False,
         force_prune: bool = False,
         timing_fuzz: bool = False,
-        max_log_size: int = 400,
+        max_timeout_log_size: int = 400,
+        max_crash_log_size: int = 400,
     ):
         """Initialize the orchestrator and the corpus manager."""
         self.differential_testing = differential_testing
@@ -263,7 +264,8 @@ class LafleurOrchestrator:
         self.ast_mutator = ASTMutator()
         self.boilerplate_code = None
         self.timeout = timeout
-        self.max_log_size_bytes = max_log_size * 1024 * 1024
+        self.max_timeout_log_bytes = max_timeout_log_size * 1024 * 1024
+        self.max_crash_log_bytes = max_crash_log_size * 1024 * 1024
 
         coverage_state = load_coverage_state()
         self.coverage_manager = CoverageManager(coverage_state)
@@ -869,45 +871,59 @@ class LafleurOrchestrator:
                 compressed_path.unlink()
             return log_path  # Fallback to keeping the original
 
-    def _handle_timeout(
-        self, child_source_path: Path, child_log_path: Path, parent_path: Path
-    ) -> None:
-        """Handles a standard timeout by saving the test case and compressing the log."""
-        self.run_stats["timeouts_found"] = self.run_stats.get("timeouts_found", 0) + 1
-        print("  [!!!] TIMEOUT DETECTED! Saving test case.", file=sys.stderr)
-        log_to_save = child_log_path
+    def _process_log_file(self, log_path: Path, max_size_bytes: int, label: str = "Log") -> Path:
+        """
+        Apply size policies to a log file: Truncate if huge, Compress if large, Keep if small.
+        Returns the path to the processed file.
+        """
         try:
-            log_size = child_log_path.stat().st_size
+            if not log_path.exists():
+                return log_path
+
+            log_size = log_path.stat().st_size
 
             # Tier 3: Huge Log -> Truncate
-            if log_size > self.max_log_size_bytes:
+            if log_size > max_size_bytes:
                 print(
-                    f"  [*] Timeout log is huge ({log_size / (1024 * 1024):.1f} MB), truncating...",
+                    f"  [*] {label} is huge ({log_size / (1024 * 1024):.1f} MB), truncating...",
                     file=sys.stderr,
                 )
-                log_to_save = self._truncate_huge_log(child_log_path, log_size)
+                return self._truncate_huge_log(log_path, log_size)
 
             # Tier 2: Large Log -> Compress
             elif log_size > TIMEOUT_LOG_COMPRESSION_THRESHOLD:
-                print("  [*] Timeout log is large, compressing with zstd...", file=sys.stderr)
-                log_to_save = self._compress_log_stream(child_log_path)
+                print(f"  [*] {label} is large, compressing with zstd...", file=sys.stderr)
+                return self._compress_log_stream(log_path)
 
             # Tier 1: Small Log -> Keep as is
+            return log_path
 
         except Exception as e:
-            print(f"  [!] Warning: Error processing timeout log: {e}", file=sys.stderr)
+            print(f"  [!] Warning: Error processing {label.lower()}: {e}", file=sys.stderr)
+            return log_path
+
+    def _handle_timeout(
+        self, child_source_path: Path, child_log_path: Path, parent_path: Path
+    ) -> None:
+        """Handles a standard timeout by saving the test case and processing the log."""
+        self.run_stats["timeouts_found"] = self.run_stats.get("timeouts_found", 0) + 1
+        print("  [!!!] TIMEOUT DETECTED! Saving test case.", file=sys.stderr)
+
+        # Use the centralized processor with timeout-specific limits
+        log_to_save = self._process_log_file(
+            child_log_path, self.max_timeout_log_bytes, "Timeout log"
+        )
 
         timeout_source_path = TIMEOUTS_DIR / f"timeout_{child_source_path.stem}_{parent_path.name}"
 
         # Calculate destination log path, explicitly preserving truncation marker or compression extension
         if log_to_save.name.endswith("_truncated.log"):
-            # Ensure the "truncated" status is visible in the final filename
-            timeout_log_path = timeout_source_path.with_name(f"{timeout_source_path.stem}_truncated.log")
+            timeout_log_path = timeout_source_path.with_name(
+                f"{timeout_source_path.stem}_truncated.log"
+            )
         elif log_to_save.name.endswith(".log.zst"):
-            # Preserve the double extension for compressed logs
             timeout_log_path = timeout_source_path.with_name(f"{timeout_source_path.stem}.log.zst")
         else:
-            # Standard case
             timeout_log_path = timeout_source_path.with_suffix(log_to_save.suffix)
 
         if log_to_save.exists():
@@ -1451,6 +1467,7 @@ class LafleurOrchestrator:
         self, return_code: int, log_content: str, source_path: Path, log_path: Path
     ) -> bool:
         """Check for crashes and save artifacts."""
+        crash_type = None
         if return_code != 0:
             if "IndentationError: too many levels of indentation" in log_content:
                 print(
@@ -1465,19 +1482,42 @@ class LafleurOrchestrator:
                 return False
 
             print(f"  [!!!] CRASH DETECTED! Exit code: {return_code}. Saving...", file=sys.stderr)
-            crash_path = CRASHES_DIR / f"crash_retcode_{source_path.name}"
-            shutil.copy(source_path, crash_path)
-            shutil.copy(log_path, crash_path.with_suffix(".log"))
+            crash_type = "retcode"
+
+        if not crash_type:
+            for keyword in CRASH_KEYWORDS:
+                if keyword.lower() in log_content.lower():
+                    print(
+                        f"  [!!!] CRASH DETECTED! Found keyword '{keyword}'. Saving...",
+                        file=sys.stderr,
+                    )
+                    crash_type = "keyword"
+                    break
+
+        if crash_type:
+            # Process the log (truncate/compress) before saving
+            log_to_save = self._process_log_file(log_path, self.max_crash_log_bytes, "Crash log")
+
+            crash_base_name = f"crash_{crash_type}_{source_path.name}"
+            crash_source_path = CRASHES_DIR / crash_base_name
+
+            # Determine destination log name
+            if log_to_save.name.endswith("_truncated.log"):
+                crash_log_path = CRASHES_DIR / f"{Path(crash_base_name).stem}_truncated.log"
+            elif log_to_save.name.endswith(".log.zst"):
+                crash_log_path = CRASHES_DIR / f"{Path(crash_base_name).stem}.log.zst"
+            else:
+                crash_log_path = CRASHES_DIR / f"{Path(crash_base_name).stem}.log"
+
+            shutil.copy(source_path, crash_source_path)
+            shutil.copy(log_to_save, crash_log_path)
+
+            # If we created a temp file (truncated or compressed), clean it up
+            if log_to_save != log_path:
+                log_to_save.unlink()
+
             return True
-        for keyword in CRASH_KEYWORDS:
-            if keyword.lower() in log_content.lower():
-                print(
-                    f"  [!!!] CRASH DETECTED! Found keyword '{keyword}'. Saving...", file=sys.stderr
-                )
-                crash_path = CRASHES_DIR / f"crash_keyword_{source_path.name}"
-                shutil.copy(source_path, crash_path)
-                shutil.copy(log_path, crash_path.with_suffix(".log"))
-                return True
+
         return False
 
     def _find_new_coverage(
@@ -1912,10 +1952,16 @@ def main():
         help="Enable JIT performance regression fuzzing mode.",
     )
     parser.add_argument(
-        "--max-log-size",
+        "--max-timeout-log-size",
         type=int,
         default=400,
-        help="Maximum log size in MB before truncation. (Default: 400)",
+        help="Maximum timeout log size in MB before truncation. (Default: 400)",
+    )
+    parser.add_argument(
+        "--max-crash-log-size",
+        type=int,
+        default=400,
+        help="Maximum crash log size in MB before truncation. (Default: 400)",
     )
     args = parser.parse_args()
 
@@ -1973,8 +2019,8 @@ Initial Stats:
             keep_tmp_logs=args.keep_tmp_logs,
             prune_corpus_flag=args.prune_corpus,
             force_prune=args.force,
-            timing_fuzz=args.timing_fuzz,
-            max_log_size=args.max_log_size,
+            max_timeout_log_size=args.max_timeout_log_size,
+            max_crash_log_size=args.max_crash_log_size,
         )
         orchestrator.run_evolutionary_loop()
     except KeyboardInterrupt:

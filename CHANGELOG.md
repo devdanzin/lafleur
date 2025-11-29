@@ -64,6 +64,7 @@ All notable changes to this project should be documented in this file.
 - Implemented statistical comparisons in timing fuzzing mode, by @devdanzin.
 - Allow timing and differential modes to run together, by @devdanzin.
 - Truncate timeout log files if they're too large, by @devdanzin.
+- Truncate or compress timeout log files if they're too large, by @devdanzin.
 
 
 ### Fixed

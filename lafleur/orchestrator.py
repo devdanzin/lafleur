@@ -100,7 +100,11 @@ TIMEOUTS_DIR = Path("timeouts")
 DIVERGENCES_DIR = Path("divergences")
 LOGS_DIR = Path("logs")
 RUN_LOGS_DIR = LOGS_DIR / "run_logs"
+
 TIMEOUT_LOG_COMPRESSION_THRESHOLD = 1_048_576  # 1 MB
+DEFAULT_MAX_LOG_SIZE = 400 * 1024 * 1024  # 400 MB
+TRUNCATE_HEAD_SIZE = 50 * 1024  # 50 KB
+TRUNCATE_TAIL_SIZE = 300 * 1024  # 300 KB
 
 CRASH_KEYWORDS = [
     "Segmentation fault",
@@ -247,6 +251,7 @@ class LafleurOrchestrator:
         prune_corpus_flag: bool = False,
         force_prune: bool = False,
         timing_fuzz: bool = False,
+        max_log_size: int = 400,
     ):
         """Initialize the orchestrator and the corpus manager."""
         self.differential_testing = differential_testing
@@ -257,7 +262,8 @@ class LafleurOrchestrator:
         self.deepening_probability = 0.2
         self.ast_mutator = ASTMutator()
         self.boilerplate_code = None
-        self.timeout = timeout  # Store the timeout value
+        self.timeout = timeout
+        self.max_log_size_bytes = max_log_size * 1024 * 1024
 
         coverage_state = load_coverage_state()
         self.coverage_manager = CoverageManager(coverage_state)
@@ -818,26 +824,76 @@ class LafleurOrchestrator:
 
         return mean, False, cv
 
+    def _truncate_huge_log(self, log_path: Path, original_size: int) -> Path:
+        """
+        Truncate a huge log file by keeping only the head and tail.
+        Returns the path to the new truncated file.
+        """
+        truncated_path = log_path.with_name(f"{log_path.stem}_truncated{log_path.suffix}")
+        try:
+            with open(log_path, "rb") as src, open(truncated_path, "wb") as dst:
+                # Write Head
+                dst.write(src.read(TRUNCATE_HEAD_SIZE))
+
+                # Write Marker
+                mb_size = original_size / (1024 * 1024)
+                msg = f"\n\n... [Log Truncated by Lafleur: Original size {mb_size:.2f} MB] ...\n\n"
+                dst.write(msg.encode("utf-8", errors="replace"))
+
+                # Write Tail
+                src.seek(original_size - TRUNCATE_TAIL_SIZE)
+                dst.write(src.read(TRUNCATE_TAIL_SIZE))
+
+            log_path.unlink()  # Delete the original huge file
+            return truncated_path
+        except Exception as e:
+            print(f"  [!] Warning: Could not truncate huge log: {e}", file=sys.stderr)
+            return log_path  # Fallback to keeping the original
+
+    def _compress_log_stream(self, log_path: Path) -> Path:
+        """
+        Compress a log file using streaming to avoid high memory usage.
+        Returns the path to the new compressed file.
+        """
+        compressed_path = log_path.with_suffix(".log.zst")
+        try:
+            # Use zstd.open for streaming compression (Python 3.14+ feature)
+            with open(log_path, "rb") as src, zstd.open(compressed_path, "wb") as dst:
+                shutil.copyfileobj(src, dst)
+
+            log_path.unlink()  # Delete the original file
+            return compressed_path
+        except Exception as e:
+            print(f"  [!] Warning: Could not compress log stream: {e}", file=sys.stderr)
+            if compressed_path.exists():
+                compressed_path.unlink()
+            return log_path  # Fallback to keeping the original
+
     def _handle_timeout(
         self, child_source_path: Path, child_log_path: Path, parent_path: Path
     ) -> None:
         """Handles a standard timeout by saving the test case and compressing the log."""
-        # This is your original timeout logic, extracted into a helper.
         self.run_stats["timeouts_found"] = self.run_stats.get("timeouts_found", 0) + 1
         print("  [!!!] TIMEOUT DETECTED! Saving test case.", file=sys.stderr)
         log_to_save = child_log_path
         try:
-            if child_log_path.stat().st_size > TIMEOUT_LOG_COMPRESSION_THRESHOLD:
+            log_size = child_log_path.stat().st_size
+
+            # Tier 3: Huge Log -> Truncate
+            if log_size > self.max_log_size_bytes:
+                print(
+                    f"  [*] Timeout log is huge ({log_size / (1024 * 1024):.1f} MB), truncating...",
+                    file=sys.stderr,
+                )
+                log_to_save = self._truncate_huge_log(child_log_path, log_size)
+
+            # Tier 2: Large Log -> Compress
+            elif log_size > TIMEOUT_LOG_COMPRESSION_THRESHOLD:
                 print("  [*] Timeout log is large, compressing with zstd...", file=sys.stderr)
-                compressed_log_path = child_log_path.with_suffix(".log.zst")
+                log_to_save = self._compress_log_stream(child_log_path)
 
-                log_content = child_log_path.read_bytes()
-                compressed_content = zstd.compress(log_content)
-                compressed_log_path.write_bytes(compressed_content)
+            # Tier 1: Small Log -> Keep as is
 
-                log_to_save = compressed_log_path
-                # Clean up the original large log file
-                child_log_path.unlink()
         except Exception as e:
             print(f"  [!] Warning: Could not compress timeout log: {e}", file=sys.stderr)
 
@@ -1847,6 +1903,12 @@ def main():
         action="store_true",
         help="Enable JIT performance regression fuzzing mode.",
     )
+    parser.add_argument(
+        "--max-log-size",
+        type=int,
+        default=400,
+        help="Maximum log size in MB before truncation. (Default: 400)",
+    )
     args = parser.parse_args()
 
     LOGS_DIR.mkdir(exist_ok=True)
@@ -1904,6 +1966,7 @@ Initial Stats:
             prune_corpus_flag=args.prune_corpus,
             force_prune=args.force,
             timing_fuzz=args.timing_fuzz,
+            max_log_size=args.max_log_size,
         )
         orchestrator.run_evolutionary_loop()
     except KeyboardInterrupt:

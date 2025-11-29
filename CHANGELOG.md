@@ -63,6 +63,7 @@ All notable changes to this project should be documented in this file.
 - Deeper analysis of differences in differential testing mode, by @devdanzin.
 - Implemented statistical comparisons in timing fuzzing mode, by @devdanzin.
 - Allow timing and differential modes to run together, by @devdanzin.
+- Truncate timeout log files if they're too large, by @devdanzin.
 
 
 ### Fixed

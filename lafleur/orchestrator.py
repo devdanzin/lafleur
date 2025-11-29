@@ -895,12 +895,20 @@ class LafleurOrchestrator:
             # Tier 1: Small Log -> Keep as is
 
         except Exception as e:
-            print(f"  [!] Warning: Could not compress timeout log: {e}", file=sys.stderr)
+            print(f"  [!] Warning: Error processing timeout log: {e}", file=sys.stderr)
 
         timeout_source_path = TIMEOUTS_DIR / f"timeout_{child_source_path.stem}_{parent_path.name}"
-        timeout_log_path = timeout_source_path.with_suffix(
-            log_to_save.suffix
-        )  # Use the correct suffix
+
+        # Calculate destination log path, explicitly preserving truncation marker or compression extension
+        if log_to_save.name.endswith("_truncated.log"):
+            # Ensure the "truncated" status is visible in the final filename
+            timeout_log_path = timeout_source_path.with_name(f"{timeout_source_path.stem}_truncated.log")
+        elif log_to_save.name.endswith(".log.zst"):
+            # Preserve the double extension for compressed logs
+            timeout_log_path = timeout_source_path.with_name(f"{timeout_source_path.stem}.log.zst")
+        else:
+            # Standard case
+            timeout_log_path = timeout_source_path.with_suffix(log_to_save.suffix)
 
         if log_to_save.exists():
             shutil.copy(child_source_path, timeout_source_path)

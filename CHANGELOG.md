@@ -43,6 +43,7 @@ All notable changes to this project should be documented in this file.
 - A timing fuzzing mode to search for code samples where the JIT is slower than no JIT, by @devdanzin.
 - An `analyze_uop_coverage.py` script to analyze and report on seen UOPs in our campaigns, by @devdanzin.
 - A `SliceMutator` to add slices and slicing operations, by @devdanzin.
+- The `--target-python` CLI option to run the fuzzing scripts on a different Python interpreter, by @devdanzin.
 
 
 ### Enhanced

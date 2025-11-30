@@ -255,6 +255,7 @@ class LafleurOrchestrator:
         timing_fuzz: bool = False,
         max_timeout_log_size: int = 400,
         max_crash_log_size: int = 400,
+        target_python: str = sys.executable,
     ):
         """Initialize the orchestrator and the corpus manager."""
         self.differential_testing = differential_testing
@@ -268,6 +269,8 @@ class LafleurOrchestrator:
         self.timeout = timeout
         self.max_timeout_log_bytes = max_timeout_log_size * 1024 * 1024
         self.max_crash_log_bytes = max_crash_log_size * 1024 * 1024
+
+        self.target_python = target_python
 
         coverage_state = load_coverage_state()
         self.coverage_manager = CoverageManager(coverage_state)
@@ -787,7 +790,7 @@ class LafleurOrchestrator:
             try:
                 start_time = time.monotonic()
                 subprocess.run(
-                    ["python3", str(source_path)],
+                    [self.target_python, str(source_path)],
                     capture_output=True,  # We only care about time, not output
                     timeout=self.timeout,
                     env=env,
@@ -1007,7 +1010,7 @@ class LafleurOrchestrator:
                 nojit_env["PYTHON_OPT_DEBUG"] = "0"
                 print("[DIFFERENTIAL] Running child with JIT=False.", file=sys.stderr)
                 nojit_run = subprocess.run(
-                    ["python3", str(child_source_path)],
+                    [self.target_python, str(child_source_path)],
                     capture_output=True,
                     text=True,
                     timeout=self.timeout,
@@ -1025,7 +1028,7 @@ class LafleurOrchestrator:
                 jit_env["PYTHON_OPT_DEBUG"] = "0"
                 print("[DIFFERENTIAL] Running child with JIT=True.", file=sys.stderr)
                 jit_run = subprocess.run(
-                    ["python3", str(child_source_path)],
+                    [self.target_python, str(child_source_path)],
                     capture_output=True,
                     text=True,
                     timeout=self.timeout,
@@ -1107,7 +1110,7 @@ class LafleurOrchestrator:
             with open(child_log_path, "w") as log_file:
                 start_time = time.monotonic()
                 result = subprocess.run(
-                    ["python3", str(child_source_path)],
+                    [self.target_python, str(child_source_path)],
                     stdout=log_file,
                     stderr=subprocess.STDOUT,
                     timeout=self.timeout,
@@ -1882,7 +1885,7 @@ class LafleurOrchestrator:
 
             with open(log_path, "w") as log_file:
                 subprocess.run(
-                    ["python3", str(test_file_path)],
+                    [self.target_python, str(test_file_path)],
                     stdout=log_file,
                     stderr=subprocess.STDOUT,
                     timeout=self.timeout,  # Use the configurable timeout here
@@ -1984,6 +1987,12 @@ def main():
         default=400,
         help="Maximum crash log size in MB before truncation. (Default: 400)",
     )
+    parser.add_argument(
+        "--target-python",
+        type=str,
+        default=sys.executable,
+        help="Path to the target Python executable to fuzz. Defaults to the current interpreter.",
+    )
     args = parser.parse_args()
 
     LOGS_DIR.mkdir(exist_ok=True)
@@ -2042,6 +2051,7 @@ Initial Stats:
             force_prune=args.force,
             max_timeout_log_size=args.max_timeout_log_size,
             max_crash_log_size=args.max_crash_log_size,
+            target_python=args.target_python,
         )
         orchestrator.run_evolutionary_loop()
     except KeyboardInterrupt:

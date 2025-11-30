@@ -36,7 +36,7 @@ from typing import Any
 from lafleur.corpus_manager import CORPUS_DIR, CorpusManager
 from lafleur.coverage import CoverageManager, parse_log_for_edge_coverage, load_coverage_state
 from lafleur.learning import MutatorScoreTracker
-from lafleur.mutator import (
+from lafleur.mutators import (
     ASTMutator,
     EmptyBodySanitizer,
     FuzzerSetupNormalizer,

@@ -17,7 +17,9 @@ import math
 import os
 import platform
 import random
+import re
 import shutil
+import signal
 import statistics
 import subprocess
 import socket
@@ -1466,9 +1468,12 @@ class LafleurOrchestrator:
     def _check_for_crash(
         self, return_code: int, log_content: str, source_path: Path, log_path: Path
     ) -> bool:
-        """Check for crashes and save artifacts."""
-        crash_type = None
+        """Check for crashes, determine the cause (Signal/Retcode/Keyword), and save artifacts."""
+        crash_reason = None
+
+        # 1. Check Return Code
         if return_code != 0:
+            # Filter out known non-interesting errors
             if "IndentationError: too many levels of indentation" in log_content:
                 print(
                     "  [~] Ignoring known-uninteresting IndentationError (too deep).",
@@ -1481,27 +1486,40 @@ class LafleurOrchestrator:
                 )
                 return False
 
-            print(f"  [!!!] CRASH DETECTED! Exit code: {return_code}. Saving...", file=sys.stderr)
-            crash_type = "retcode"
+            # Determine if it was a Signal (negative) or Error Code (positive)
+            if return_code < 0:
+                sig_val = abs(return_code)
+                try:
+                    # Attempt to get the standard name (e.g., SIGSEGV)
+                    sig_name = signal.Signals(sig_val).name
+                except ValueError:
+                    # Fallback for obscure signals
+                    sig_name = str(sig_val)
+                crash_reason = f"signal_{sig_name}"
+            else:
+                crash_reason = f"retcode_{return_code}"
 
-        if not crash_type:
+        # 2. Check Keywords (if not already caught by return code)
+        if not crash_reason:
             for keyword in CRASH_KEYWORDS:
                 if keyword.lower() in log_content.lower():
-                    print(
-                        f"  [!!!] CRASH DETECTED! Found keyword '{keyword}'. Saving...",
-                        file=sys.stderr,
-                    )
-                    crash_type = "keyword"
+                    # Sanitize keyword: lowercase, spaces to underscores, remove non-alphanumeric
+                    safe_kw = re.sub(r"[^a-z0-9_]", "", keyword.lower().replace(" ", "_"))
+                    crash_reason = f"keyword_{safe_kw}"
                     break
 
-        if crash_type:
-            # Process the log (truncate/compress) before saving
+        # 3. Save Artifacts if Crash Detected
+        if crash_reason:
+            print(f"  [!!!] CRASH DETECTED! ({crash_reason}). Saving...", file=sys.stderr)
+
+            # Process the log (truncate/compress) using the crash-specific limit
             log_to_save = self._process_log_file(log_path, self.max_crash_log_bytes, "Crash log")
 
-            crash_base_name = f"crash_{crash_type}_{source_path.name}"
+            # Construct descriptive filename: crash_signal_SIGSEGV_child_... .py
+            crash_base_name = f"crash_{crash_reason}_{source_path.name}"
             crash_source_path = CRASHES_DIR / crash_base_name
 
-            # Determine destination log name
+            # Determine destination log name, preserving extensions/markers
             if log_to_save.name.endswith("_truncated.log"):
                 crash_log_path = CRASHES_DIR / f"{Path(crash_base_name).stem}_truncated.log"
             elif log_to_save.name.endswith(".log.zst"):
@@ -1509,12 +1527,15 @@ class LafleurOrchestrator:
             else:
                 crash_log_path = CRASHES_DIR / f"{Path(crash_base_name).stem}.log"
 
-            shutil.copy(source_path, crash_source_path)
-            shutil.copy(log_to_save, crash_log_path)
+            try:
+                shutil.copy(source_path, crash_source_path)
+                shutil.copy(log_to_save, crash_log_path)
 
-            # If we created a temp file (truncated or compressed), clean it up
-            if log_to_save != log_path:
-                log_to_save.unlink()
+                # Clean up the processed temp log if we created one
+                if log_to_save != log_path:
+                    log_to_save.unlink()
+            except IOError as e:
+                print(f"  [!] Error saving crash artifacts: {e}", file=sys.stderr)
 
             return True
 

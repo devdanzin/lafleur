@@ -65,6 +65,7 @@ All notable changes to this project should be documented in this file.
 - Allow timing and differential modes to run together, by @devdanzin.
 - Truncate timeout log files if they're too large, by @devdanzin.
 - Truncate or compress timeout log files if they're too large, by @devdanzin.
+- Record the reason for a crash (return code, signal, or keyword) in the filename, by @devdanzin. 
 
 
 ### Fixed

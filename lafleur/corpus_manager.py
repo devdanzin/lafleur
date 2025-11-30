@@ -116,6 +116,7 @@ class CorpusManager:
         fusil_path: str,
         get_boilerplate_func: Callable[..., str],
         execution_timeout: int = 10,
+        target_python: str = sys.executable,
     ):
         """Initialize the CorpusManager."""
         self.coverage_state = coverage_state
@@ -123,6 +124,7 @@ class CorpusManager:
         self.fusil_path = fusil_path
         self.get_boilerplate = get_boilerplate_func
         self.execution_timeout = execution_timeout
+        self.target_python = target_python
 
         self.scheduler = CorpusScheduler(self.coverage_state)
         self.known_hashes: set[tuple[str, str]] = set()
@@ -218,7 +220,7 @@ class CorpusManager:
                 with open(log_path, "w") as log_file:
                     start_time = time.monotonic()
                     result = subprocess.run(
-                        ["python3", str(source_path)],
+                        [self.target_python, str(source_path)],
                         stdout=log_file,
                         stderr=subprocess.STDOUT,
                         timeout=self.execution_timeout,  # Use configurable timeout
@@ -394,7 +396,7 @@ class CorpusManager:
             "--methods-number=0",
             "--objects-number=0",
             "--sessions=1",
-            f"--python={python_executable}",
+            f"--python={self.target_python}",
             "--no-jit-external-references",
             "--no-threads",
             "--no-async",
@@ -411,7 +413,7 @@ class CorpusManager:
         try:
             with open(tmp_log, "w") as log_file:
                 result = subprocess.run(
-                    ["python3", tmp_source],
+                    [self.target_python, tmp_source],
                     stdout=log_file,
                     stderr=subprocess.STDOUT,
                     timeout=self.execution_timeout,  # Use configurable timeout here too

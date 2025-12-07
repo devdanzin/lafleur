@@ -34,7 +34,13 @@ from textwrap import dedent, indent
 from typing import Any
 
 from lafleur.corpus_manager import CORPUS_DIR, CorpusManager
-from lafleur.coverage import CoverageManager, parse_log_for_edge_coverage, load_coverage_state
+from lafleur.coverage import (
+    CoverageManager,
+    parse_log_for_edge_coverage,
+    load_coverage_state,
+    PROTO_TRACE_REGEX,
+    OPTIMIZED_TRACE_REGEX,
+)
 from lafleur.learning import MutatorScoreTracker
 from lafleur.mutators import (
     ASTMutator,
@@ -289,6 +295,10 @@ class LafleurOrchestrator:
             self.timeout,
             target_python=target_python,
         )
+
+        # Verify that the target python is suitable for fuzzing before doing anything else
+        self.verify_target_capabilities()
+
         # Synchronize the corpus and state at startup.
         self.corpus_manager.synchronize(self.analyze_run, self._build_lineage_profile)
 
@@ -1624,6 +1634,77 @@ class LafleurOrchestrator:
 
         canonical_string = ";".join(all_edges)
         return hashlib.sha256(canonical_string.encode("utf-8")).hexdigest()
+
+    def verify_target_capabilities(self) -> None:
+        """
+        Verify that the target Python interpreter produces the expected JIT debug output.
+        Raises a RuntimeError if the JIT does not appear to be active or logging correctly.
+        """
+        print(
+            f"[*] Verifying target interpreter capabilities: {self.target_python}...",
+            file=sys.stderr,
+        )
+
+        # A minimal script to trigger the JIT
+        stimulus_code = dedent("""
+            def workload():
+                for i in range(1000):
+                    x = i + 1
+            for x in range(100):
+                workload()
+        """)
+
+        # Use the exact environment we rely on for coverage
+        env = ENV.copy()
+
+        try:
+            # Run the stimulus
+            result = subprocess.run(
+                [self.target_python, "-c", stimulus_code],
+                capture_output=True,
+                text=True,
+                env=env,
+                timeout=5,
+            )
+
+            # Check for JIT signals in stderr
+            has_proto = PROTO_TRACE_REGEX.search(f"{result.stderr}\n{result.stdout}")
+            has_opt = OPTIMIZED_TRACE_REGEX.search(f"{result.stderr}\n{result.stdout}")
+
+            if not (has_proto or has_opt):
+                stderr_stdout = result.stderr + "\n" + result.stdout
+                output = indent(
+                    stderr_stdout[:500] + "..." if len(stderr_stdout) > 500 else stderr_stdout,
+                    "    ",
+                )
+                # If we don't see traces, the JIT likely isn't enabled or built correctly.
+                error_msg = dedent(f"""
+                    [!] CRITICAL: The target interpreter '{self.target_python}' did not produce JIT debug output.
+
+                    Lafleur requires a CPython build with the experimental JIT enabled and configured for debug logging.
+
+                    Troubleshooting:
+                    1. Ensure you built CPython with: ./configure --with-pydebug --enable-experimental-jit
+                    2. Ensure you ran: make -j$(nproc)
+                    3. Ensure the environment variables PYTHON_JIT=1, PYTHON_LLTRACE=4, and PYTHON_OPT_DEBUG=4 are respected.
+
+                    Output received from target (stderr +  stdout):
+                    {output}
+                """)
+                raise RuntimeError(error_msg)
+
+            print(
+                f"  [+] Target interpreter validated successfully (JIT traces detected).",
+                file=sys.stderr,
+            )
+
+        except subprocess.TimeoutExpired:
+            raise RuntimeError(
+                f"Target interpreter '{self.target_python}' timed out during verification check."
+            )
+        except RuntimeError as e:
+            print(e)
+            sys.exit(1)
 
     def _score_and_decide_interestingness(
         self,

@@ -44,6 +44,7 @@ All notable changes to this project should be documented in this file.
 - An `analyze_uop_coverage.py` script to analyze and report on seen UOPs in our campaigns, by @devdanzin.
 - A `SliceMutator` to add slices and slicing operations, by @devdanzin.
 - The `--target-python` CLI option to run the fuzzing scripts on a different Python interpreter, by @devdanzin.
+- A check that the target Python interpreter outputs the necessary JIT debug messages, by @devdanzin.
 
 
 ### Enhanced

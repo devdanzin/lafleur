@@ -26,6 +26,7 @@ from lafleur.mutators.generic import (
     ForLoopInjector,
     GuardInjector,
     GuardRemover,
+    NewUnpackingMutator,
     OperatorSwapper,
     PatternMatchingMutator,
     SliceMutator,
@@ -91,7 +92,7 @@ class SlicingMutator(ast.NodeTransformer):
 
         print(f"    -> Slicing large function body of {body_len} statements.", file=sys.stderr)
 
-        start = 0 # random.randint(0, body_len - self.SLICE_SIZE)
+        start = random.randint(0, body_len - self.SLICE_SIZE)
         end = start + self.SLICE_SIZE
         body_slice = node.body[start:end]
 
@@ -149,6 +150,7 @@ class ASTMutator:
             GuardRemover,
             BlockTransposerMutator,
             UnpackingMutator,
+            NewUnpackingMutator,
             DecoratorMutator,
             RecursionWrappingMutator,
             DescriptorChaosGenerator,

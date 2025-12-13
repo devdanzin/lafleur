@@ -474,6 +474,84 @@ class UnpackingMutator(ast.NodeTransformer):
         return node
 
 
+class NewUnpackingMutator(ast.NodeTransformer):
+    """
+    Injects various unpacking patterns to target UOPs like _UNPACK_SEQUENCE_LIST
+    and generic _UNPACK_SEQUENCE behaviors.
+    """
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> ast.FunctionDef:
+        self.generic_visit(node)
+
+        if not node.name.startswith("uop_harness") or not node.body:
+            return node
+
+        # Identify list variables for the specific '[a] = l' pattern
+        list_vars = []
+        for sub_node in node.body:
+            if (
+                isinstance(sub_node, ast.Assign)
+                and len(sub_node.targets) == 1
+                and isinstance(sub_node.targets[0], ast.Name)
+                and isinstance(sub_node.value, ast.List)
+            ):
+                list_vars.append(sub_node.targets[0].id)
+
+        if random.random() < 0.25:
+            code_to_inject = ""
+            unique_id = random.randint(1000, 9999)
+
+            # Strategy 1: Unpack Dictionary Literal
+            # Targets generic _UNPACK_SEQUENCE behavior on iterables
+            # Pattern: a, b = {1: 1, 2: 2}
+            if random.random() < 0.5:
+                print(f"    -> Injecting dictionary unpacking", file=sys.stderr)
+                # We create a dictionary with 3 items and unpack into 3 variables
+                # The keys/values don't matter much, just the structure.
+                code_to_inject = dedent(f"""
+                try:
+                    # Unpacking a dict yields its keys
+                    u_k1_{unique_id}, u_k2_{unique_id}, u_k3_{unique_id} = {{1: 10, 2: 20, 3: 30}}
+                except Exception:
+                    pass
+                """)
+
+            # Strategy 2: Single-Element List Unpacking
+            # Targets _UNPACK_SEQUENCE_LIST specialized for size 1
+            # Pattern: [a] = l
+            else:
+                use_existing = list_vars and random.random() < 0.5
+
+                target_list = random.choice(list_vars) if use_existing else f"list_{unique_id}"
+
+                print(
+                    f"    -> Injecting single-element list unpacking on '{target_list}'",
+                    file=sys.stderr,
+                )
+
+                # If we picked a new variable name (or forced one), we initialize it
+                init_line = ""
+                if target_list == f"list_{unique_id}":
+                    init_line = f"{target_list} = [42]"
+
+                code_to_inject = dedent(f"""
+                    {init_line}
+                    try:
+                        [u_elem_{unique_id}] = {target_list}
+                    except Exception:
+                        pass
+                """)
+
+            if code_to_inject:
+                new_nodes = ast.parse(code_to_inject).body
+                # Insert at a random point
+                injection_point = random.randint(0, len(node.body))
+                node.body[injection_point:injection_point] = new_nodes
+                ast.fix_missing_locations(node)
+
+        return node
+
+
 def _create_logging_decorator_ast(decorator_name: str) -> ast.FunctionDef:
     """
     Programmatically create the AST for a simple logging decorator.

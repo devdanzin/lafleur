@@ -47,6 +47,7 @@ All notable changes to this project should be documented in this file.
 - A check that the target Python interpreter outputs the necessary JIT debug messages, by @devdanzin.
 - A `PatternMatchingMutator` that injects match/case statements to target pattern matching UOPs, by @devdanzin.
 - An `ArithmeticSpamMutator` that injects tight loops with arithmetic operations to target related UOPs, by @devdanzin.
+- A `NewUnpackingMutator` targeting unpacking dicts and single element lists, by @devdanzin.
 
 
 ### Enhanced

@@ -50,6 +50,7 @@ All notable changes to this project should be documented in this file.
 - A `NewUnpackingMutator` targeting unpacking dicts and single element lists, by @devdanzin.
 - A `StringInterpolationMutator` targeting string interpolation UOPs, by @devdanzin.
 - An `ExceptionGroupMutator` targeting exception group UOPs, by @devdanzin.
+- An `AsyncConstructMutator` targeting async construct UOPs, by @devdanzin.
 
 
 ### Enhanced

@@ -793,3 +793,117 @@ class PatternMatchingMutator(ast.NodeTransformer):
                 ast.fix_missing_locations(node)
 
         return node
+
+
+class ArithmeticSpamMutator(ast.NodeTransformer):
+    """
+    Injects tight loops with repetitive arithmetic operations to target
+    specialized UOPs like _BINARY_OP_MULTIPLY_FLOAT__NO_DECREF_INPUTS
+    and _BINARY_OP_INPLACE_ADD_UNICODE.
+    """
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> ast.FunctionDef:
+        self.generic_visit(node)
+
+        if not node.name.startswith("uop_harness") or not node.body:
+            return node
+
+        # Identify candidate variables initialized to simple constants
+        float_vars = []
+        str_vars = []
+
+        for sub_node in node.body:
+            if (
+                isinstance(sub_node, ast.Assign)
+                and len(sub_node.targets) == 1
+                and isinstance(sub_node.targets[0], ast.Name)
+                and isinstance(sub_node.value, ast.Constant)
+            ):
+                var_name = sub_node.targets[0].id
+                val = sub_node.value.value
+
+                if isinstance(val, float):
+                    float_vars.append(var_name)
+                elif isinstance(val, str):
+                    str_vars.append(var_name)
+                else:
+                    print(f"    -> Variable of wrong type found: {var_name=} {val=} {type(val)=}", file=sys.stderr)
+
+        unique_id = random.randint(10000, 99999)
+        if not float_vars:
+            float_vars = [f"f_{unique_id}"]
+        if not str_vars:
+            str_vars = [f"s_{unique_id}"]
+
+        if random.random() < 0.25:
+            code_to_inject = ""
+            # Strategy 1: Float Spam (Targets __NO_DECREF_INPUTS uops)
+            # We repeat the operation multiple times to encourage trace optimization
+            if float_vars and random.random() < 0.6:
+                target = random.choice(float_vars)
+                op_type = random.choice(["add", "sub", "mul"])
+                print(f"    -> Injecting float {op_type} spam on '{target}'", file=sys.stderr)
+
+                if op_type == "add":
+                    # Pattern from test_float_add_constant_propagation
+                    code_to_inject = dedent(f"""
+                        {target} = 0.25
+                        try:
+                            for _ in range(500):
+                                {target} = {target} + 0.25
+                                {target} = {target} + 0.25
+                                {target} = {target} + 0.25
+                                {target} = {target} + 0.25
+                        except Exception: pass
+                    """)
+                elif op_type == "sub":
+                    # Pattern from test_float_subtract_constant_propagation
+                    code_to_inject = dedent(f"""
+                        {target} = 0.25
+                        try:
+                            for _ in range(500):
+                                {target} = {target} - 0.25
+                                {target} = {target} - 0.25
+                                {target} = {target} - 0.25
+                                {target} = {target} - 0.25
+                        except Exception: pass
+                    """)
+                elif op_type == "mul":
+                    # Pattern from test_float_multiply_constant_propagation
+                    code_to_inject = dedent(f"""
+                        {target} = 0.25
+                        try:
+                            for _ in range(500):
+                                {target} = {target} * 1.001
+                                {target} = {target} * 1.001
+                                {target} = {target} * 1.001
+                                {target} = {target} * 1.001
+                        except Exception: pass
+                    """)
+
+            # Strategy 2: String Spam (Targets _BINARY_OP_INPLACE_ADD_UNICODE)
+            elif str_vars:
+                target = random.choice(str_vars)
+                print(f"    -> Injecting string spam on '{target}'", file=sys.stderr)
+                # Pattern: repeated in-place addition
+                code_to_inject = dedent(f"""
+                    {target} = "a"
+                    try:
+                        # Limit range to avoid massive memory usage
+                        for _ in range(100):
+                            {target} += "x"
+                            {target} += "y"
+                            {target} += "z"
+                    except Exception: pass
+                """)
+            else:
+                print(f"    -> Failed to pick a target for mutation.", file=sys.stderr)
+
+            if code_to_inject:
+                new_nodes = ast.parse(code_to_inject).body
+                # Inject relatively early to ensure the variable still has its initial type
+                injection_point = random.randint(0, len(node.body) // 2 + 1)
+                node.body[injection_point:injection_point] = new_nodes
+                ast.fix_missing_locations(node)
+
+        return node

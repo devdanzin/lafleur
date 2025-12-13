@@ -16,6 +16,7 @@ from textwrap import dedent
 
 # Import mutators from submodules
 from lafleur.mutators.generic import (
+    ArithmeticSpamMutator,
     BlockTransposerMutator,
     BoundaryValuesMutator,
     ComparisonSwapper,
@@ -85,12 +86,12 @@ class SlicingMutator(ast.NodeTransformer):
 
     def visit_FunctionDef(self, node: ast.FunctionDef) -> ast.FunctionDef:
         body_len = len(node.body)
-        if body_len < self.MIN_STATEMENTS_FOR_SLICE:
+        if body_len < self.MIN_STATEMENTS_FOR_SLICE or not node.name.startswith("uop_harness"):
             return node
 
         print(f"    -> Slicing large function body of {body_len} statements.", file=sys.stderr)
 
-        start = random.randint(0, body_len - self.SLICE_SIZE)
+        start = 0 # random.randint(0, body_len - self.SLICE_SIZE)
         end = start + self.SLICE_SIZE
         body_slice = node.body[start:end]
 
@@ -162,6 +163,7 @@ class ASTMutator:
             CodeObjectSwapper,
             SliceMutator,
             PatternMatchingMutator,
+            ArithmeticSpamMutator,
         ]
 
     def mutate_ast(

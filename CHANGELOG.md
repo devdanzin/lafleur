@@ -46,6 +46,7 @@ All notable changes to this project should be documented in this file.
 - The `--target-python` CLI option to run the fuzzing scripts on a different Python interpreter, by @devdanzin.
 - A check that the target Python interpreter outputs the necessary JIT debug messages, by @devdanzin.
 - A `PatternMatchingMutator` that injects match/case statements to target pattern matching UOPs, by @devdanzin.
+- An `ArithmeticSpamMutator` that injects tight loops with arithmetic operations to target related UOPs, by @devdanzin.
 
 
 ### Enhanced

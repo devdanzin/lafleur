@@ -26,6 +26,7 @@ from lafleur.mutators.generic import (
     GuardInjector,
     GuardRemover,
     OperatorSwapper,
+    PatternMatchingMutator,
     SliceMutator,
     # StatementDuplicator,
     UnpackingMutator,
@@ -160,6 +161,7 @@ class ASTMutator:
             BuiltinNamespaceCorruptor,
             CodeObjectSwapper,
             SliceMutator,
+            PatternMatchingMutator,
         ]
 
     def mutate_ast(

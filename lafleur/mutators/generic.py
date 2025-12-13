@@ -1115,3 +1115,60 @@ class StringInterpolationMutator(ast.NodeTransformer):
                     )
 
         return node
+
+
+class ExceptionGroupMutator(ast.NodeTransformer):
+    """
+    Injects try...except* blocks handling ExceptionGroups to target
+    UOPs like _CHECK_EG_MATCH, _PUSH_EXC_INFO, and _CHECK_EXC_MATCH.
+    """
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> ast.FunctionDef:
+        self.generic_visit(node)
+
+        if not node.name.startswith("uop_harness") or not node.body:
+            return node
+
+        if random.random() < 0.25:
+            code_to_inject = ""
+
+            print(f"    -> Injecting ExceptionGroup handling", file=sys.stderr)
+
+            # We inject a loop to ensure the JIT traces this block.
+            # We raise a nested ExceptionGroup and catch parts of it.
+            # This exercises the splitting logic (_CHECK_EG_MATCH).
+            code_to_inject = dedent("""
+                        try:
+                            # Increased to 1000 to exceed JIT hotness thresholds
+                            for _ in range(1000):
+                                try:
+                                    # Raise a hierarchy: Top -> [ValueError, TypeError, Nested -> [ValueError, OSError]]
+                                    raise ExceptionGroup("top", [
+                                        ValueError("v1"),
+                                        TypeError("t1"),
+                                        ExceptionGroup("nested", [
+                                            ValueError("v2"),
+                                            OSError("o1")
+                                        ])
+                                    ])
+                                # Catching ValueError handles 'v1' and 'v2' (recursive match)
+                                except* ValueError:
+                                    pass
+                                # Catching TypeError handles 't1'
+                                except* TypeError:
+                                    pass
+                                # Catching OSError handles 'o1'
+                                except* OSError:
+                                    pass
+                        except Exception:
+                            pass
+                        """)
+
+            if code_to_inject:
+                new_nodes = ast.parse(code_to_inject).body
+                # Insert at a random point
+                injection_point = random.randint(0, len(node.body))
+                node.body[injection_point:injection_point] = new_nodes
+                ast.fix_missing_locations(node)
+
+        return node

@@ -988,3 +988,130 @@ class ArithmeticSpamMutator(ast.NodeTransformer):
                 ast.fix_missing_locations(node)
 
         return node
+
+
+class StringInterpolationMutator(ast.NodeTransformer):
+    """
+    Injects complex f-strings (targeting _FORMAT_WITH_SPEC) and
+    Python 3.14+ t-strings (targeting _BUILD_TEMPLATE, _BUILD_INTERPOLATION).
+    """
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> ast.FunctionDef:
+        self.generic_visit(node)
+
+        if not node.name.startswith("uop_harness") or not node.body:
+            return node
+
+        # Identify candidate variables
+        int_vars = []
+        float_vars = []
+        str_vars = []
+        all_vars = []
+
+        for sub_node in node.body:
+            if (
+                isinstance(sub_node, ast.Assign)
+                and len(sub_node.targets) == 1
+                and isinstance(sub_node.targets[0], ast.Name)
+                and isinstance(sub_node.value, ast.Constant)
+            ):
+                var_name = sub_node.targets[0].id
+                val = sub_node.value.value
+                all_vars.append(var_name)
+
+                if isinstance(val, int):
+                    int_vars.append(var_name)
+                elif isinstance(val, float):
+                    float_vars.append(var_name)
+                elif isinstance(val, str):
+                    str_vars.append(var_name)
+
+        if not all_vars:
+            unique_identifier = random.randint(10000, 99999)
+            int_vars = [f"i_{unique_identifier}"]
+            float_vars = [f"f_{unique_identifier}"]
+            str_vars = [f"s_{unique_identifier}"]
+            all_vars = int_vars + float_vars + str_vars
+
+        if random.random() < 0.25:
+            code_to_inject = ""
+            injected_var = ""
+
+            # Strategy 1: Complex F-Strings (Targets _FORMAT_WITH_SPEC)
+            # We must use format specifiers (e.g., :04d, :.2f) to trigger this UOP.
+            if random.random() < 0.5:
+                print(f"    -> Injecting complex f-string", file=sys.stderr)
+
+                if int_vars and random.random() < 0.3:
+                    target = random.choice(int_vars)
+                    injected_var = f"{target} = 1234567890"
+                    # Test alignment, zero-padding, and hex formatting
+                    code_to_inject = dedent(f"""
+                    {injected_var}
+                    try:
+                        for _ in range(1300):
+                            _ = f"{{ {target} :04d }}"
+                            _ = f"{{ {target} :>10 }}"
+                            _ = f"{{ {target} :x }}"
+                    except Exception: pass
+                    """)
+                elif float_vars and random.random() < 0.3:
+                    target = random.choice(float_vars)
+                    injected_var = f"{target} = 123.4567890"
+                    # Test precision and scientific notation
+                    code_to_inject = dedent(f"""
+                    {injected_var}
+                    try:
+                        for _ in range(1300):
+                            _ = f"{{ {target} :.2f }}"
+                            _ = f"{{ {target} :e }}"
+                    except Exception: pass
+                    """)
+                elif str_vars and random.random() < 0.3:
+                    target = random.choice(str_vars)
+                    injected_var = f"{target} = '1234567890'"
+                    # Test string padding/alignment
+                    code_to_inject = dedent(f"""
+                    {injected_var}
+                    try:
+                        for _ in range(1300):
+                            _ = f"{{ {target} :>20 }}"
+                            _ = f"{{ {target} :^20 }}"
+                    except Exception: pass
+                    """)
+
+            # Strategy 2: T-Strings / Template Strings (Targets _BUILD_TEMPLATE, _BUILD_INTERPOLATION)
+            # Valid only on Python 3.14+
+            else:
+                target = random.choice(all_vars)
+                print(f"    -> Injecting t-string template on '{target}'", file=sys.stderr)
+
+                # We inject a t-string. Since we assume the host is 3.14+,
+                # ast.parse will handle this syntax nativey.
+                code_to_inject = dedent(f"""
+                try:
+                    for _ in range(100):
+                        # Create a template string
+                        t_tmpl = t"This is a t-string with {{ {target} }} and {{ {target} !r}}"
+
+                        # Access attributes to ensure the object is fully realized
+                        _ = t_tmpl.strings
+                        _ = t_tmpl.interpolations
+                        _ = t_tmpl.values
+                except Exception: pass
+                """)
+
+            if code_to_inject:
+                try:
+                    new_nodes = ast.parse(code_to_inject).body
+                    injection_point = random.randint(0, len(node.body))
+                    node.body[injection_point:injection_point] = new_nodes
+                    ast.fix_missing_locations(node)
+                except SyntaxError:
+                    # Fallback if the host parser somehow doesn't support t-strings yet
+                    print(
+                        "    [!] SyntaxError parsing t-string injection. Host python might be too old.",
+                        file=sys.stderr,
+                    )
+
+        return node

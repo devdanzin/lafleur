@@ -31,6 +31,7 @@ from lafleur.mutators.generic import (
     PatternMatchingMutator,
     SliceMutator,
     # StatementDuplicator,
+    StringInterpolationMutator,
     UnpackingMutator,
     VariableSwapper,
 )
@@ -166,6 +167,7 @@ class ASTMutator:
             SliceMutator,
             PatternMatchingMutator,
             ArithmeticSpamMutator,
+            StringInterpolationMutator,
         ]
 
     def mutate_ast(

@@ -827,7 +827,10 @@ class ArithmeticSpamMutator(ast.NodeTransformer):
                 elif isinstance(val, str):
                     str_vars.append(var_name)
                 else:
-                    print(f"    -> Variable of wrong type found: {var_name=} {val=} {type(val)=}", file=sys.stderr)
+                    print(
+                        f"    -> Variable of wrong type found: {var_name=} {val=} {type(val)=}",
+                        file=sys.stderr,
+                    )
 
         unique_id = random.randint(10000, 99999)
         if not float_vars:

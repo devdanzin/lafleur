@@ -45,6 +45,7 @@ All notable changes to this project should be documented in this file.
 - A `SliceMutator` to add slices and slicing operations, by @devdanzin.
 - The `--target-python` CLI option to run the fuzzing scripts on a different Python interpreter, by @devdanzin.
 - A check that the target Python interpreter outputs the necessary JIT debug messages, by @devdanzin.
+- A `PatternMatchingMutator` that injects match/case statements to target pattern matching UOPs, by @devdanzin.
 
 
 ### Enhanced

@@ -694,3 +694,102 @@ class SliceMutator(ast.NodeTransformer):
                 ast.fix_missing_locations(node)
 
         return node
+
+
+class PatternMatchingMutator(ast.NodeTransformer):
+    """
+    Injects match/case statements to target pattern matching UOPs like
+    _MATCH_SEQUENCE, _MATCH_MAPPING, _MATCH_KEYS, and _GET_LEN.
+    """
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> ast.FunctionDef:
+        self.generic_visit(node)
+
+        if not node.name.startswith("uop_harness") or not node.body:
+            return node
+
+        # Identify candidate variables by their assigned value type
+        lists = []
+        tuples = []
+        dicts = []
+        all_candidates = []
+
+        for sub_node in node.body:
+            if (
+                isinstance(sub_node, ast.Assign)
+                and len(sub_node.targets) == 1
+                and isinstance(sub_node.targets[0], ast.Name)
+            ):
+                var_name = sub_node.targets[0].id
+                all_candidates.append(var_name)
+
+                if isinstance(sub_node.value, ast.List):
+                    lists.append(var_name)
+                elif isinstance(sub_node.value, ast.Tuple):
+                    tuples.append(var_name)
+                elif isinstance(sub_node.value, ast.Dict):
+                    dicts.append(var_name)
+
+        if not all_candidates:
+            return node
+
+        if random.random() < 0.25:
+            target = None
+            code_to_inject = ""
+
+            # Strategy 1: Sequence Matching (Targets _MATCH_SEQUENCE, _GET_LEN)
+            # We prefer lists/tuples, but if none exist, we might skip or try something else.
+            if (lists or tuples) and random.random() < 0.5:
+                target = random.choice(lists + tuples)
+                print(f"    -> Injecting sequence match on '{target}'", file=sys.stderr)
+                # Matches: empty, exactly two items, or head/tail split
+                code_to_inject = dedent(f"""
+                try:
+                    match {target}:
+                        case []: pass
+                        case [_, _]: pass
+                        case [head, *tail]: pass
+                except Exception:
+                    pass
+                """)
+
+            # Strategy 2: Mapping Matching (Targets _MATCH_MAPPING, _MATCH_KEYS)
+            elif dicts and random.random() < 0.5:
+                target = random.choice(dicts)
+                print(f"    -> Injecting mapping match on '{target}'", file=sys.stderr)
+                # Matches: specific keys, empty dict, or rest capture
+                code_to_inject = dedent(f"""
+                try:
+                    match {target}:
+                        case {{'a': 1}}: pass
+                        case {{'x': _, 'y': _}}: pass
+                        case {{**rest}}: pass
+                except Exception:
+                    pass
+                """)
+
+            # Strategy 3: Class/Type Matching (Targets _MATCH_CLASS)
+            # This can apply to any variable.
+            else:
+                target = random.choice(all_candidates)
+                print(f"    -> Injecting class match on '{target}'", file=sys.stderr)
+                # Matches against builtin types
+                code_to_inject = dedent(f"""
+                try:
+                    match {target}:
+                        case int(): pass
+                        case str(): pass
+                        case list(): pass
+                        case dict(): pass
+                except Exception:
+                    pass
+                """)
+
+            if code_to_inject:
+                new_nodes = ast.parse(code_to_inject).body
+                # Insert at a random point, but reasonably late to ensure variable likely exists
+                injection_point = random.randint(0, len(node.body))
+                node.body[injection_point:injection_point] = new_nodes
+                ast.fix_missing_locations(node)
+
+        return node

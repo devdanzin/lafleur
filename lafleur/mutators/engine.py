@@ -23,6 +23,7 @@ from lafleur.mutators.generic import (
     ConstantPerturbator,
     ContainerChanger,
     DecoratorMutator,
+    ExceptionGroupMutator,
     ForLoopInjector,
     GuardInjector,
     GuardRemover,
@@ -168,6 +169,7 @@ class ASTMutator:
             PatternMatchingMutator,
             ArithmeticSpamMutator,
             StringInterpolationMutator,
+            ExceptionGroupMutator,
         ]
 
     def mutate_ast(

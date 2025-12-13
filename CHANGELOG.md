@@ -49,6 +49,8 @@ All notable changes to this project should be documented in this file.
 - An `ArithmeticSpamMutator` that injects tight loops with arithmetic operations to target related UOPs, by @devdanzin.
 - A `NewUnpackingMutator` targeting unpacking dicts and single element lists, by @devdanzin.
 - A `StringInterpolationMutator` targeting string interpolation UOPs, by @devdanzin.
+- An `ExceptionGroupMutator` targeting exception group UOPs, by @devdanzin.
+
 
 ### Enhanced
 

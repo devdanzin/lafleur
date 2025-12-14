@@ -1172,3 +1172,101 @@ class ExceptionGroupMutator(ast.NodeTransformer):
                 ast.fix_missing_locations(node)
 
         return node
+
+
+class AsyncConstructMutator(ast.NodeTransformer):
+    """
+    Injects async for and async with constructs to target
+    _GET_AITER, _GET_ANEXT, and other async UOPs.
+    """
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> ast.FunctionDef:
+        self.generic_visit(node)
+
+        if not node.name.startswith("uop_harness") or not node.body:
+            return node
+
+        if random.random() < 0.25:
+            # We need a unique ID to avoid naming collisions if we inject multiple times
+            uid = random.randint(1000, 9999)
+
+            # Helper classes string (Async Iterator and Async Context Manager)
+            # We inject these locally inside the harness so they are self-contained.
+            helpers = f"""
+            class AsyncIter_{uid}:
+                def __init__(self, limit):
+                    self.limit = limit
+                    self.count = 0
+                def __aiter__(self):
+                    return self
+                async def __anext__(self):
+                    if self.count >= self.limit:
+                        raise StopAsyncIteration
+                    self.count += 1
+                    return self.count
+
+            class AsyncCtx_{uid}:
+                async def __aenter__(self):
+                    return self
+                async def __aexit__(self, exc_type, exc, tb):
+                    return None
+            """
+
+            # Strategy 1: Async For (Targets _GET_AITER, _GET_ANEXT)
+            if random.random() < 0.5:
+                print(f"    -> Injecting async for loop", file=sys.stderr)
+                # We define an async function and then drive it manually
+                code_to_inject = dedent(f"""
+                {helpers}
+
+                async def async_for_driver_{uid}():
+                    try:
+                        # Hot loop to trigger JIT compilation
+                        for _ in range(100):
+                            async for _ in AsyncIter_{uid}(10):
+                                pass
+                    except Exception: pass
+
+                # Drive the coroutine
+                try:
+                    c = async_for_driver_{uid}()
+                    while True:
+                        try:
+                            c.send(None)
+                        except StopIteration:
+                            break
+                except Exception: pass
+                """)
+
+            # Strategy 2: Async With (Targets generic async setup UOPs)
+            else:
+                print(f"    -> Injecting async with block", file=sys.stderr)
+                code_to_inject = dedent(f"""
+                {helpers}
+
+                async def async_with_driver_{uid}():
+                    try:
+                        for _ in range(100):
+                            async with AsyncCtx_{uid}():
+                                pass
+                    except Exception: pass
+
+                # Drive the coroutine
+                try:
+                    c = async_with_driver_{uid}()
+                    while True:
+                        try:
+                            c.send(None)
+                        except StopIteration:
+                            break
+                except Exception: pass
+                """)
+
+            if code_to_inject:
+                new_nodes = ast.parse(code_to_inject).body
+                # Inject at the end or random point
+                injection_point = random.randint(0, len(node.body))
+                node.body[injection_point:injection_point] = new_nodes
+                ast.fix_missing_locations(node)
+
+        return node

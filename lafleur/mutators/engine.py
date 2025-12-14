@@ -17,6 +17,7 @@ from textwrap import dedent
 # Import mutators from submodules
 from lafleur.mutators.generic import (
     ArithmeticSpamMutator,
+    AsyncConstructMutator,
     BlockTransposerMutator,
     BoundaryValuesMutator,
     ComparisonSwapper,
@@ -170,6 +171,7 @@ class ASTMutator:
             ArithmeticSpamMutator,
             StringInterpolationMutator,
             ExceptionGroupMutator,
+            AsyncConstructMutator,
         ]
 
     def mutate_ast(

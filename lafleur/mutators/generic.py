@@ -1270,3 +1270,127 @@ class AsyncConstructMutator(ast.NodeTransformer):
                 ast.fix_missing_locations(node)
 
         return node
+
+
+class SysMonitoringMutator(ast.NodeTransformer):
+    """
+    Injects code that uses sys.monitoring (PEP 669) to instrument specific
+    functions. This targets the _INSTRUMENTED_* and _MONITOR_* family of UOPs.
+    """
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> ast.FunctionDef:
+        self.generic_visit(node)
+
+        if not node.name.startswith("uop_harness") or not node.body:
+            return node
+
+        if random.random() < 0.25:
+            # We use a unique suffix to ensure variable/function name uniqueness
+            uid = random.randint(1000, 9999)
+
+            print(f"    -> Injecting sys.monitoring scenario", file=sys.stderr)
+            # print(f"    -> Injecting GLOBAL sys.monitoring scenario", file=sys.stderr)
+
+            # This scenario:
+            # 1. Defines a 'gymnasium' function with loops/branches/calls.
+            # 2. Sets up sys.monitoring for THAT function only (local events).
+            # 3. Runs it to trigger _INSTRUMENTED_* opcodes.
+            # 4. Cleans up.
+            code_to_inject = dedent(f"""
+            # Define the target function (The Gymnasium)
+            # It needs branches (if), loops (for), and calls to hit all targets.
+            def monitored_gym_{uid}(n):
+                x = 0
+                for i in range(n):              # Targets _INSTRUMENTED_FOR_ITER, _JUMP_BACKWARD
+                    if i % 2 == 0:              # Targets _INSTRUMENTED_POP_JUMP_IF_FALSE
+                        x += 1
+                    else:
+                        x -= 1
+
+                    if i > n:                   # Not taken path
+                        pass
+
+                    # Target _MONITOR_CALL
+                    len([])
+                return x
+
+            def _dummy_callback_{uid}(*args, **kwargs):
+                return None
+
+            # We use a fixed Tool ID (e.g. 4) or try to find an available one.
+            _tool_id_{uid} = 4
+
+            try:
+                # 1. Initialize the tool
+                sys.monitoring.use_tool_id(_tool_id_{uid}, f"fuzzer_tool_{uid}")
+
+                # 2. Register callbacks (Required for events to fire)
+                # We register for BRANCH (jumps), LINE (lines), CALL, and JUMP
+                _events_{uid} = (
+                    sys.monitoring.events.BRANCH_LEFT |
+                    sys.monitoring.events.BRANCH_RIGHT |
+                    sys.monitoring.events.CALL |
+                    sys.monitoring.events.C_RAISE |
+                    sys.monitoring.events.C_RETURN |
+                    sys.monitoring.events.EXCEPTION_HANDLED |
+                    sys.monitoring.events.INSTRUCTION |
+                    sys.monitoring.events.JUMP |
+                    sys.monitoring.events.LINE |
+                    sys.monitoring.events.PY_RESUME |
+                    sys.monitoring.events.PY_RETURN |
+                    sys.monitoring.events.PY_START |
+                    sys.monitoring.events.PY_THROW |
+                    sys.monitoring.events.PY_UNWIND |
+                    sys.monitoring.events.PY_YIELD |
+                    sys.monitoring.events.RAISE |
+                    sys.monitoring.events.RERAISE |
+                    sys.monitoring.events.STOP_ITERATION
+                )
+                sys.monitoring.register_callback(_tool_id_{uid}, sys.monitoring.events.BRANCH_LEFT, _dummy_callback_{uid})
+                sys.monitoring.register_callback(_tool_id_{uid}, sys.monitoring.events.BRANCH_RIGHT, _dummy_callback_{uid})
+                sys.monitoring.register_callback(_tool_id_{uid}, sys.monitoring.events.CALL, _dummy_callback_{uid})
+                sys.monitoring.register_callback(_tool_id_{uid}, sys.monitoring.events.C_RAISE, _dummy_callback_{uid})
+                sys.monitoring.register_callback(_tool_id_{uid}, sys.monitoring.events.C_RETURN, _dummy_callback_{uid})
+                sys.monitoring.register_callback(_tool_id_{uid}, sys.monitoring.events.EXCEPTION_HANDLED, _dummy_callback_{uid})
+                sys.monitoring.register_callback(_tool_id_{uid}, sys.monitoring.events.INSTRUCTION, _dummy_callback_{uid})
+                sys.monitoring.register_callback(_tool_id_{uid}, sys.monitoring.events.JUMP, _dummy_callback_{uid})
+                sys.monitoring.register_callback(_tool_id_{uid}, sys.monitoring.events.LINE, _dummy_callback_{uid})
+                sys.monitoring.register_callback(_tool_id_{uid}, sys.monitoring.events.PY_RESUME, _dummy_callback_{uid})
+                sys.monitoring.register_callback(_tool_id_{uid}, sys.monitoring.events.PY_RETURN, _dummy_callback_{uid})
+                sys.monitoring.register_callback(_tool_id_{uid}, sys.monitoring.events.PY_START, _dummy_callback_{uid})
+                sys.monitoring.register_callback(_tool_id_{uid}, sys.monitoring.events.PY_THROW, _dummy_callback_{uid})
+                sys.monitoring.register_callback(_tool_id_{uid}, sys.monitoring.events.PY_UNWIND, _dummy_callback_{uid})
+                sys.monitoring.register_callback(_tool_id_{uid}, sys.monitoring.events.PY_YIELD, _dummy_callback_{uid})
+                sys.monitoring.register_callback(_tool_id_{uid}, sys.monitoring.events.RAISE, _dummy_callback_{uid})
+                sys.monitoring.register_callback(_tool_id_{uid}, sys.monitoring.events.RERAISE, _dummy_callback_{uid})
+                sys.monitoring.register_callback(_tool_id_{uid}, sys.monitoring.events.STOP_ITERATION, _dummy_callback_{uid})
+                # 3. Instrument ONLY our target function
+                # This prevents global slowdowns and keeps the fuzzing focused.
+                _code_obj_{uid} = monitored_gym_{uid}.__code__
+                sys.monitoring.set_local_events(_tool_id_{uid}, _code_obj_{uid}, _events_{uid})
+                # sys.monitoring.set_events(_tool_id_{uid}, _events_{uid})
+
+                # 4. Run the function (Hot loop to trigger JIT)
+                # The JIT should see the INSTRUMENTED bytecodes now.
+                for x in range(300):
+                    monitored_gym_{uid}(300)
+
+            except Exception:
+                pass
+            finally:
+                # 5. Cleanup is CRITICAL
+                try:
+                    sys.monitoring.set_local_events(_tool_id_{uid}, monitored_gym_{uid}.__code__, 0)
+                    # sys.monitoring.set_events(_tool_id_{uid}, 0)
+                    sys.monitoring.free_tool_id(_tool_id_{uid})
+                except Exception:
+                    pass
+            """)
+
+            if code_to_inject:
+                new_nodes = ast.parse(code_to_inject).body
+                injection_point = random.randint(0, len(node.body))
+                node.body[injection_point:injection_point] = new_nodes
+                ast.fix_missing_locations(node)
+
+        return node

@@ -34,6 +34,7 @@ from lafleur.mutators.generic import (
     SliceMutator,
     # StatementDuplicator,
     StringInterpolationMutator,
+    SysMonitoringMutator,
     UnpackingMutator,
     VariableSwapper,
 )
@@ -172,6 +173,7 @@ class ASTMutator:
             StringInterpolationMutator,
             ExceptionGroupMutator,
             AsyncConstructMutator,
+            SysMonitoringMutator,
         ]
 
     def mutate_ast(

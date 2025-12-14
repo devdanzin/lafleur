@@ -51,6 +51,7 @@ All notable changes to this project should be documented in this file.
 - A `StringInterpolationMutator` targeting string interpolation UOPs, by @devdanzin.
 - An `ExceptionGroupMutator` targeting exception group UOPs, by @devdanzin.
 - An `AsyncConstructMutator` targeting async construct UOPs, by @devdanzin.
+- A `SysMonitoringMutator` targeting sys monitoring UOPs, by @devdanzin.
 
 
 ### Enhanced

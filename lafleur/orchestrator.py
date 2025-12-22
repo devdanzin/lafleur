@@ -131,7 +131,7 @@ BOILERPLATE_END_MARKER = "# FUSIL_BOILERPLATE_END"
 ENV = os.environ.copy()
 ENV.update(
     {
-        "PYTHON_LLTRACE": "4",
+        "PYTHON_LLTRACE": "2",
         "PYTHON_OPT_DEBUG": "4",
         "PYTHON_JIT": "1",
         "ASAN_OPTIONS": "detect_leaks=0",
@@ -1664,7 +1664,7 @@ class LafleurOrchestrator:
                 capture_output=True,
                 text=True,
                 env=env,
-                timeout=5,
+                timeout=15,
             )
 
             # Check for JIT signals in stderr

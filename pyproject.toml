@@ -9,7 +9,7 @@ authors = [
   {name="Daniel Diniz"},
 ]
 description = "A feedback-driven JIT fuzzer for CPython."
-requires-python = ">=3.11"
+requires-python = ">=3.14"
 readme = "README.md"
 license = "GPL-2.0-only" # Use the standard SPDX identifier
 license-files = ["LICEN[CS]E.*"]
@@ -71,8 +71,8 @@ exclude = [
 line-length = 100
 indent-width = 4
 
-# Assume Python 3.11
-target-version = "py311"
+# Assume Python 3.14
+target-version = "py314"
 
 [tool.ruff.lint]
 # Enable Pyflakes (`F`) and a subset of the pycodestyle (`E`) codes by default.

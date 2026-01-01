@@ -14,14 +14,16 @@ from unittest.mock import patch
 
 from lafleur.mutators.engine import ASTMutator, SlicingMutator
 from lafleur.mutators.generic import ConstantPerturbator, OperatorSwapper
+from lafleur.mutators.utils import (
+    EmptyBodySanitizer,
+    FuzzerSetupNormalizer,
+    genStatefulBoolObject,
+    genStatefulIndexObject,
+)
 
 
 class TestASTMutator(unittest.TestCase):
-    """Test ASTMutator orchestration engine.
-
-    Note: Basic tests for ASTMutator exist in tests/test_mutator.py.
-    This test class focuses on additional edge cases and integration scenarios.
-    """
+    """Test ASTMutator orchestration engine."""
 
     def setUp(self):
         """Set random seed for reproducible tests."""
@@ -232,6 +234,219 @@ class TestASTMutator(unittest.TestCase):
                     self.assertIsInstance(tree, ast.Module)
                 except SyntaxError as e:
                     self.fail(f"Mutated code failed to parse: {result}\nError: {e}")
+
+    def test_mutate_simple_code(self):
+        """Test mutating simple code."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+                y = 2
+                return x + y
+        """)
+
+        mutator = ASTMutator()
+        mutated_code = mutator.mutate(code, seed=42)
+
+        # Should return valid Python code
+        self.assertIsInstance(mutated_code, str)
+        # Should be parseable
+        tree = ast.parse(mutated_code)
+        self.assertIsInstance(tree, ast.Module)
+
+    def test_mutate_ast_directly(self):
+        """Test mutating AST directly."""
+        code = "x = 1 + 2"
+        tree = ast.parse(code)
+
+        mutator = ASTMutator()
+        mutated_tree, transformers = mutator.mutate_ast(tree, seed=42)
+
+        # Should return mutated AST and list of transformers
+        self.assertIsInstance(mutated_tree, ast.Module)
+        self.assertIsInstance(transformers, list)
+        self.assertGreater(len(transformers), 0)
+
+        # Should be unparseable
+        mutated_code = ast.unparse(mutated_tree)
+        self.assertIsInstance(mutated_code, str)
+
+    def test_mutate_with_specific_count(self):
+        """Test mutating with specific mutation count."""
+        code = "x = 1"
+        tree = ast.parse(code)
+
+        mutator = ASTMutator()
+        _, transformers = mutator.mutate_ast(tree, seed=42, mutations=5)
+
+        # Should apply exactly 5 mutations
+        self.assertEqual(len(transformers), 5)
+
+    def test_mutate_with_seed(self):
+        """Test that same seed produces same mutations."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1 + 2
+                y = x * 3
+                for i in range(10):
+                    z = i + y
+        """)
+
+        mutator = ASTMutator()
+        result1 = mutator.mutate(code, seed=123)
+        result2 = mutator.mutate(code, seed=123)
+
+        # Same seed should produce same result
+        self.assertEqual(result1, result2)
+
+        # Different seed should produce different result (with high probability)
+        result3 = mutator.mutate(code, seed=456)
+        # If they're still the same, try more seeds
+        if result1 == result3:
+            result3 = mutator.mutate(code, seed=789)
+        self.assertNotEqual(result1, result3)
+
+    def test_mutate_invalid_syntax(self):
+        """Test mutating code with invalid syntax."""
+        code = "this is not valid python"
+
+        mutator = ASTMutator()
+        result = mutator.mutate(code)
+
+        # Should return error comment
+        self.assertIn("# Original code failed to parse:", result)
+
+    def test_mutate_list_as_tree(self):
+        """Test mutating when tree is a list."""
+        statements = [
+            ast.Assign(targets=[ast.Name(id="x", ctx=ast.Store())], value=ast.Constant(value=1)),
+            ast.Assign(targets=[ast.Name(id="y", ctx=ast.Store())], value=ast.Constant(value=2)),
+        ]
+
+        mutator = ASTMutator()
+        mutated_tree, _ = mutator.mutate_ast(statements, seed=42)
+
+        # Should wrap in Module
+        self.assertIsInstance(mutated_tree, ast.Module)
+        self.assertGreaterEqual(len(mutated_tree.body), 2)
+
+    def test_all_mutators_available(self):
+        """Test that all mutators are available in ASTMutator."""
+        mutator = ASTMutator()
+
+        # Check some key mutators are present
+        mutator_names = [m.__name__ for m in mutator.transformers]
+
+        self.assertIn("OperatorSwapper", mutator_names)
+        self.assertIn("GCInjector", mutator_names)
+        self.assertIn("TypeInstabilityInjector", mutator_names)
+        self.assertIn("GuardRemover", mutator_names)
+
+        # Should have many mutators
+        self.assertGreater(len(mutator.transformers), 20)
+
+    def test_mutator_with_complex_ast(self):
+        """Test mutator with complex nested AST."""
+        code = dedent("""
+            def uop_harness_test():
+                class Inner:
+                    def method(self):
+                        for i in range(10):
+                            if i > 5:
+                                try:
+                                    x = 1 / i
+                                except ZeroDivisionError:
+                                    pass
+                                finally:
+                                    y = 2
+                return Inner()
+        """)
+
+        mutator = ASTMutator()
+        mutated_code = mutator.mutate(code, seed=42)
+
+        # Should handle complex nested structure
+        self.assertIsInstance(mutated_code, str)
+        tree = ast.parse(mutated_code)
+        self.assertIsInstance(tree, ast.Module)
+
+    def test_multiple_mutations_pipeline(self):
+        """Test applying multiple mutations in sequence."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+                y = 2
+                for i in range(10):
+                    result = x + y * i
+                return result
+        """)
+
+        mutator = ASTMutator()
+
+        # Apply mutations multiple times
+        mutated = code
+        for i in range(3):
+            mutated = mutator.mutate(mutated, seed=i)
+            # Each iteration should produce valid code
+            tree = ast.parse(mutated)
+            self.assertIsInstance(tree, ast.Module)
+
+    def test_normalizer_then_mutate(self):
+        """Test normalizing then mutating."""
+        code = dedent("""
+            import gc
+            import random
+
+            fuzzer_rng = random.Random(42)
+            gc.set_threshold(1)
+
+            def uop_harness_test():
+                if random() > 10:
+                    return x
+        """)
+
+        # First parse
+        tree = ast.parse(code)
+
+        # Apply normalizer
+        normalizer = FuzzerSetupNormalizer()
+        normalized = normalizer.visit(tree)
+
+        # Check normalization worked
+        normalized_code = ast.unparse(normalized)
+        self.assertIn("fuzzer_rng.random()", normalized_code)
+
+        # Then mutate with a seed that won't apply GCInjector
+        mutator = ASTMutator()
+        with patch("random.seed"):
+            with patch("random.randint", return_value=1):
+                with patch("random.choices", return_value=[OperatorSwapper]):
+                    mutated, _ = mutator.mutate_ast(normalized, seed=42)
+
+        final_code = ast.unparse(mutated)
+        # Should still have the normalized random call
+        self.assertIn("fuzzer_rng.random", final_code)
+
+    def test_complex_evil_object_scenario(self):
+        """Test combining multiple evil object generators."""
+        # Generate a scenario using multiple evil objects
+        code = dedent(f"""
+            {genStatefulBoolObject("bool_obj")}
+            {genStatefulIndexObject("idx_obj")}
+
+            def uop_harness_test():
+                data = [1, 2, 3, 4, 5]
+                if bool_obj:
+                    result = data[idx_obj]
+                return result
+        """)
+
+        # Parse and mutate
+        mutator = ASTMutator()
+        mutated = mutator.mutate(code, seed=42)
+
+        # Should produce valid code
+        tree = ast.parse(mutated)
+        self.assertIsInstance(tree, ast.Module)
 
 
 class TestSlicingMutator(unittest.TestCase):

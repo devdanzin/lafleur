@@ -15,9 +15,284 @@ from unittest.mock import patch
 from lafleur.mutators.scenarios_types import (
     CodeObjectSwapper,
     DescriptorChaosGenerator,
+    FunctionPatcher,
+    InlineCachePolluter,
+    LoadAttrPolluter,
     MROShuffler,
+    ManyVarsInjector,
     SuperResolutionAttacker,
+    TypeInstabilityInjector,
+    TypeIntrospectionMutator,
 )
+from lafleur.mutators.utils import FuzzerSetupNormalizer
+
+
+class TestTypeInstabilityInjector(unittest.TestCase):
+    """Test TypeInstabilityInjector mutator."""
+
+    def setUp(self):
+        """Set random seed for reproducible tests."""
+        random.seed(42)
+
+    def test_type_instability_injector(self):
+        """Test TypeInstabilityInjector mutator."""
+        code = dedent("""
+            def uop_harness_test():
+                for i in range(100):
+                    x = i * 2
+                    y = x + 1
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.05):
+            with patch("random.choice", side_effect=lambda x: x[0] if isinstance(x, list) else x):
+                mutator = TypeInstabilityInjector()
+                mutated = mutator.visit(tree)
+
+        # Should have wrapped loop body in try/except
+        func = mutated.body[0]
+        loop = func.body[0]
+        self.assertIsInstance(loop.body[0], ast.Try)
+
+    def test_type_instability_with_no_loop_var(self):
+        """Test TypeInstabilityInjector with tuple target."""
+        code = dedent("""
+            def uop_harness_test():
+                for a, b in [(1, 2)]:
+                    x = a + b
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.05):
+            mutator = TypeInstabilityInjector()
+            mutated = mutator.visit(tree)
+
+        # Should not crash, should return unchanged
+        self.assertIsInstance(mutated, ast.Module)
+
+
+class TestInlineCachePolluter(unittest.TestCase):
+    """Test InlineCachePolluter mutator."""
+
+    def setUp(self):
+        """Set random seed for reproducible tests."""
+        random.seed(42)
+
+    def test_inline_cache_polluter(self):
+        """Test InlineCachePolluter mutator."""
+        code = dedent("""
+            def uop_harness_test():
+                pass
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.05):
+            mutator = InlineCachePolluter()
+            mutated = mutator.visit(tree)
+
+        # Should have injected polluter classes
+        func = mutated.body[0]
+        # Check for class definitions
+        has_class = any(isinstance(stmt, ast.ClassDef) for stmt in func.body)
+        self.assertTrue(has_class)
+
+
+class TestLoadAttrPolluter(unittest.TestCase):
+    """Test LoadAttrPolluter mutator."""
+
+    def setUp(self):
+        """Set random seed for reproducible tests."""
+        random.seed(42)
+
+    def test_load_attr_polluter(self):
+        """Test LoadAttrPolluter mutator."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.05):
+            mutator = LoadAttrPolluter()
+            mutated = mutator.visit(tree)
+
+        # Should have injected LOAD_ATTR pollution scenario
+        func = mutated.body[0]
+        # Look for ShapeA/B/C/D classes
+        class_names = [stmt.name for stmt in func.body if isinstance(stmt, ast.ClassDef)]
+        shape_classes = [name for name in class_names if "ShapeA_" in name or "ShapeB_" in name]
+        self.assertGreater(len(shape_classes), 0)
+
+        # Should have loop accessing payload attribute
+        code_str = ast.unparse(func)
+        self.assertIn("payload", code_str)
+        self.assertIn("obj.payload", code_str)
+
+
+class TestManyVarsInjector(unittest.TestCase):
+    """Test ManyVarsInjector mutator."""
+
+    def setUp(self):
+        """Set random seed for reproducible tests."""
+        random.seed(42)
+
+    def test_many_vars_injector(self):
+        """Test ManyVarsInjector mutator."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.03):
+            with patch("random.randint", return_value=1234):
+                mutator = ManyVarsInjector()
+                mutated = mutator.visit(tree)
+
+        # Should have injected many variables
+        func = mutated.body[0]
+        # Count variable assignments
+        var_assigns = [stmt for stmt in func.body if isinstance(stmt, ast.Assign)]
+        # Should have at least 260 new variables plus the original
+        self.assertGreater(len(var_assigns), 260)
+
+        # Check variable naming pattern
+        code_str = ast.unparse(func)
+        self.assertIn("mv_1234_0", code_str)
+        self.assertIn("mv_1234_259", code_str)
+
+    def test_many_vars_with_existing_vars(self):
+        """Test ManyVarsInjector with existing variables."""
+        code = dedent("""
+            def uop_harness_test():
+                existing_var_1 = 10
+                existing_var_2 = 20
+                return existing_var_1 + existing_var_2
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.03):
+            mutator = ManyVarsInjector()
+            mutated = mutator.visit(tree)
+
+        # Should preserve existing variables and add new ones
+        func = mutated.body[0]
+        # First assignments should be the many new variables
+        # Last statements should be the original code
+        self.assertEqual(func.body[-2].targets[0].id, "existing_var_2")
+        self.assertIsInstance(func.body[-1], ast.Return)
+
+
+class TestTypeIntrospectionMutator(unittest.TestCase):
+    """Test TypeIntrospectionMutator mutator."""
+
+    def setUp(self):
+        """Set random seed for reproducible tests."""
+        random.seed(42)
+
+    def test_type_introspection_mutator(self):
+        """Test TypeIntrospectionMutator mutator."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+                if isinstance(x, int):
+                    y = 2
+                if hasattr(x, 'foo'):
+                    z = 3
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.1):
+            with patch("random.choice", side_effect=lambda x: x[0] if isinstance(x, list) else x):
+                mutator = TypeIntrospectionMutator()
+                mutated = mutator.visit(tree)
+
+        # Should have injected attack scenario
+        func = mutated.body[0]
+        code_str = ast.unparse(func)
+
+        # Should contain either isinstance or hasattr attack
+        has_isinstance_attack = "isinstance attack" in code_str or "poly_isinstance" in code_str
+        has_hasattr_attack = "hasattr" in code_str and "fuzzer_attr" in code_str
+        self.assertTrue(has_isinstance_attack or has_hasattr_attack)
+
+    def test_type_introspection_with_normalizer(self):
+        """Test TypeIntrospectionMutator with FuzzerSetupNormalizer."""
+        code = dedent("""
+            import random
+
+            def uop_harness_test():
+                if random() > 0.1:
+                    if isinstance(x, float):
+                        return True
+        """)
+
+        # First normalize
+        tree = ast.parse(code)
+        normalizer = FuzzerSetupNormalizer()
+        normalized = normalizer.visit(tree)
+
+        # Verify normalization
+        code_before_mutation = ast.unparse(normalized)
+        self.assertIn("fuzzer_rng.random()", code_before_mutation)
+
+        # The test was checking for fuzzer_rng.random after mutation,
+        # but the mutator prepends attack code. The original normalized
+        # code is still there, just later in the function.
+        with patch("random.random", return_value=0.1):
+            mutator = TypeIntrospectionMutator()
+            mutated = mutator.visit(normalized)
+
+        code_str = ast.unparse(mutated)
+        # The normalized call is still there, just after the attack
+        self.assertIn("fuzzer_rng.random()", code_str)
+
+    def test_type_introspection_polymorphic_output(self):
+        """Test TypeIntrospectionMutator polymorphic attack output."""
+        code = dedent("""
+            def uop_harness_test():
+                if isinstance(x, str):
+                    pass
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", side_effect=[0.1, 0.3]):  # Force polymorphic attack
+            mutator = TypeIntrospectionMutator()
+            mutated = mutator.visit(tree)
+
+        output = ast.unparse(mutated)
+        # Should contain polymorphic list and isinstance with str
+        self.assertIn("_poly_list = [1, 'a', 3.0, [], (), {}, True, b'bytes']", output)
+        self.assertIn("isinstance(poly_variable, str)", output)
+
+
+class TestFunctionPatcher(unittest.TestCase):
+    """Test FunctionPatcher mutator."""
+
+    def setUp(self):
+        """Set random seed for reproducible tests."""
+        random.seed(42)
+
+    def test_function_patcher(self):
+        """Test FunctionPatcher mutator."""
+        code = dedent("""
+            def uop_harness_test():
+                pass
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.05):
+            with patch("random.choice", side_effect=lambda x: x[0]):
+                mutator = FunctionPatcher()
+                mutated = mutator.visit(tree)
+
+        # Should have injected function patching scenario
+        func = mutated.body[0]
+        # Look for victim_func definition
+        has_victim_func = any(
+            isinstance(stmt, ast.FunctionDef) and "victim_func" in stmt.name for stmt in func.body
+        )
+        self.assertTrue(has_victim_func)
 
 
 class TestDescriptorChaosGenerator(unittest.TestCase):

@@ -12,7 +12,215 @@ import unittest
 from textwrap import dedent
 from unittest.mock import patch
 
-from lafleur.mutators.scenarios_runtime import FrameManipulator, WeakRefCallbackChaos
+from lafleur.mutators.scenarios_runtime import (
+    FrameManipulator,
+    GCInjector,
+    GlobalInvalidator,
+    SideEffectInjector,
+    StressPatternInjector,
+    WeakRefCallbackChaos,
+    _create_class_reassignment_node,
+    _create_dict_swap_node,
+    _create_method_patch_node,
+    _create_type_corruption_node,
+    _create_uop_attribute_deletion_node,
+)
+
+
+class TestHelperFunctions(unittest.TestCase):
+    """Test helper functions used by mutators."""
+
+    def test_create_type_corruption_node(self):
+        """Test type corruption node generation."""
+        nodes = _create_type_corruption_node("test_var")
+        self.assertEqual(len(nodes), 1)
+        self.assertIsInstance(nodes[0], ast.Assign)
+        self.assertEqual(nodes[0].targets[0].id, "test_var")
+        # Value should be one of the corruption values
+        self.assertIsInstance(nodes[0].value, ast.Constant)
+
+    def test_create_uop_attribute_deletion_node(self):
+        """Test attribute deletion node generation."""
+        nodes = _create_uop_attribute_deletion_node("test_obj")
+        self.assertEqual(len(nodes), 1)
+        self.assertIsInstance(nodes[0], ast.Delete)
+        self.assertIsInstance(nodes[0].targets[0], ast.Attribute)
+        self.assertEqual(nodes[0].targets[0].value.id, "test_obj")
+
+    def test_create_method_patch_node(self):
+        """Test method patching node generation."""
+        nodes = _create_method_patch_node("test_obj")
+        self.assertEqual(len(nodes), 1)
+        self.assertIsInstance(nodes[0], ast.Assign)
+        self.assertIsInstance(nodes[0].value, ast.Lambda)
+
+    def test_create_dict_swap_node(self):
+        """Test dict swap node generation."""
+        nodes = _create_dict_swap_node("obj1", "obj2")
+        self.assertEqual(len(nodes), 1)
+        self.assertIsInstance(nodes[0], ast.Assign)
+        # Check it's a tuple assignment
+        self.assertIsInstance(nodes[0].targets[0], ast.Tuple)
+        self.assertEqual(len(nodes[0].targets[0].elts), 2)
+
+    def test_create_class_reassignment_node(self):
+        """Test class reassignment node generation."""
+        nodes = _create_class_reassignment_node("test_obj")
+        self.assertEqual(len(nodes), 2)
+        self.assertIsInstance(nodes[0], ast.ClassDef)
+        self.assertIsInstance(nodes[1], ast.Assign)
+
+
+class TestStressPatternInjector(unittest.TestCase):
+    """Test StressPatternInjector mutator."""
+
+    def setUp(self):
+        """Set random seed for reproducible tests."""
+        random.seed(42)
+
+    def test_stress_pattern_injector(self):
+        """Test StressPatternInjector mutator."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+                y = 2
+                return x + y
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.1):
+            with patch("random.choice", side_effect=lambda x: x[0]):
+                mutator = StressPatternInjector()
+                mutated = mutator.visit(tree)
+
+        # Should have injected stress pattern
+        func = mutated.body[0]
+        self.assertIsInstance(func, ast.FunctionDef)
+        # Body should have more statements
+        self.assertGreater(len(func.body), 3)
+
+    def test_stress_pattern_injector_no_vars(self):
+        """Test StressPatternInjector with no local variables."""
+        code = dedent("""
+            def uop_harness_test():
+                pass
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.1):
+            mutator = StressPatternInjector()
+            mutated = mutator.visit(tree)
+
+        # Should handle gracefully
+        self.assertIsInstance(mutated, ast.Module)
+
+
+class TestSideEffectInjector(unittest.TestCase):
+    """Test SideEffectInjector mutator."""
+
+    def setUp(self):
+        """Set random seed for reproducible tests."""
+        random.seed(42)
+
+    def test_side_effect_injector(self):
+        """Test SideEffectInjector mutator."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+                y = 2
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.1):
+            with patch("random.choice", side_effect=lambda x: x[0] if isinstance(x, list) else x):
+                mutator = SideEffectInjector()
+                mutated = mutator.visit(tree)
+
+        # Should have injected __del__ side effect
+        func = mutated.body[0]
+        # Look for FrameModifier class
+        has_frame_modifier = any(
+            isinstance(stmt, ast.ClassDef) and "FrameModifier" in stmt.name for stmt in func.body
+        )
+        self.assertTrue(has_frame_modifier)
+
+
+class TestGlobalInvalidator(unittest.TestCase):
+    """Test GlobalInvalidator mutator."""
+
+    def setUp(self):
+        """Set random seed for reproducible tests."""
+        random.seed(42)
+
+    def test_global_invalidator(self):
+        """Test GlobalInvalidator mutator."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.05):
+            with patch("random.randint", side_effect=[0, 12345]):
+                mutator = GlobalInvalidator()
+                mutated = mutator.visit(tree)
+
+        # Should have injected globals() assignment
+        func = mutated.body[0]
+        # Look for globals() call
+        has_globals = any(
+            isinstance(stmt, ast.Assign)
+            and isinstance(stmt.targets[0], ast.Subscript)
+            and isinstance(stmt.targets[0].value, ast.Call)
+            and isinstance(stmt.targets[0].value.func, ast.Name)
+            and stmt.targets[0].value.func.id == "globals"
+            for stmt in func.body
+        )
+        self.assertTrue(has_globals)
+
+
+class TestGCInjector(unittest.TestCase):
+    """Test GCInjector mutator."""
+
+    def setUp(self):
+        """Set random seed for reproducible tests."""
+        random.seed(42)
+
+    def test_gc_injector(self):
+        """Test GCInjector mutator."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.1):
+            with patch("random.choices", return_value=[1]):
+                mutator = GCInjector()
+                mutated = mutator.visit(tree)
+
+        # Should have injected import gc and gc.set_threshold
+        func = mutated.body[0]
+        self.assertIsInstance(func.body[0], ast.Import)
+        self.assertEqual(func.body[0].names[0].name, "gc")
+        self.assertIsInstance(func.body[1], ast.Expr)
+
+    def test_gc_injector_output(self):
+        """Test GCInjector produces correct code."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.1):
+            with patch("random.choices", return_value=[10]):
+                mutator = GCInjector()
+                mutated = mutator.visit(tree)
+
+        output = ast.unparse(mutated)
+        self.assertIn("import gc", output)
+        self.assertIn("gc.set_threshold(10)", output)
 
 
 class TestFrameManipulator(unittest.TestCase):

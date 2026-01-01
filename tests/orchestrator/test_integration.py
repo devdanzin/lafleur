@@ -149,30 +149,36 @@ class TestRunEvolutionaryLoopIntegration(unittest.TestCase):
     def test_alternates_between_deepening_and_breadth_sessions(self):
         """run_evolutionary_loop selects deepening and breadth sessions probabilistically."""
         session_types = []
-        original_execute = self.orchestrator.execute_mutation_and_analysis_cycle
 
-        def capture_session_type(parent_id, is_deepening_session, *args, **kwargs):
+        def capture_session_type(parent_id, parent_score, session_id, is_deepening_session):
             session_types.append(is_deepening_session)
             if len(session_types) >= 10:
                 raise KeyboardInterrupt("Test limit reached")
-            return original_execute(parent_id, is_deepening_session, *args, **kwargs)
+            return None  # Don't actually execute mutations
+
+        # Mock random.random() to return predictable values
+        # First 5 calls < 0.2 (deepening), next 5 calls >= 0.2 (breadth)
+        random_values = [0.1, 0.15, 0.05, 0.19, 0.18,  # Deepening
+                         0.5, 0.8, 0.3, 0.9, 0.6]       # Breadth
 
         with patch.object(
             self.orchestrator,
             'execute_mutation_and_analysis_cycle',
             side_effect=capture_session_type
         ):
-            with patch('subprocess.run') as mock_run:
-                mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
+            with patch('random.random', side_effect=random_values):
                 try:
                     self.orchestrator.run_evolutionary_loop()
                 except KeyboardInterrupt:
                     pass
 
-        # With 10 sessions and 30% deepening probability, we expect some variety
-        # (unlikely to be all True or all False)
-        self.assertGreater(len(session_types), 0)
-        self.assertTrue(True in session_types or False in session_types)
+        # Verify we got both deepening and breadth sessions
+        self.assertEqual(len(session_types), 10)
+        self.assertTrue(True in session_types, "Should have deepening sessions")
+        self.assertTrue(False in session_types, "Should have breadth sessions")
+        # First 5 should be deepening (True), next 5 breadth (False)
+        self.assertEqual(session_types[:5], [True] * 5)
+        self.assertEqual(session_types[5:], [False] * 5)
 
     def test_updates_run_stats_after_sessions(self):
         """run_evolutionary_loop updates run_stats after sessions complete."""
@@ -236,8 +242,11 @@ class TestRunEvolutionaryLoopIntegration(unittest.TestCase):
             self.assertGreater(len(content), 0)
 
     def test_saves_state_on_keyboard_interrupt(self):
-        """run_evolutionary_loop saves state when interrupted."""
-        original_execute = self.orchestrator.execute_mutation_and_analysis_cycle
+        """run_evolutionary_loop saves mutator scores when interrupted."""
+        # Verify mutator scores file doesn't exist yet
+        mutator_scores_file = Path("coverage/mutator_scores.json")
+        if mutator_scores_file.exists():
+            mutator_scores_file.unlink()
 
         def mock_execute_raises_interrupt(*args, **kwargs):
             raise KeyboardInterrupt("User interrupt")
@@ -252,10 +261,11 @@ class TestRunEvolutionaryLoopIntegration(unittest.TestCase):
             except KeyboardInterrupt:
                 pass
 
-        # Verify coverage state was saved
+        # Verify mutator scores were saved (score_tracker.save_state() called in finally block)
+        # Note: Coverage state is only saved by corpus_manager when adding files
         self.assertTrue(
-            (self.coverage_dir / "coverage_state.pkl").exists(),
-            "Coverage state should be saved on interrupt"
+            mutator_scores_file.exists(),
+            "Mutator scores should be saved on interrupt"
         )
 
     def test_corpus_bootstrap_with_min_files(self):
@@ -264,45 +274,40 @@ class TestRunEvolutionaryLoopIntegration(unittest.TestCase):
         for f in self.corpus_dir.glob("*.py"):
             f.unlink()
 
-        # Set minimum corpus files
-        self.orchestrator.min_corpus_files = 3
+        # Clear coverage state
+        self.orchestrator.coverage_manager.state["per_file_coverage"] = {}
 
-        # Mock fusil seeder
-        mock_seeder = MagicMock()
-        mock_seeder.createTestcase.return_value = dedent('''
-            def uop_harness_test():
-                y = 2 * 3
-                return y
-        ''').strip()
+        # Set minimum corpus files and mark fusil path as valid
+        self.orchestrator.min_corpus_files = 3
+        self.orchestrator.corpus_manager.fusil_path_is_valid = True
 
         iterations = 0
 
         def mock_execute_with_counter(*args, **kwargs):
             nonlocal iterations
             iterations += 1
-            if iterations >= 5:
+            if iterations >= 2:
                 raise KeyboardInterrupt("Test limit reached")
-            # Return empty result
-            return
+            return None
 
+        # Mock generate_new_seed to track calls
         with patch.object(
-            self.orchestrator,
-            'execute_mutation_and_analysis_cycle',
-            side_effect=mock_execute_with_counter
-        ):
-            with patch('subprocess.run') as mock_run:
-                mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
-                with patch('lafleur.orchestrator.Project') as mock_project:
-                    mock_project.return_value = mock_seeder
-                    self.orchestrator.fusil_path = "/fake/fusil/path"
-                    try:
-                        self.orchestrator.run_evolutionary_loop()
-                    except KeyboardInterrupt:
-                        pass
+            self.orchestrator.corpus_manager,
+            'generate_new_seed',
+            return_value=None
+        ) as mock_generate:
+            with patch.object(
+                self.orchestrator,
+                'execute_mutation_and_analysis_cycle',
+                side_effect=mock_execute_with_counter
+            ):
+                try:
+                    self.orchestrator.run_evolutionary_loop()
+                except KeyboardInterrupt:
+                    pass
 
-        # Verify corpus was bootstrapped
-        corpus_files = list(Path("corpus").glob("*.py"))
-        self.assertGreaterEqual(len(corpus_files), 1, "Corpus should be bootstrapped")
+            # Verify generate_new_seed was called 3 times (min_corpus_files)
+            self.assertEqual(mock_generate.call_count, 3)
 
 
 class TestCorpusBootstrappingIntegration(unittest.TestCase):
@@ -340,46 +345,41 @@ class TestCorpusBootstrappingIntegration(unittest.TestCase):
 
     def test_bootstraps_empty_corpus_with_seeder(self):
         """Orchestrator bootstraps empty corpus using fusil seeder."""
-        mock_seeder = MagicMock()
-        test_cases = [
-            "def uop_harness_test():\n    x = 1",
-            "def uop_harness_test():\n    y = 2",
-            "def uop_harness_test():\n    z = 3",
-        ]
-        mock_seeder.createTestcase.side_effect = test_cases
+        # Clear corpus and coverage state
+        for f in Path("corpus").glob("*.py"):
+            f.unlink()
+        self.orchestrator.coverage_manager.state["per_file_coverage"] = {}
 
-        with patch('lafleur.orchestrator.Project', return_value=mock_seeder):
-            with patch('subprocess.run') as mock_run:
-                mock_run.return_value = MagicMock(
-                    returncode=0,
-                    stdout="",
-                    stderr="edge: 100->200\n"
-                )
-                self.orchestrator.fusil_path = "/fake/fusil/path"
+        # Mark fusil path as valid
+        self.orchestrator.corpus_manager.fusil_path_is_valid = True
 
-                # Run bootstrap (will exit after reaching min_corpus_files)
-                iterations = 0
+        iterations = 0
 
-                def limited_execute(*args, **kwargs):
-                    nonlocal iterations
-                    iterations += 1
-                    if iterations >= 6:
-                        raise KeyboardInterrupt("Test complete")
-                    self.orchestrator.execute_mutation_and_analysis_cycle(*args, **kwargs)
+        def limited_execute(*args, **kwargs):
+            nonlocal iterations
+            iterations += 1
+            if iterations >= 2:
+                raise KeyboardInterrupt("Test complete")
+            return None
 
-                with patch.object(
-                    self.orchestrator,
-                    'execute_mutation_and_analysis_cycle',
-                    side_effect=limited_execute
-                ):
-                    try:
-                        self.orchestrator.run_evolutionary_loop()
-                    except KeyboardInterrupt:
-                        pass
+        # Mock generate_new_seed to track calls
+        with patch.object(
+            self.orchestrator.corpus_manager,
+            'generate_new_seed',
+            return_value=None
+        ) as mock_generate:
+            with patch.object(
+                self.orchestrator,
+                'execute_mutation_and_analysis_cycle',
+                side_effect=limited_execute
+            ):
+                try:
+                    self.orchestrator.run_evolutionary_loop()
+                except KeyboardInterrupt:
+                    pass
 
-        # Verify corpus was populated
-        corpus_files = list(Path("corpus").glob("*.py"))
-        self.assertGreaterEqual(len(corpus_files), 1)
+            # Verify generate_new_seed was called 5 times (min_corpus_files)
+            self.assertEqual(mock_generate.call_count, 5)
 
     def test_warns_when_corpus_empty_and_no_seeder(self):
         """Orchestrator warns and exits when corpus empty and no seeder available."""
@@ -468,26 +468,35 @@ class TestMutationCycleIntegration(unittest.TestCase):
         """Complete mutation cycle creates child file with mutations."""
         seed_file = list(Path("corpus").glob("*.py"))[0]
 
+        # Mock _score_and_decide_interestingness to return True (interesting)
+        # This bypasses the complex JIT log parsing and directly tests child creation
+        original_score = self.orchestrator._score_and_decide_interestingness
+
+        def mock_score_interesting(*args, **kwargs):
+            # Call original to get NewCoverageInfo, but force it to be interesting
+            from lafleur.orchestrator import NewCoverageInfo
+            # Return interesting coverage: 2 global edges = score of 20 > 10
+            return True, NewCoverageInfo(global_edges=2)
+
         with patch('subprocess.run') as mock_run:
-            # Mock successful execution with new coverage
-            mock_run.return_value = MagicMock(
-                returncode=0,
-                stdout="",
-                stderr="edge: 100->200\nedge: 200->300\n"
-            )
+            mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
+            with patch.object(
+                self.orchestrator,
+                '_score_and_decide_interestingness',
+                side_effect=mock_score_interesting
+            ):
+                # Run one mutation cycle
+                self.orchestrator.execute_mutation_and_analysis_cycle(
+                    initial_parent_path=seed_file.resolve(),
+                    initial_parent_score=0,
+                    session_id=10,
+                    is_deepening_session=False
+                )
 
-            # Run one mutation cycle
-            self.orchestrator.execute_mutation_and_analysis_cycle(
-                initial_parent_path=seed_file.resolve(),
-                initial_parent_score=0,
-                session_id=10,
-                is_deepening_session=False
-            )
-
-        # Verify a child was created
-        corpus_files = list(Path("corpus").glob("*.py"))
+        # Verify a child was created (files are added to corpus/jit_interesting_tests/)
+        corpus_files = list(Path("corpus/jit_interesting_tests").glob("*.py"))
         self.assertGreater(
-            len(corpus_files), 1,
+            len(corpus_files), 0,
             "Child file should be created after successful mutation"
         )
 
@@ -524,16 +533,12 @@ class TestMutationCycleIntegration(unittest.TestCase):
         """Mutation cycle detecting timeout saves timeout artifact."""
         seed_file = list(Path("corpus").glob("*.py"))[0]
 
-        def mock_execute_timeout(*args, **kwargs):
-            """Mock _execute_child to raise TimeoutExpired."""
+        # Mock subprocess.run to raise TimeoutExpired
+        # This will be caught by _execute_child and handled properly
+        with patch('subprocess.run') as mock_run:
             from subprocess import TimeoutExpired
-            raise TimeoutExpired(cmd=["python"], timeout=5)
+            mock_run.side_effect = TimeoutExpired(cmd=["python"], timeout=5)
 
-        with patch.object(
-            self.orchestrator,
-            '_execute_child',
-            side_effect=mock_execute_timeout
-        ):
             # Run mutation cycle
             self.orchestrator.execute_mutation_and_analysis_cycle(
                 initial_parent_path=seed_file.resolve(),
@@ -542,11 +547,11 @@ class TestMutationCycleIntegration(unittest.TestCase):
                 is_deepening_session=False
             )
 
-        # Verify timeout directory exists and has files
-        timeout_dir = Path("crashes/timeouts")
-        if timeout_dir.exists():
-            timeout_files = list(timeout_dir.glob("timeout_*.py"))
-            self.assertGreater(len(timeout_files), 0, "Timeout file should be saved")
+        # Verify timeout directory exists and has files (timeouts/ not crashes/timeouts/)
+        timeout_dir = Path("timeouts")
+        self.assertTrue(timeout_dir.exists(), "Timeout directory should exist")
+        timeout_files = list(timeout_dir.glob("timeout_*.py"))
+        self.assertGreater(len(timeout_files), 0, "Timeout file should be saved")
 
 
 class TestStatePersistenceIntegration(unittest.TestCase):

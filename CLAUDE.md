@@ -17,13 +17,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ### Testing
 ```bash
 # Run tests (from repository root)
-python -m pytest tests/
+python -m unittest tests
 
 # Run a specific test file
-python -m pytest tests/test_mutator.py
+python -m unittest tests.test_mutator
 
 # Run with verbose output
-python -m pytest -v tests/
+python -m unittest -v tests
 ```
 
 ## Testing Mutators

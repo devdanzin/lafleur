@@ -84,7 +84,7 @@ The orchestrator takes the mutated harness AST and reassembles the full script f
 
   * **Multi-Run Loop:** To handle non-deterministic bugs, the orchestrator enters an inner loop to execute the child multiple times. The number of runs can be a static value from the `--runs` flag or a dynamic value calculated from the parent's score if `--dynamic-runs` is used.
   * **Reproducible Non-determinism:** For each run, a unique but deterministic **`runtime_seed`** is generated. This seed is injected into the child's script to initialize an internal `fuzzer_rng` object. This allows any `if fuzzer_rng.random() < ...:` branches to behave differently on each run, while ensuring the entire process can be reproduced.
-  * **Subprocess Execution:** The code is written to a temporary file and executed in an isolated `subprocess`. Critically, the subprocess is launched with the necessary environment variables (`PYTHON_JIT=1`, `PYTHON_LLTRACE=4`, etc.) to enable the JIT and capture its verbose debug logs. The orchestrator waits for the process to complete (or time out) and captures its results.
+  * **Subprocess Execution:** The code is written to a temporary file and executed in an isolated `subprocess`. Critically, the subprocess is launched with the necessary environment variables (`PYTHON_JIT=1`, `PYTHON_LLTRACE=2`, etc.) to enable the JIT and capture its verbose debug logs. The orchestrator waits for the process to complete (or time out) and captures its results.
 
 ### Step 4: Analysis, Corpus Update, and Loop Control
 

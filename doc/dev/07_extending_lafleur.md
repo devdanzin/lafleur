@@ -16,18 +16,26 @@ The process involves three simple steps.
 
 #### **Step 1: Create the Transformer Class**
 
-All mutator classes live in `lafleur/mutator.py`. A new mutator is simply a new class that inherits from `ast.NodeTransformer`.
+Mutator classes are now organized by category in the `lafleur/mutators/` package.
+* **Generic mutations** go in `lafleur/mutators/generic.py`.
+* **Control flow attacks** go in `lafleur/mutators/scenarios_control.py`.
+* **Data model attacks** go in `lafleur/mutators/scenarios_data.py`.
+* **Runtime/State attacks** go in `lafleur/mutators/scenarios_runtime.py`.
+* **Type system attacks** go in `lafleur/mutators/scenarios_types.py`.
+
+Choose the appropriate file (or create a new one) and define your class inheriting from `ast.NodeTransformer`.
 
 ```python
-# In lafleur/mutator.py
+# In lafleur/mutators/your_module.py
 
 import ast
 import random
 
 class MyNewMutator(ast.NodeTransformer):
     """A clear, one-line docstring explaining the mutator's purpose."""
-    
+
     # ... implementation goes here ...
+
 ```
 
 #### **Step 2: Implement a Visitor Method**
@@ -36,7 +44,7 @@ The core logic of your mutator goes into one or more `visit_*` methods. The name
 
 There are two main patterns for creating mutators in `lafleur`:
 
-1.  **Scenario Injection (Safest):** This is the preferred pattern for complex mutations. The mutator operates on a `visit_FunctionDef` and injects a new, self-contained block of code into the function's body. This is robust and guaranteed not to create invalid syntax.
+1. **Scenario Injection (Safest):** This is the preferred pattern for complex mutations. The mutator operates on a `visit_FunctionDef` and injects a new, self-contained block of code into the function's body. This is robust and guaranteed not to create invalid syntax.
 
 ```python
 def visit_FunctionDef(self, node: ast.FunctionDef) -> ast.FunctionDef:
@@ -50,9 +58,10 @@ def visit_FunctionDef(self, node: ast.FunctionDef) -> ast.FunctionDef:
         node.body = new_nodes + node.body
         ast.fix_missing_locations(node)
     return node
+
 ```
 
-2.  **In-Place Modification:** For simpler mutations, you can directly modify the attributes of an AST node. This is used by mutators like `OperatorSwapper` or our `NumericMutator`. This is powerful but requires care to ensure the modification is always syntactically valid.
+2. **In-Place Modification:** For simpler mutations, you can directly modify the attributes of an AST node. This is used by mutators like `OperatorSwapper` or our `NumericMutator`. This is powerful but requires care to ensure the modification is always syntactically valid.
 
 ```python
 def visit_BinOp(self, node: ast.BinOp) -> ast.BinOp:
@@ -60,14 +69,17 @@ def visit_BinOp(self, node: ast.BinOp) -> ast.BinOp:
     if isinstance(node.op, ast.Add):
         node.op = ast.Sub()
     return node
+
 ```
 
 #### **Step 3: Register the New Mutator**
 
-The final step is to make the fuzzer aware of your new mutator. Simply add your new class's name to the `self.transformers` list in `ASTMutator.__init__`.
+The final step is to make the fuzzer aware of your new mutator. Open `lafleur/mutators/engine.py` and add your new class to the `self.transformers` list in `ASTMutator.__init__`. You will also need to import your class at the top of the file.
 
 ```python
-# In lafleur/mutator.py
+# In lafleur/mutators/engine.py
+
+from lafleur.mutators.your_module import MyNewMutator  # Import your class
 
 class ASTMutator:
     def __init__(self):
@@ -75,6 +87,7 @@ class ASTMutator:
             # ... (existing mutators) ...
             MyNewMutator, # Add your new class here
         ]
+
 ```
 
 Your new mutator will now be automatically picked up and used by the fuzzer's "Havoc" and "Spam" strategies.

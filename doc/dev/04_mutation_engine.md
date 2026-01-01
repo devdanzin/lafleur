@@ -2,7 +2,7 @@
 
 ### Introduction
 
-The `lafleur/mutator.py` module is the heart of the fuzzer's creative process. Unlike fuzzers that work on raw text or bytes, `lafleur` operates on the structural representation of Python code, the **Abstract Syntax Tree (AST)**. This allows for intelligent, syntactically correct, and highly complex transformations.
+The `lafleur/mutators/` package is the heart of the fuzzer's creative process. Unlike fuzzers that work on raw text or bytes, `lafleur` operates on the structural representation of Python code, the **Abstract Syntax Tree (AST)**. This allows for intelligent, syntactically correct, and highly complex transformations.
 
 The engine is orchestrated by the `ASTMutator` class, which manages a library of `ast.NodeTransformer` subclasses. When a parent test case is selected for mutation, the orchestrator passes its AST to the `ASTMutator`, which applies a randomized pipeline of these transformers to generate a new and unique child.
 
@@ -68,6 +68,18 @@ This is a library of advanced mutators specifically designed to generate pattern
 * **`MagicMethodMutator`**: Attacks the JIT's data model assumptions by using "evil objects" with misbehaving magic methods (e.g., `__len__`, `__hash__`).
 * **`NumericMutator`**: Attacks JIT optimizations for numeric built-ins (`pow`, `chr`, etc.) by providing them with tricky arguments that test edge cases and error handling paths.
 * **`IterableMutator`**: Attacks the JIT's understanding of the iterator protocol by injecting scenarios with misbehaving iterators.
+* **`BuiltinNamespaceCorruptor`**: Attacks assumptions about built-in functions by replacing them (e.g., `len`, `isinstance`) with malicious proxies in the `builtins` namespace.
+* **`ComprehensionBomb`**: Attacks nested iterator handling by running a list comprehension over a stateful iterator that changes behavior during iteration.
+* **`CoroutineStateCorruptor`**: Attacks `async`/`await` state management by creating a coroutine that corrupts a local variable while suspended.
+* **`ExceptionHandlerMaze`**: Attacks exception handling and trace generation by injecting deeply nested `try/except` blocks with a stateful metaclass that influences `isinstance` checks.
+* **`FrameManipulator`**: Attacks stack frame integrity by injecting a function that uses `sys._getframe()` to modify a local variable in its caller's frame.
+* **`WeakRefCallbackChaos`**: Attacks garbage collection reentrancy by registering a weakref callback that violates a variable's type assumption when triggered.
+* **`DescriptorChaosGenerator`**: Attacks attribute access optimizations by injecting a class with a stateful descriptor that changes the type of the returned value on subsequent accesses.
+* **`MROShuffler`**: Attacks method resolution order caches by injecting a scenario that changes a class's `__bases__` at runtime.
+* **`SuperResolutionAttacker`**: Attacks `super()` call caching by mutating the class hierarchy during a hot loop of `super()` calls.
+* **`CodeObjectSwapper`**: Attacks function execution by hot-swapping the `__code__` object of a function with that of another, incompatible function.
+* **`SysMonitoringMutator`**: Attacks the `sys.monitoring` interactions by registering and unregistering tool IDs during execution.
+* **`AsyncConstructMutator`**: Attacks async-specific UOPs by generating complex `async for` and `async with` patterns.
 
 ---
 

@@ -12,7 +12,17 @@ import unittest
 from textwrap import dedent
 from unittest.mock import patch
 
-from lafleur.mutators.scenarios_data import BuiltinNamespaceCorruptor, ComprehensionBomb
+from lafleur.mutators.scenarios_data import (
+    BuiltinNamespaceCorruptor,
+    ComprehensionBomb,
+    DictPolluter,
+    IterableMutator,
+    MagicMethodMutator,
+    NumericMutator,
+    _create_hash_attack,
+    _create_len_attack,
+    _create_pow_attack,
+)
 
 
 class TestBuiltinNamespaceCorruptor(unittest.TestCase):
@@ -501,6 +511,199 @@ class TestComprehensionBomb(unittest.TestCase):
         iterator_name = "evil_iter_comp_9000"
         # Count occurrences (should be at least 2 for nested loops)
         self.assertGreaterEqual(result.count(iterator_name), 2)
+
+
+class TestHelperFunctions(unittest.TestCase):
+    """Test helper functions used by mutators."""
+
+    def test_create_len_attack(self):
+        """Test len attack generation."""
+        nodes = _create_len_attack("test_prefix")
+
+        # Should generate valid AST nodes
+        self.assertIsInstance(nodes, list)
+        self.assertGreater(len(nodes), 0)
+
+        # Should contain StatefulLen class
+        code = ast.unparse(ast.Module(body=nodes))
+        self.assertIn("StatefulLen", code)
+        self.assertIn("for i_len", code)
+
+    def test_create_hash_attack(self):
+        """Test hash attack generation."""
+        nodes = _create_hash_attack("test_prefix")
+
+        # Should generate valid AST nodes
+        self.assertIsInstance(nodes, list)
+        self.assertGreater(len(nodes), 0)
+
+        # Should contain UnstableHash class
+        code = ast.unparse(ast.Module(body=nodes))
+        self.assertIn("UnstableHash", code)
+        self.assertIn("d = {}", code)
+
+    def test_create_pow_attack(self):
+        """Test pow attack generation."""
+        nodes = _create_pow_attack("test_prefix")
+
+        # Should generate valid AST nodes
+        self.assertIsInstance(nodes, list)
+        self.assertGreater(len(nodes), 0)
+
+        # Should contain pow calls
+        code = ast.unparse(ast.Module(body=nodes))
+        self.assertIn("pow(10, -2)", code)
+        self.assertIn("pow(-10, 0.5)", code)
+
+
+class TestAttackFunctions(unittest.TestCase):
+    """Test attack generation functions."""
+
+    def test_create_len_attack(self):
+        """Test len attack generation."""
+        nodes = _create_len_attack("test_prefix")
+
+        # Should generate valid AST nodes
+        self.assertIsInstance(nodes, list)
+        self.assertGreater(len(nodes), 0)
+
+        # Should contain StatefulLen class
+        code = ast.unparse(ast.Module(body=nodes))
+        self.assertIn("StatefulLen", code)
+        self.assertIn("for i_len", code)
+
+    def test_create_hash_attack(self):
+        """Test hash attack generation."""
+        nodes = _create_hash_attack("test_prefix")
+
+        # Should generate valid AST nodes
+        self.assertIsInstance(nodes, list)
+        self.assertGreater(len(nodes), 0)
+
+        # Should contain UnstableHash class
+        code = ast.unparse(ast.Module(body=nodes))
+        self.assertIn("UnstableHash", code)
+        self.assertIn("d = {}", code)
+
+    def test_create_pow_attack(self):
+        """Test pow attack generation."""
+        nodes = _create_pow_attack("test_prefix")
+
+        # Should generate valid AST nodes
+        self.assertIsInstance(nodes, list)
+        self.assertGreater(len(nodes), 0)
+
+        # Should contain pow calls
+        code = ast.unparse(ast.Module(body=nodes))
+        self.assertIn("pow(10, -2)", code)
+        self.assertIn("pow(-10, 0.5)", code)
+
+
+class TestAdvancedMutators(unittest.TestCase):
+    """Test advanced mutator classes."""
+
+    def setUp(self):
+        """Set random seed for reproducible tests."""
+        random.seed(42)
+
+    def test_dict_polluter_global(self):
+        """Test DictPolluter with global pollution."""
+        code = dedent("""
+            def uop_harness_test():
+                pass
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", side_effect=[0.05, 0.3]):
+            mutator = DictPolluter()
+            mutated = mutator.visit(tree)
+
+        # Should have injected global dict pollution
+        func = mutated.body[0]
+        self.assertGreater(len(func.body), 1)
+
+
+class TestMagicMethodMutators(unittest.TestCase):
+    """Test magic method and numeric mutators."""
+
+    def setUp(self):
+        """Set random seed for reproducible tests."""
+        random.seed(42)
+
+    def test_magic_method_mutator_len_attack(self):
+        """Test MagicMethodMutator with len attack."""
+        code = dedent("""
+            def uop_harness_test():
+                pass
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.1):
+            with patch("random.choice", return_value=_create_len_attack):
+                mutator = MagicMethodMutator()
+                mutated = mutator.visit(tree)
+
+        # Should have injected len attack
+        func = mutated.body[0]
+        # Look for StatefulLen class
+        has_stateful_len = any(
+            isinstance(stmt, ast.ClassDef) and "StatefulLen" in stmt.name for stmt in func.body
+        )
+        self.assertTrue(has_stateful_len)
+
+    def test_numeric_mutator_pow_args(self):
+        """Test NumericMutator mutating pow arguments."""
+        code = "result = pow(2, 3)"
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.05):
+            with patch("random.choice", return_value=(10, -2)):
+                mutator = NumericMutator()
+                mutated = mutator.visit(tree)
+
+        # Check pow arguments were changed
+        call = mutated.body[0].value
+        self.assertEqual(call.args[0].value, 10)
+        self.assertEqual(call.args[1].value, -2)
+
+    def test_numeric_mutator_chr_args(self):
+        """Test NumericMutator mutating chr arguments."""
+        code = "c = chr(65)"
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.05):
+            with patch("random.choice", return_value=-1):
+                mutator = NumericMutator()
+                mutated = mutator.visit(tree)
+
+        # Check chr argument was changed
+        call = mutated.body[0].value
+        self.assertEqual(call.args[0].value, -1)
+
+    def test_iterable_mutator_tuple_attack(self):
+        """Test IterableMutator with tuple attack."""
+        code = dedent("""
+            def uop_harness_test():
+                pass
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.1):
+            # Make it choose _create_tuple_attack
+            def mock_choice(choices):
+                for choice in choices:
+                    if hasattr(choice, "__name__") and "tuple" in choice.__name__:
+                        return choice
+                return choices[0]
+
+            with patch("random.choice", side_effect=mock_choice):
+                mutator = IterableMutator()
+                mutated = mutator.visit(tree)
+
+        # Should have injected tuple attack scenario
+        func = mutated.body[0]
+        code_str = ast.unparse(func)
+        self.assertIn("tuple", code_str)
 
 
 if __name__ == "__main__":

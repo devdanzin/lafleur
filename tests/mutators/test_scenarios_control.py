@@ -14,8 +14,12 @@ from unittest.mock import patch
 
 from lafleur.mutators.scenarios_control import (
     CoroutineStateCorruptor,
+    DeepCallMutator,
     ExceptionHandlerMaze,
+    ExitStresser,
+    GuardExhaustionGenerator,
     RecursionWrappingMutator,
+    TraceBreaker,
 )
 
 
@@ -750,6 +754,150 @@ class TestCoroutineStateCorruptor(unittest.TestCase):
         # Should still be valid
         reparsed = ast.parse(result)
         self.assertIsInstance(reparsed, ast.Module)
+
+
+class TestStressPatternMutators(unittest.TestCase):
+    """Test stress pattern injection mutators."""
+
+    def setUp(self):
+        """Set random seed for reproducible tests."""
+        random.seed(42)
+
+    def test_guard_exhaustion_generator(self):
+        """Test GuardExhaustionGenerator mutator."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.05):
+            mutator = GuardExhaustionGenerator()
+            mutated = mutator.visit(tree)
+
+        # Should have injected isinstance chain
+        func = mutated.body[0]
+        # Should have poly_list setup and loop
+        self.assertGreater(len(func.body), 1)
+
+    def test_exit_stresser(self):
+        """Test ExitStresser mutator."""
+        code = dedent("""
+            def uop_harness_test():
+                pass
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.05):
+            with patch(
+                "random.randint", side_effect=[4567, 7]
+            ):  # prefix and num_branches
+                mutator = ExitStresser()
+                mutated = mutator.visit(tree)
+
+        # Should have injected exit stress scenario
+        func = mutated.body[0]
+        code_str = ast.unparse(func)
+
+        # Should contain the exit stress pattern
+        self.assertIn("exit stress scenario", code_str)
+        self.assertIn("res_es_4567", code_str)
+        # Should have if/elif chain
+        self.assertIn("if i %", code_str)
+        self.assertIn("elif i %", code_str)
+
+
+class TestAdvancedMutators(unittest.TestCase):
+    """Test advanced mutator classes."""
+
+    def setUp(self):
+        """Set random seed for reproducible tests."""
+        random.seed(42)
+
+    def test_trace_breaker(self):
+        """Test TraceBreaker mutator."""
+        code = dedent("""
+            def uop_harness_test():
+                pass
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.05):
+            with patch("random.choice", side_effect=lambda x: x[0]):
+                mutator = TraceBreaker()
+                mutated = mutator.visit(tree)
+
+        # Should have injected trace-breaking scenario
+        func = mutated.body[0]
+        self.assertGreater(len(func.body), 1)
+
+    def test_deep_call_mutator(self):
+        """Test DeepCallMutator."""
+        code = dedent("""
+            def uop_harness_test():
+                pass
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.05):
+            with patch("random.choice", return_value=10):
+                with patch("random.randint", return_value=1234):  # Add prefix mock
+                    mutator = DeepCallMutator()
+                    mutated = mutator.visit(tree)
+
+        # Should have injected deep call chain
+        func = mutated.body[0]
+        # Check the string representation contains function definitions
+        code_str = ast.unparse(func)
+        # The newlines are escaped in the string, check for function pattern
+        self.assertIn("f_0_dc_1234", code_str)
+        self.assertIn("f_9_dc_1234", code_str)
+
+
+class TestMutatorOutput(unittest.TestCase):
+    """Test the output quality of mutators."""
+
+    def test_deep_call_output(self):
+        """Test DeepCallMutator produces valid call chain."""
+        code = dedent("""
+            def uop_harness_test():
+                pass
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.05):
+            with patch("random.choice", return_value=5):
+                with patch("random.randint", return_value=2824):
+                    mutator = DeepCallMutator()
+                    mutated = mutator.visit(tree)
+
+        output = ast.unparse(mutated)
+        # The function definitions are in a string that gets parsed
+        # Check that the attack was injected
+        self.assertIn("Running deep call scenario", output)
+        self.assertIn("f_4_dc_2824", output)  # Top function call
+
+    def test_exit_stresser_output_format(self):
+        """Test ExitStresser produces correctly formatted if/elif chains."""
+        code = dedent("""
+            def uop_harness_test():
+                pass
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.05):
+            with patch(
+                "random.randint", side_effect=[9999, 3]
+            ):  # prefix and 3 branches
+                mutator = ExitStresser()
+                mutated = mutator.visit(tree)
+
+        output = ast.unparse(mutated)
+        # Should have exactly 3 branches
+        self.assertIn("if i % 3 == 0:", output)
+        self.assertIn("elif i % 3 == 1:", output)
+        self.assertIn("elif i % 3 == 2:", output)
+        self.assertIn("res_es_9999", output)
 
 
 if __name__ == "__main__":

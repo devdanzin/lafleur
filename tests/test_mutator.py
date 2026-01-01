@@ -13,11 +13,9 @@ import unittest
 from textwrap import dedent
 from unittest.mock import patch
 
-# Import all classes and functions from mutator
-from lafleur.mutator import (
-    # Main orchestrator
-    ASTMutator,
-    # Basic mutators
+# Import from the reorganized mutators package
+from lafleur.mutators.engine import ASTMutator
+from lafleur.mutators.generic import (
     OperatorSwapper,
     ComparisonSwapper,
     ConstantPerturbator,
@@ -26,41 +24,38 @@ from lafleur.mutator import (
     VariableSwapper,
     StatementDuplicator,
     VariableRenamer,
-    # Stress pattern mutators
-    StressPatternInjector,
-    TypeInstabilityInjector,
-    GuardExhaustionGenerator,
-    InlineCachePolluter,
-    SideEffectInjector,
     ForLoopInjector,
-    GlobalInvalidator,
+    GuardRemover,
+)
+from lafleur.mutators.scenarios_types import (
+    TypeInstabilityInjector,
+    InlineCachePolluter,
     LoadAttrPolluter,
     ManyVarsInjector,
     TypeIntrospectionMutator,
+    FunctionPatcher,
+)
+from lafleur.mutators.scenarios_data import (
     MagicMethodMutator,
     NumericMutator,
     IterableMutator,
-    GCInjector,
     DictPolluter,
-    FunctionPatcher,
+)
+from lafleur.mutators.scenarios_runtime import (
+    GCInjector,
+    SideEffectInjector,
+    GlobalInvalidator,
+    StressPatternInjector,
+)
+from lafleur.mutators.scenarios_control import (
     TraceBreaker,
     ExitStresser,
     DeepCallMutator,
-    GuardRemover,
-    # Utility transformers
+    GuardExhaustionGenerator,
+)
+from lafleur.mutators.utils import (
     FuzzerSetupNormalizer,
     EmptyBodySanitizer,
-    # Helper functions
-    _create_type_corruption_node,
-    _create_uop_attribute_deletion_node,
-    _create_method_patch_node,
-    _create_dict_swap_node,
-    _create_class_reassignment_node,
-    _is_simple_statement,
-    _create_len_attack,
-    _create_hash_attack,
-    _create_pow_attack,
-    # Evil object generators
     genLyingEqualityObject,
     genStatefulLenObject,
     genUnstableHashObject,
@@ -71,6 +66,18 @@ from lafleur.mutator import (
     genStatefulIterObject,
     genStatefulIndexObject,
     genSimpleObject,
+)
+from lafleur.mutators.scenarios_runtime import (
+    _create_type_corruption_node,
+    _create_uop_attribute_deletion_node,
+    _create_method_patch_node,
+    _create_dict_swap_node,
+    _create_class_reassignment_node,
+)
+from lafleur.mutators.scenarios_data import (
+    _create_len_attack,
+    _create_hash_attack,
+    _create_pow_attack,
 )
 
 
@@ -117,23 +124,10 @@ class TestHelperFunctions(unittest.TestCase):
         self.assertIsInstance(nodes[0], ast.ClassDef)
         self.assertIsInstance(nodes[1], ast.Assign)
 
-    def test_is_simple_statement(self):
-        """Test simple statement detection."""
-        # Simple assignment should be True
-        node = ast.parse("x = 1").body[0]
-        self.assertTrue(_is_simple_statement(node))
-
-        # Statement with return should be False
-        node = ast.parse("return x").body[0]
-        self.assertFalse(_is_simple_statement(node))
-
-        # Statement with break should be False
-        node = ast.parse("for i in range(10): break").body[0]
-        self.assertFalse(_is_simple_statement(node.body[0]))
-
-        # Statement with del should be False
-        node = ast.parse("del x").body[0]
-        self.assertFalse(_is_simple_statement(node))
+    # NOTE: _is_simple_statement function was removed in codebase refactor
+    # def test_is_simple_statement(self):
+    #     """Test simple statement detection."""
+    #     pass
 
 
 class TestEvilObjectGenerators(unittest.TestCase):
@@ -658,9 +652,9 @@ class TestStressPatternMutators(unittest.TestCase):
         """)
         tree = ast.parse(code)
 
-        with patch("lafleur.mutator.random.random", return_value=0.05):
+        with patch("random.random", return_value=0.05):
             with patch(
-                "lafleur.mutator.random.randint", side_effect=[4567, 7]
+                "random.randint", side_effect=[4567, 7]
             ):  # prefix and num_branches
                 mutator = ExitStresser()
                 mutated = mutator.visit(tree)
@@ -765,9 +759,9 @@ class TestAdvancedMutators(unittest.TestCase):
         """)
         tree = ast.parse(code)
 
-        with patch("lafleur.mutator.random.random", return_value=0.05):
-            with patch("lafleur.mutator.random.choice", return_value=10):
-                with patch("lafleur.mutator.random.randint", return_value=1234):  # Add prefix mock
+        with patch("random.random", return_value=0.05):
+            with patch("random.choice", return_value=10):
+                with patch("random.randint", return_value=1234):  # Add prefix mock
                     mutator = DeepCallMutator()
                     mutated = mutator.visit(tree)
 
@@ -1471,9 +1465,9 @@ class TestMutatorOutput(unittest.TestCase):
         """)
         tree = ast.parse(code)
 
-        with patch("lafleur.mutator.random.random", return_value=0.05):
+        with patch("random.random", return_value=0.05):
             with patch(
-                "lafleur.mutator.random.randint", side_effect=[9999, 3]
+                "random.randint", side_effect=[9999, 3]
             ):  # prefix and 3 branches
                 mutator = ExitStresser()
                 mutated = mutator.visit(tree)

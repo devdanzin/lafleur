@@ -18,6 +18,7 @@ from lafleur.mutators.generic import (
     AsyncConstructMutator,
     BlockTransposerMutator,
     BoundaryValuesMutator,
+    ComparisonChainerMutator,
     ComparisonSwapper,
     ConstantPerturbator,
     ContainerChanger,
@@ -1364,6 +1365,29 @@ class TestBasicMutators(unittest.TestCase):
         self.assertIsInstance(compare, ast.Compare)
         # Should have swapped the operator
         self.assertIsInstance(compare.ops[0], ast.GtE)
+
+    def test_comparison_chainer(self):
+        """Test ComparisonChainerMutator extends comparisons into chains."""
+        code = "if x < 10: pass"
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.3):
+            with patch("random.choice", side_effect=[ast.Eq, "constant", True]):
+                mutator = ComparisonChainerMutator()
+                mutated = mutator.visit(tree)
+
+        compare = mutated.body[0].test
+        self.assertIsInstance(compare, ast.Compare)
+        # Should have extended to a chained comparison
+        self.assertEqual(len(compare.ops), 2)  # Original Lt + new Eq
+        self.assertEqual(len(compare.comparators), 2)  # Original 10 + new True
+        self.assertIsInstance(compare.ops[0], ast.Lt)  # Original operator
+        self.assertIsInstance(compare.ops[1], ast.Eq)  # Added operator
+        self.assertEqual(compare.comparators[1].value, True)  # Added constant
+
+        # Verify it unparsed to valid syntax
+        result = ast.unparse(mutated)
+        self.assertIn("x < 10 == True", result)
 
     def test_constant_perturbator_int(self):
         """Test ConstantPerturbator on integers."""

@@ -53,6 +53,7 @@ All notable changes to this project should be documented in this file.
 - An `AsyncConstructMutator` targeting async construct UOPs, by @devdanzin.
 - A `SysMonitoringMutator` targeting sys monitoring UOPs, by @devdanzin.
 - A `ReentrantSideEffectMutator` that creates "rug pull" attacks on mutable containers by clearing them during access operations, by @devdanzin.
+- A `ComparisonChainerMutator` that extends simple comparisons into chained comparisons to stress JIT stack management, by @devdanzin.
 
 
 ### Enhanced

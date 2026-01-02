@@ -56,6 +56,8 @@ All notable changes to this project should be documented in this file.
 - A `ComparisonChainerMutator` that extends simple comparisons into chained comparisons to stress JIT stack management, by @devdanzin.
 - A `ContextManagerInjector` that wraps code blocks in context managers to stress-test SETUP_WITH and exception propagation, by @devdanzin.
 - An `ImportChaosMutator` that injects random standard library imports to alter memory layout and global state, by @devdanzin.
+- A `LiteralTypeSwapMutator` that swaps literal constants with different-typed values to stress JIT type specialization and guards, by @devdanzin.
+
 
 
 ### Enhanced

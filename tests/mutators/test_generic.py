@@ -27,6 +27,7 @@ from lafleur.mutators.generic import (
     ForLoopInjector,
     GuardInjector,
     GuardRemover,
+    LiteralTypeSwapMutator,
     NewUnpackingMutator,
     OperatorSwapper,
     PatternMatchingMutator,
@@ -127,6 +128,156 @@ class TestBoundaryValuesMutator(unittest.TestCase):
 
         # Should be parseable
         result = ast.unparse(mutated)
+        reparsed = ast.parse(result)
+        self.assertIsInstance(reparsed, ast.Module)
+
+
+class TestLiteralTypeSwapMutator(unittest.TestCase):
+    """Test LiteralTypeSwapMutator mutator."""
+
+    def test_int_to_float(self):
+        """Test that integer can be swapped to float."""
+        code = "x = 42"
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.3):  # Below 0.5 threshold
+            with patch("random.choice", return_value=42.0):  # float(42)
+                mutator = LiteralTypeSwapMutator()
+                mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should have converted to float
+        self.assertIn("42.0", result)
+
+    def test_int_to_str(self):
+        """Test that integer can be swapped to string."""
+        code = "x = 42"
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.3):
+            with patch("random.choice", return_value="42"):
+                mutator = LiteralTypeSwapMutator()
+                mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should have converted to string
+        self.assertIn("'42'", result)
+
+    def test_str_to_int(self):
+        """Test that digit string can be swapped to int."""
+        code = "x = '100'"
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.3):
+            with patch("random.choice", return_value=100):
+                mutator = LiteralTypeSwapMutator()
+                mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should have converted to int
+        self.assertIn("100", result)
+        self.assertNotIn("'100'", result)
+
+    def test_str_to_bytes(self):
+        """Test that string can be swapped to bytes."""
+        code = "x = 'hello'"
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.3):
+            with patch("random.choice", return_value=b"hello"):
+                mutator = LiteralTypeSwapMutator()
+                mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should have converted to bytes
+        self.assertIn("b'hello'", result)
+
+    def test_float_to_int(self):
+        """Test that float can be swapped to int."""
+        code = "x = 3.14"
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.3):
+            with patch("random.choice", return_value=3):
+                mutator = LiteralTypeSwapMutator()
+                mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should have converted to int
+        self.assertEqual("x = 3", result)
+
+    def test_bool_to_int(self):
+        """Test that bool can be swapped to int."""
+        code = "x = True"
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.3):
+            with patch("random.choice", return_value=1):
+                mutator = LiteralTypeSwapMutator()
+                mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should have converted to int
+        self.assertEqual("x = 1", result)
+
+    def test_none_to_zero(self):
+        """Test that None can be swapped to 0."""
+        code = "x = None"
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.3):
+            with patch("random.choice", return_value=0):
+                mutator = LiteralTypeSwapMutator()
+                mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should have converted to 0
+        self.assertEqual("x = 0", result)
+
+    def test_bytes_to_str(self):
+        """Test that bytes can be swapped to str."""
+        code = "x = b'test'"
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.3):
+            with patch("random.choice", return_value="test"):
+                mutator = LiteralTypeSwapMutator()
+                mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should have converted to str
+        self.assertIn("'test'", result)
+        self.assertNotIn("b'test'", result)
+
+    def test_no_mutation_with_high_probability(self):
+        """Test that mutation doesn't occur above 0.5 threshold."""
+        code = "x = 42"
+        tree = ast.parse(code)
+        original = ast.unparse(tree)
+
+        with patch("random.random", return_value=0.9):  # Above 0.5 threshold
+            mutator = LiteralTypeSwapMutator()
+            mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        self.assertEqual(original, result)
+
+    def test_produces_valid_code(self):
+        """Test that output is valid, parseable Python."""
+        code = dedent("""
+            def test():
+                x = 42
+                y = 'hello'
+                z = 3.14
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.3):
+            mutator = LiteralTypeSwapMutator()
+            mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should be parseable
         reparsed = ast.parse(result)
         self.assertIsInstance(reparsed, ast.Module)
 

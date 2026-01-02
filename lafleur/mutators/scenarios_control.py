@@ -692,3 +692,155 @@ class ContextManagerInjector(ast.NodeTransformer):
             ast.fix_missing_locations(node)
 
         return node
+
+
+class YieldFromInjector(ast.NodeTransformer):
+    """
+    Targets the JIT's handling of generator suspension, `yield from` delegation,
+    and stack unwinding during cleanup (`try/finally`).
+
+    This mutator creates nested generator functions with `yield from` to stress:
+    - Generator suspension/resumption mechanics
+    - Stack unwinding during cleanup (finally blocks)
+    - Delegation chains (yield from)
+    - Recursive generator patterns
+    """
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> ast.FunctionDef:
+        self.generic_visit(node)
+
+        if not node.name.startswith("uop_harness"):
+            return node
+
+        if random.random() < 0.1:  # Low probability
+            gen_name = f"_yield_from_gen_{random.randint(1000, 9999)}"
+            use_recursive = random.random() < 0.2  # 20% chance for recursive version
+
+            if use_recursive:
+                print(
+                    f"    -> Injecting recursive yield-from generator '{gen_name}'",
+                    file=sys.stderr,
+                )
+                # Create recursive generator
+                gen_func = self._create_recursive_generator(gen_name)
+            else:
+                print(f"    -> Injecting yield-from generator '{gen_name}'", file=sys.stderr)
+                # Create simple generator
+                gen_func = self._create_simple_generator(gen_name)
+
+            # Create driver code to consume the generator
+            driver_call = ast.Expr(
+                value=ast.Call(
+                    func=ast.Name(id="list", ctx=ast.Load()),
+                    args=[
+                        ast.Call(
+                            func=ast.Name(id=gen_name, ctx=ast.Load()),
+                            args=[ast.Constant(value=0)] if use_recursive else [],
+                            keywords=[],
+                        )
+                    ],
+                    keywords=[],
+                )
+            )
+
+            # Prepend generator definition and append driver call
+            node.body = [gen_func] + node.body + [driver_call]
+            ast.fix_missing_locations(node)
+
+        return node
+
+    def _create_simple_generator(self, gen_name: str) -> ast.FunctionDef:
+        """
+        Create a simple generator with yield from and try/finally.
+
+        def _yield_from_gen():
+            try:
+                yield from range(10)
+            finally:
+                pass
+        """
+        try_body = [
+            ast.Expr(
+                value=ast.YieldFrom(
+                    value=ast.Call(
+                        func=ast.Name(id="range", ctx=ast.Load()),
+                        args=[ast.Constant(value=10)],
+                        keywords=[],
+                    )
+                )
+            )
+        ]
+
+        finally_body = [ast.Pass()]
+
+        try_finally = ast.Try(
+            body=try_body, handlers=[], orelse=[], finalbody=finally_body
+        )
+
+        return ast.FunctionDef(
+            name=gen_name,
+            args=ast.arguments(
+                args=[], posonlyargs=[], kwonlyargs=[], kw_defaults=[], defaults=[]
+            ),
+            body=[try_finally],
+            decorator_list=[],
+        )
+
+    def _create_recursive_generator(self, gen_name: str) -> ast.FunctionDef:
+        """
+        Create a recursive generator with yield from and try/finally.
+
+        def _yield_from_gen(depth=0):
+            if depth > 5:
+                return
+            try:
+                yield from _yield_from_gen(depth + 1)
+            finally:
+                pass
+        """
+        # Create the if statement: if depth > 5: return
+        depth_check = ast.If(
+            test=ast.Compare(
+                left=ast.Name(id="depth", ctx=ast.Load()),
+                ops=[ast.Gt()],
+                comparators=[ast.Constant(value=5)],
+            ),
+            body=[ast.Return(value=None)],
+            orelse=[],
+        )
+
+        # Create the recursive call: yield from _yield_from_gen(depth + 1)
+        recursive_yield = ast.Expr(
+            value=ast.YieldFrom(
+                value=ast.Call(
+                    func=ast.Name(id=gen_name, ctx=ast.Load()),
+                    args=[
+                        ast.BinOp(
+                            left=ast.Name(id="depth", ctx=ast.Load()),
+                            op=ast.Add(),
+                            right=ast.Constant(value=1),
+                        )
+                    ],
+                    keywords=[],
+                )
+            )
+        )
+
+        # Wrap in try/finally
+        try_finally = ast.Try(
+            body=[recursive_yield], handlers=[], orelse=[], finalbody=[ast.Pass()]
+        )
+
+        # Create the function with depth parameter
+        return ast.FunctionDef(
+            name=gen_name,
+            args=ast.arguments(
+                args=[ast.arg(arg="depth", annotation=None)],
+                posonlyargs=[],
+                kwonlyargs=[],
+                kw_defaults=[],
+                defaults=[ast.Constant(value=0)],
+            ),
+            body=[depth_check, try_finally],
+            decorator_list=[],
+        )

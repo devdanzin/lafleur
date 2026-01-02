@@ -21,6 +21,7 @@ from lafleur.mutators.scenarios_control import (
     GuardExhaustionGenerator,
     RecursionWrappingMutator,
     TraceBreaker,
+    YieldFromInjector,
 )
 
 
@@ -1115,6 +1116,186 @@ class TestContextManagerInjector(unittest.TestCase):
         # Should be valid Python
         reparsed = ast.parse(result)
         self.assertIsInstance(reparsed, ast.Module)
+
+
+class TestYieldFromInjector(unittest.TestCase):
+    """Test YieldFromInjector mutator."""
+
+    def setUp(self):
+        """Set random seed for reproducible tests."""
+        random.seed(42)
+
+    def test_injects_simple_yield_from_generator(self):
+        """Test that simple yield-from generator is injected."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+                y = 2
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", side_effect=[0.05, 0.5]):  # trigger mutation, not recursive
+            with patch("random.randint", return_value=5000):
+                mutator = YieldFromInjector()
+                mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should have yield from
+        self.assertIn("yield from", result)
+        # Should have try/finally
+        self.assertIn("try:", result)
+        self.assertIn("finally:", result)
+        # Should have range(10)
+        self.assertIn("range(10)", result)
+        # Should have list() call to consume generator
+        self.assertIn("list(", result)
+
+    def test_injects_recursive_yield_from_generator(self):
+        """Test that recursive yield-from generator is injected."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+                y = 2
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", side_effect=[0.05, 0.1]):  # trigger mutation, recursive
+            with patch("random.randint", return_value=6000):
+                mutator = YieldFromInjector()
+                mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should have yield from
+        self.assertIn("yield from", result)
+        # Should have try/finally
+        self.assertIn("try:", result)
+        self.assertIn("finally:", result)
+        # Should have depth parameter
+        self.assertIn("depth", result)
+        # Should have depth check
+        self.assertIn("if depth > 5:", result)
+        # Should have recursive call with depth + 1
+        self.assertIn("depth + 1", result)
+        # Should have list() call with depth argument
+        self.assertIn("list(_yield_from_gen_6000(0))", result)
+
+    def test_prepends_generator_and_appends_driver(self):
+        """Test that generator is prepended and driver is appended."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+                y = 2
+                z = 3
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", side_effect=[0.05, 0.5]):  # trigger mutation, not recursive
+            with patch("random.randint", return_value=7000):
+                mutator = YieldFromInjector()
+                mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        lines = [l.strip() for l in result.split('\n') if l.strip()]
+
+        # Generator definition should come before original code
+        gen_def_idx = next(i for i, line in enumerate(lines) if 'def _yield_from_gen_7000' in line)
+        x_assign_idx = next(i for i, line in enumerate(lines) if 'x = 1' in line)
+        self.assertLess(gen_def_idx, x_assign_idx)
+
+        # Driver call should come after original code
+        driver_idx = next(i for i, line in enumerate(lines) if 'list(_yield_from_gen_7000())' in line)
+        z_assign_idx = next(i for i, line in enumerate(lines) if 'z = 3' in line)
+        self.assertGreater(driver_idx, z_assign_idx)
+
+    def test_respects_probability(self):
+        """Test that mutation is applied probabilistically."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+
+        # Test with high random value (should not mutate)
+        with patch("random.random", return_value=0.5):
+            mutator = YieldFromInjector()
+            mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should not have yield from
+        self.assertNotIn("yield from", result)
+
+    def test_only_mutates_uop_harness_functions(self):
+        """Test that only uop_harness functions are mutated."""
+        code = dedent("""
+            def regular_function():
+                x = 1
+                y = 2
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.05):  # trigger mutation
+            with patch("random.randint", return_value=8000):
+                mutator = YieldFromInjector()
+                mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should not have yield from
+        self.assertNotIn("yield from", result)
+
+    def test_produces_valid_code_simple(self):
+        """Test that simple generator produces valid, parseable Python."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+                return x + 10
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", side_effect=[0.05, 0.5]):  # trigger mutation, not recursive
+            with patch("random.randint", return_value=9000):
+                mutator = YieldFromInjector()
+                mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should be parseable
+        reparsed = ast.parse(result)
+        self.assertIsInstance(reparsed, ast.Module)
+
+    def test_produces_valid_code_recursive(self):
+        """Test that recursive generator produces valid, parseable Python."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+                return x + 10
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", side_effect=[0.05, 0.1]):  # trigger mutation, recursive
+            with patch("random.randint", return_value=9500):
+                mutator = YieldFromInjector()
+                mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should be parseable
+        reparsed = ast.parse(result)
+        self.assertIsInstance(reparsed, ast.Module)
+
+    def test_unique_naming(self):
+        """Test that generated names use unique suffixes."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", side_effect=[0.05, 0.5]):  # trigger mutation, not recursive
+            with patch("random.randint", return_value=1234):
+                mutator = YieldFromInjector()
+                mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should have unique suffix from randint
+        self.assertIn("_yield_from_gen_1234", result)
 
 
 if __name__ == "__main__":

@@ -8,7 +8,7 @@ A feedback-driven fuzzer is only as good as the signal it receives. This documen
 
 ### The JIT Log
 
-The entire feedback process begins by capturing the verbose debug output from CPython's JIT compiler. `lafleur` achieves this by executing every child process with two specific environment variables set: `PYTHON_LLTRACE=4` and `PYTHON_OPT_DEBUG=4`. This instructs the JIT to emit a detailed trace of its internal operations to `stderr`, which the orchestrator captures to a log file.
+The entire feedback process begins by capturing the verbose debug output from CPython's JIT compiler. `lafleur` achieves this by executing every child process with two specific environment variables set: `PYTHON_LLTRACE=2` and `PYTHON_OPT_DEBUG=4`. This instructs the JIT to emit a detailed trace of its internal operations to `stderr`, which the orchestrator captures to a log file.
 
 An excerpt from a raw JIT log might look like this:
 

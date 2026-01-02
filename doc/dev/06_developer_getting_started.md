@@ -174,14 +174,16 @@ The fuzzer's main state file, `coverage/coverage_state.pkl`, is a binary file th
 
 ### Interpreting the results
 
-The main fuzzing results will be stored in three directories: `crashes/`, `timeouts/` and `divergences/`.
+The main fuzzing results will be stored in four directories: `crashes/`, `timeouts/`, `divergences/`, and `regressions/`.
 
   * `crashes/` will contain scripts that terminated with an exit code other than 0, or which generated logs containing one of the interesting keywords such as `JITCorrectnessError` or `panic`. This is where we expect the valuable cases of abnormal termination due to JIT behavior will be recorded. The logs from executing such scripts are also stored here, allowing easy diagnostics of the cause of the crash. Since many crashes are of low value, the following command may be used to list logs that do not contain common strings for low value crashes and hence potentially contain high value crashes:
 
     ```bash
-    grep -L -E "(statically|indentation|unsupported|formatting|invalid syntax)" crashes/*.log 
+    grep -L -E "(statically|indentation|unsupported|formatting|invalid syntax)" crashes/*.log
     ```
 
   * `timeouts/` will contain scripts and their respective logs that caused a timeout (default: 10 seconds) while executing, which might indicate interesting JIT behavior. Most common causes are infinite loops (e.g. from unpacking an object with a `__getitem__` that unconditionally returns a value) and too deeply nested `for` loops.
 
   * `divergences/` will contain scripts where the JITted and non-JITted versions of the same code resulted in different `locals()` at the end of execution. It's only populated when the `--differential-testing` flag is passed, and will also contain the logs from executing such scripts. This is where we expect the valuable cases of incorrectness due to JIT behavior to be recorded.
+
+  * `regressions/` will contain scripts where the JIT-enabled execution was significantly slower than the standard interpreter. This directory is only populated when the `--timing-fuzz` flag is passed.

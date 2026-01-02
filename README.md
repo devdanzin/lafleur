@@ -107,11 +107,12 @@ lafleur --fusil-path /path/to/fusil/fuzzers/fusil-python-threaded --differential
 
 ### Interpreting the Results
 
-The most important findings from a fuzzing run will be saved in three directories:
+The most important findings from a fuzzing run will be saved in four directories:
 
   * **`crashes/`**: Contains scripts that caused a hard crash (e.g., SegFault) or raised a critical error. Each `.py` file is accompanied by a `.log` file containing the output from the crash.
   * **`timeouts/`**: Contains scripts that ran for too long (default \> 10 seconds), often indicating an infinite loop bug.
   * **`divergences/`**: When in `--differential-testing` mode, this contains scripts where the JIT's behavior differed from the standard interpreter's.
+  * **`regressions/`**: When in `--timing-fuzz` mode, this contains scripts where the JIT-compiled execution was significantly slower than the standard interpreter.
 
 A helpful command to filter out low-value crashes and find potentially interesting ones is:
 

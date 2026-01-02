@@ -1445,3 +1445,104 @@ class SysMonitoringMutator(ast.NodeTransformer):
                 ast.fix_missing_locations(node)
 
         return node
+
+
+class ImportChaosMutator(ast.NodeTransformer):
+    """
+    Injects random standard library imports to alter memory layout and global state.
+
+    This mutator injects 1-5 random imports from the Python standard library at the
+    module level. Each import is wrapped in a try/except block to handle ImportError
+    and general exceptions gracefully.
+
+    The goal is to stress-test the JIT by:
+    - Changing the memory layout of the interpreter
+    - Triggering module initialization side effects
+    - Populating global namespaces differently across runs
+    - Creating different bytecode patterns
+    """
+
+    # Modules that should never be imported (side effects, GUI, etc.)
+    BLACKLIST = {
+        "antigravity",  # Opens a web browser
+        "this",  # Just prints the Zen of Python
+        "tkinter",  # GUI toolkit
+        "turtle",  # Graphics
+        "idlelib",  # IDLE-specific modules
+        "turtledemo",  # Turtle demos
+        "pdb",  # Debugger (interactive)
+        "http.server",  # Starts a server
+        "pydoc",  # Documentation browser
+        "ensurepip",  # Package installer
+    }
+
+    # Class-level cache of safe imports
+    _safe_imports = None
+
+    @classmethod
+    def _get_safe_imports(cls):
+        """Get the list of safe standard library modules to import."""
+        if cls._safe_imports is None:
+            # Get all standard library module names
+            all_modules = sys.stdlib_module_names
+            # Filter out blacklisted and underscore-prefixed modules
+            cls._safe_imports = [
+                name
+                for name in all_modules
+                if not name.startswith("_") and name not in cls.BLACKLIST
+            ]
+        return cls._safe_imports
+
+    def visit_Module(self, node: ast.Module) -> ast.Module:
+        """
+        Inject random imports at the module level.
+
+        Args:
+            node: The module AST node
+
+        Returns:
+            The modified module with injected imports
+        """
+        safe_imports = self._get_safe_imports()
+
+        if not safe_imports:
+            return node
+
+        # Choose 1-5 random modules to import
+        num_imports = random.randint(1, 5)
+        modules_to_import = random.sample(safe_imports, min(num_imports, len(safe_imports)))
+
+        print(
+            f"    -> Injecting {num_imports} random imports: {', '.join(modules_to_import)}",
+            file=sys.stderr,
+        )
+
+        # Create import statements wrapped in try/except
+        import_nodes = []
+        for module_name in modules_to_import:
+            # Create the import statement
+            import_stmt = ast.Import(names=[ast.alias(name=module_name, asname=None)])
+
+            # Wrap in try/except to handle ImportError and general exceptions
+            try_node = ast.Try(
+                body=[import_stmt],
+                handlers=[
+                    ast.ExceptHandler(
+                        type=ast.Tuple(
+                            elts=[ast.Name(id="ImportError", ctx=ast.Load()), ast.Name(id="Exception", ctx=ast.Load())],
+                            ctx=ast.Load(),
+                        ),
+                        name=None,
+                        body=[ast.Pass()],
+                    )
+                ],
+                orelse=[],
+                finalbody=[],
+            )
+            import_nodes.append(try_node)
+
+        # Prepend the imports to the module
+        node.body = import_nodes + node.body
+        ast.fix_missing_locations(node)
+
+        return node

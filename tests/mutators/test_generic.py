@@ -282,6 +282,41 @@ class TestLiteralTypeSwapMutator(unittest.TestCase):
         reparsed = ast.parse(result)
         self.assertIsInstance(reparsed, ast.Module)
 
+    def test_literal_swap_fstring_safety(self):
+        """
+        Test that f-string literal parts are not mutated to prevent ast.unparse crash.
+
+        Regression test for: ValueError: Unexpected node inside JoinedStr, Constant(value=b'.2f ', kind=None)
+        """
+        code = dedent("""
+            def uop_harness_test():
+                x = 42
+                result = f"Value: {x:.2f}"
+                return result
+        """)
+        tree = ast.parse(code)
+
+        # Apply mutation with low probability to force mutations
+        with patch("random.random", return_value=0.1):
+            mutator = LiteralTypeSwapMutator()
+            mutated = mutator.visit(tree)
+
+        # The critical assertion: ast.unparse must not crash
+        result = ast.unparse(mutated)
+
+        # Verify it's still valid Python
+        reparsed = ast.parse(result)
+        self.assertIsInstance(reparsed, ast.Module)
+
+        # Verify the f-string literal parts are still strings (not bytes)
+        # The literal parts "Value: " and ".2f" should remain as strings
+        # Note: The formatted value {x} might be mutated (e.g., x=42 -> x=42.0)
+        # but the literal parts must not be bytes
+        self.assertNotIn("b'Value:", result)
+        self.assertNotIn("b'.2f'", result)
+        self.assertNotIn('b"Value:', result)
+        self.assertNotIn('b".2f"', result)
+
 
 class TestImportChaosMutator(unittest.TestCase):
     """Test ImportChaosMutator mutator."""

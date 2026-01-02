@@ -68,6 +68,57 @@ class ComparisonSwapper(ast.NodeTransformer):
         return node
 
 
+class ComparisonChainerMutator(ast.NodeTransformer):
+    """
+    Extends simple comparisons into chained comparisons.
+
+    This mutator targets Python's chained comparison logic (e.g., a < b < c),
+    which generates complex bytecode (ROT_THREE, DUP_TOP). Extending these
+    chains stresses the JIT's stack management.
+    """
+
+    COMPARISON_OPS = [
+        ast.Eq,
+        ast.Lt,
+        ast.Gt,
+        ast.LtE,
+        ast.GtE,
+        ast.NotEq,
+        ast.Is,
+        ast.IsNot,
+        ast.In,
+        ast.NotIn,
+    ]
+
+    def visit_Compare(self, node: ast.Compare) -> ast.Compare:
+        if random.random() < 0.5:
+            # Add one random operator
+            new_op = random.choice(self.COMPARISON_OPS)()
+            node.ops.append(new_op)
+
+            # Add one random comparator
+            comparator_choice = random.choice(["constant", "recycle", "collection"])
+
+            if comparator_choice == "constant":
+                # Choose a constant: 0, 1, None, True, ""
+                constant_value = random.choice([0, 1, None, True, ""])
+                new_comparator = ast.Constant(value=constant_value)
+            elif comparator_choice == "recycle" and isinstance(node.left, (ast.Name, ast.Constant)):
+                # Recycle node.left
+                new_comparator = copy.deepcopy(node.left)
+            else:
+                # Use a collection: [] or {}
+                if random.choice([True, False]):
+                    new_comparator = ast.List(elts=[], ctx=ast.Load())
+                else:
+                    new_comparator = ast.Dict(keys=[], values=[])
+
+            node.comparators.append(new_comparator)
+            ast.fix_missing_locations(node)
+
+        return node
+
+
 class ConstantPerturbator(ast.NodeTransformer):
     """Slightly modify numeric and string constants."""
 

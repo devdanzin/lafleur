@@ -20,6 +20,7 @@ from lafleur.mutators.generic import (
     AsyncConstructMutator,
     BlockTransposerMutator,
     BoundaryValuesMutator,
+    ComparisonChainerMutator,
     ComparisonSwapper,
     ConstantPerturbator,
     ContainerChanger,
@@ -127,6 +128,7 @@ class ASTMutator:
         self.transformers = [
             OperatorSwapper,
             ComparisonSwapper,
+            ComparisonChainerMutator,
             ConstantPerturbator,
             BoundaryValuesMutator,
             GuardInjector,

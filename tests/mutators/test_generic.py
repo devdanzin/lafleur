@@ -317,6 +317,42 @@ class TestLiteralTypeSwapMutator(unittest.TestCase):
         self.assertNotIn('b"Value:', result)
         self.assertNotIn('b".2f"', result)
 
+    @unittest.skipIf(sys.version_info < (3, 14), "t-strings require Python 3.14+")
+    def test_literal_swap_tstring_safety(self):
+        """
+        Test that t-string literal parts are not mutated to prevent ast.unparse crash.
+
+        Regression test for: ValueError: Unexpected node inside TemplateStr, Constant(value=b'...', ...)
+        """
+        code = dedent("""
+            def uop_harness_test():
+                x = 42
+                result = t"Hello {x} World"
+                return result
+        """)
+        tree = ast.parse(code)
+
+        # Apply mutation with low probability to force mutations
+        with patch("random.random", return_value=0.1):
+            mutator = LiteralTypeSwapMutator()
+            mutated = mutator.visit(tree)
+
+        # The critical assertion: ast.unparse must not crash
+        result = ast.unparse(mutated)
+
+        # Verify it's still valid Python
+        reparsed = ast.parse(result)
+        self.assertIsInstance(reparsed, ast.Module)
+
+        # Verify the t-string literal parts are still strings (not bytes)
+        # The literal parts "Hello " and " World" should remain as strings
+        # Note: The interpolated value {x} might be mutated (e.g., x=42 -> x=42.0)
+        # but the literal parts must not be bytes
+        self.assertNotIn("b'Hello ", result)
+        self.assertNotIn("b' World'", result)
+        self.assertNotIn('b"Hello ', result)
+        self.assertNotIn('b" World"', result)
+
 
 class TestImportChaosMutator(unittest.TestCase):
     """Test ImportChaosMutator mutator."""

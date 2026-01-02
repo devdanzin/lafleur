@@ -13,6 +13,7 @@ from textwrap import dedent
 from unittest.mock import patch
 
 from lafleur.mutators.scenarios_control import (
+    ContextManagerInjector,
     CoroutineStateCorruptor,
     DeepCallMutator,
     ExceptionHandlerMaze,
@@ -898,6 +899,222 @@ class TestMutatorOutput(unittest.TestCase):
         self.assertIn("elif i % 3 == 1:", output)
         self.assertIn("elif i % 3 == 2:", output)
         self.assertIn("res_es_9999", output)
+
+
+class TestContextManagerInjector(unittest.TestCase):
+    """Test ContextManagerInjector mutator."""
+
+    def setUp(self):
+        """Set random seed for reproducible tests."""
+        random.seed(42)
+
+    def test_wraps_statements_with_nullcontext(self):
+        """Test simple strategy wraps statements with contextlib.nullcontext()."""
+        code = dedent("""
+            def uop_harness_test():
+                a = 1
+                b = 2
+                c = 3
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.1):  # Below 0.15 threshold
+            with patch("random.choice", return_value="simple"):  # strategy
+                with patch("random.randint", side_effect=[2, 0, 3000]):  # slice_size, start_idx, uid
+                    mutator = ContextManagerInjector()
+                    mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should have import contextlib
+        self.assertIn("import contextlib", result)
+        # Should have with statement
+        self.assertIn("with contextlib.nullcontext():", result)
+
+    def test_wraps_statements_with_open_devnull(self):
+        """Test resource strategy wraps statements with open(os.devnull)."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+                y = 2
+                z = 3
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.1):
+            with patch("random.choice", return_value="resource"):
+                with patch("random.randint", side_effect=[2, 0, 4000]):  # slice_size, start_idx, uid
+                    mutator = ContextManagerInjector()
+                    mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should have import os
+        self.assertIn("import os", result)
+        # Should have with statement
+        self.assertIn("with open(os.devnull, 'w') as _ctx_4000:", result)
+
+    def test_wraps_statements_with_evil_context(self):
+        """Test evil strategy creates custom EvilContext class."""
+        code = dedent("""
+            def uop_harness_test():
+                a = 1
+                b = 2
+                c = 3
+                d = 4
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.1):
+            with patch("random.choice", return_value="evil"):
+                with patch("random.randint", side_effect=[2, 0, 5000]):  # slice_size, start_idx, uid
+                    mutator = ContextManagerInjector()
+                    mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should have EvilContext class
+        self.assertIn("class EvilContext_5000:", result)
+        self.assertIn("def __enter__(self):", result)
+        self.assertIn("def __exit__(self, exc_type, exc_val, exc_tb):", result)
+        # Should wrap with statement in try/except
+        self.assertIn("try:", result)
+        self.assertIn("with EvilContext_5000():", result)
+
+    def test_evil_context_raises_in_enter(self):
+        """Test that EvilContext __enter__ can raise RuntimeError."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+                y = 2
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.1):
+            with patch("random.choice", return_value="evil"):
+                with patch("random.randint", side_effect=[2, 0, 6000]):  # slice_size, start_idx, uid
+                    mutator = ContextManagerInjector()
+                    mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should have conditional raise in __enter__
+        self.assertIn("raise RuntimeError('Evil __enter__')", result)
+
+    def test_evil_context_raises_in_exit(self):
+        """Test that EvilContext __exit__ can raise or swallow exceptions."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+                y = 2
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.1):
+            with patch("random.choice", return_value="evil"):
+                with patch("random.randint", side_effect=[2, 0, 7000]):  # slice_size, start_idx, uid
+                    mutator = ContextManagerInjector()
+                    mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should have raise and return True in __exit__
+        self.assertIn("raise RuntimeError('Evil __exit__')", result)
+        self.assertIn("return True", result)
+
+    def test_wraps_contiguous_slice(self):
+        """Test that a contiguous slice of statements is wrapped."""
+        code = dedent("""
+            def uop_harness_test():
+                a = 1
+                b = 2
+                c = 3
+                d = 4
+                e = 5
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.1):
+            with patch("random.choice", return_value="simple"):
+                # Wrap statements 1-3 (b, c, d)
+                with patch("random.randint", side_effect=[3, 1, 8000]):  # slice_size, start_idx, uid
+                    mutator = ContextManagerInjector()
+                    mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should have with statement
+        self.assertIn("with contextlib.nullcontext():", result)
+        # All statements should still be present
+        self.assertIn("a = 1", result)
+        self.assertIn("b = 2", result)
+        self.assertIn("c = 3", result)
+
+    def test_skips_non_harness_functions(self):
+        """Test that non-harness functions are not mutated."""
+        code = dedent("""
+            def normal_function():
+                x = 1
+                y = 2
+        """)
+        tree = ast.parse(code)
+        original = ast.unparse(tree)
+
+        with patch("random.random", return_value=0.1):
+            mutator = ContextManagerInjector()
+            mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        self.assertEqual(original, result)
+
+    def test_skips_functions_with_too_few_statements(self):
+        """Test that functions with < 2 statements are not mutated."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+        original = ast.unparse(tree)
+
+        with patch("random.random", return_value=0.1):
+            mutator = ContextManagerInjector()
+            mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        self.assertEqual(original, result)
+
+    def test_no_mutation_with_low_probability(self):
+        """Test that mutation doesn't occur with low probability."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+                y = 2
+                z = 3
+        """)
+        tree = ast.parse(code)
+        original = ast.unparse(tree)
+
+        with patch("random.random", return_value=0.9):  # Above 0.15 threshold
+            mutator = ContextManagerInjector()
+            mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        self.assertEqual(original, result)
+
+    def test_produces_valid_code(self):
+        """Test that output is valid, parseable Python."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+                y = 2
+                z = 3
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.1):
+            with patch("random.choice", return_value="simple"):
+                with patch("random.randint", side_effect=[2, 0, 9000]):  # slice_size, start_idx, uid
+                    mutator = ContextManagerInjector()
+                    mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should be valid Python
+        reparsed = ast.parse(result)
+        self.assertIsInstance(reparsed, ast.Module)
 
 
 if __name__ == "__main__":

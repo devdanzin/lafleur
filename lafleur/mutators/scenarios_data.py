@@ -921,3 +921,79 @@ class LatticeSurfingMutator(ast.NodeTransformer):
                         keywords=[],
                     )
                     break
+
+
+class BloomFilterSaturator(ast.NodeTransformer):
+    """
+    Attack the JIT's global variable tracking bloom filter.
+
+    This mutator exploits CPython JIT's _GUARD_GLOBALS_VERSION by saturating
+    the global modification tracking. The JIT stops watching globals after
+    approximately 4096 mutations. We rapidly reach this limit ("Saturate") and
+    then modify a watched global to trigger potential stale-cache bugs.
+    """
+
+    def __init__(self):
+        super().__init__()
+        self.module_vars_added = False
+
+    def visit_Module(self, node: ast.Module) -> ast.Module:
+        """Inject module-level bloom filter tracking variables."""
+        if random.random() < 0.2:  # 20% chance
+            print("    -> Injecting bloom filter saturation variables", file=sys.stderr)
+
+            # Inject initialization at the top of the module
+            init_code = dedent("""
+                _bloom_target = 0
+                _bloom_noise_idx = 0
+            """)
+            init_nodes = ast.parse(init_code).body
+
+            # Prepend to module
+            node.body = init_nodes + node.body
+            ast.fix_missing_locations(node)
+
+            # Track that we added the module-level variables
+            self.module_vars_added = True
+
+        # Now visit children (functions will see module_vars_added = True if it was set)
+        self.generic_visit(node)
+        return node
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> ast.FunctionDef:
+        """Inject bloom filter saturation logic into functions."""
+        self.generic_visit(node)
+
+        if not node.name.startswith("uop_harness"):
+            return node
+
+        # Only inject if we added the module-level variables
+        if not self.module_vars_added:
+            return node
+
+        if random.random() < 0.2:  # 20% chance
+            print(
+                f"    -> Injecting bloom filter saturation into '{node.name}'",
+                file=sys.stderr,
+            )
+
+            # Create the saturate-and-switch code
+            saturation_code = dedent("""
+                global _bloom_target, _bloom_noise_idx
+                if _bloom_target % 2 == 0: pass  # Bait: dependency on value
+
+                # Noise: Thrash the globals dict
+                for _ in range(150):
+                    _bloom_noise_idx += 1
+                    globals()[f'_bloom_noise_{_bloom_noise_idx}'] = _bloom_noise_idx
+
+                # Switch: Invalidate the dependency
+                _bloom_target += 1
+            """)
+            saturation_nodes = ast.parse(saturation_code).body
+
+            # Inject at the beginning of the function body
+            node.body = saturation_nodes + node.body
+            ast.fix_missing_locations(node)
+
+        return node

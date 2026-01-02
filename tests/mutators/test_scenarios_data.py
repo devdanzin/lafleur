@@ -13,6 +13,7 @@ from textwrap import dedent
 from unittest.mock import patch
 
 from lafleur.mutators.scenarios_data import (
+    BloomFilterSaturator,
     BuiltinNamespaceCorruptor,
     ComprehensionBomb,
     DictPolluter,
@@ -999,6 +1000,150 @@ class TestLatticeSurfingMutator(unittest.TestCase):
                     mock_sample.side_effect = lambda targets, k: targets[:k]
                     mutator = LatticeSurfingMutator()
                     mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should be parseable
+        reparsed = ast.parse(result)
+        self.assertIsInstance(reparsed, ast.Module)
+
+
+class TestBloomFilterSaturator(unittest.TestCase):
+    """Test BloomFilterSaturator mutator."""
+
+    def setUp(self):
+        """Set random seed for reproducible tests."""
+        random.seed(42)
+
+    def test_injects_module_level_variables(self):
+        """Test that module-level bloom filter variables are injected."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.1):  # Below 0.2 threshold
+            mutator = BloomFilterSaturator()
+            mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should have injected the module-level variables
+        self.assertIn("_bloom_target = 0", result)
+        self.assertIn("_bloom_noise_idx = 0", result)
+
+    def test_injects_saturation_logic_in_function(self):
+        """Test that bloom filter saturation logic is injected into functions."""
+        code = dedent("""
+            _bloom_target = 0
+            _bloom_noise_idx = 0
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.1):  # Below 0.2 threshold
+            mutator = BloomFilterSaturator()
+            mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should have global declaration
+        self.assertIn("global _bloom_target, _bloom_noise_idx", result)
+        # Should have the bait (conditional check)
+        self.assertIn("if _bloom_target % 2 == 0:", result)
+        # Should have the noise loop
+        self.assertIn("for _ in range(150):", result)
+        self.assertIn("_bloom_noise_idx += 1", result)
+        self.assertIn("globals()[f'_bloom_noise_{_bloom_noise_idx}']", result)
+        # Should have the switch
+        self.assertIn("_bloom_target += 1", result)
+
+    def test_bait_trains_jit_dependency(self):
+        """Test that the bait creates a dependency on _bloom_target."""
+        code = dedent("""
+            _bloom_target = 0
+            _bloom_noise_idx = 0
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.1):
+            mutator = BloomFilterSaturator()
+            mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # The bait should check _bloom_target value
+        self.assertIn("_bloom_target % 2 == 0", result)
+        self.assertIn("pass", result)  # The bait does nothing, just creates dependency
+
+    def test_noise_thrashes_globals_dict(self):
+        """Test that the noise loop writes to globals() multiple times."""
+        code = dedent("""
+            _bloom_target = 0
+            _bloom_noise_idx = 0
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.1):
+            mutator = BloomFilterSaturator()
+            mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should have a loop that writes to globals()
+        self.assertIn("for _ in range(150):", result)
+        # Should use globals() with dynamic keys
+        self.assertIn("globals()", result)
+        self.assertIn("_bloom_noise_", result)
+
+    def test_switch_modifies_watched_variable(self):
+        """Test that the switch modifies _bloom_target after saturation."""
+        code = dedent("""
+            _bloom_target = 0
+            _bloom_noise_idx = 0
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.1):
+            mutator = BloomFilterSaturator()
+            mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should modify _bloom_target after the noise
+        self.assertIn("_bloom_target += 1", result)
+
+    def test_no_mutation_when_random_check_fails(self):
+        """Test that mutator doesn't modify when random check fails."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.5):  # Above 0.2 threshold
+            mutator = BloomFilterSaturator()
+            mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should not have modified the code
+        self.assertNotIn("_bloom_target", result)
+        self.assertNotIn("_bloom_noise_idx", result)
+        self.assertNotIn("globals()", result)
+
+    def test_produces_valid_code(self):
+        """Test that output is valid, parseable Python."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.1):
+            mutator = BloomFilterSaturator()
+            mutated = mutator.visit(tree)
 
         result = ast.unparse(mutated)
         # Should be parseable

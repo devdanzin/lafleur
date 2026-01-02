@@ -81,6 +81,7 @@ from lafleur.mutators.scenarios_types import (
     TypeInstabilityInjector,
     TypeIntrospectionMutator,
 )
+from lafleur.mutators.utils import RedundantStatementSanitizer
 
 
 class SlicingMutator(ast.NodeTransformer):
@@ -186,6 +187,7 @@ class ASTMutator:
             ExceptionGroupMutator,
             AsyncConstructMutator,
             SysMonitoringMutator,
+            RedundantStatementSanitizer,
         ]
 
     def mutate_ast(

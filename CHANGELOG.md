@@ -58,6 +58,7 @@ All notable changes to this project should be documented in this file.
 - An `ImportChaosMutator` that injects random standard library imports to alter memory layout and global state, by @devdanzin.
 - A `LiteralTypeSwapMutator` that swaps literal constants with different-typed values to stress JIT type specialization and guards, by @devdanzin.
 - A `YieldFromInjector` that targets generator suspension, `yield from` delegation, and stack unwinding during cleanup with try/finally blocks, by @devdanzin.
+- A `RedundantStatementSanitizer` that removes consecutive identical statements probabilistically to control file size bloat from mutators like StatementDuplicator, by @devdanzin.
 
 
 ### Enhanced

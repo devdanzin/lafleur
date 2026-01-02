@@ -641,3 +641,165 @@ class ComprehensionBomb(ast.NodeTransformer):
             ast.fix_missing_locations(node)
 
         return node
+
+
+class ReentrantSideEffectMutator(ast.NodeTransformer):
+    """
+    Create "rug pull" attacks that clear containers during access.
+
+    This mutator injects a RugPuller object that clears or modifies a mutable
+    container while that container is being accessed (e.g., inside __index__,
+    __hash__, or __eq__). This targets re-entrancy bugs and use-after-free
+    vulnerabilities in the JIT.
+    """
+
+    # Target types we can attack
+    SEQUENCE_TYPES = {"list", "bytearray"}
+    MAPPING_TYPES = {"dict", "set"}
+    STDLIB_SEQUENCE_TYPES = {"array", "deque"}  # Require special handling
+
+    def _find_target_variable(self, node: ast.FunctionDef) -> tuple[str, str] | None:
+        """
+        Scan function body for variables assigned to target types.
+
+        Returns (variable_name, type_name) or None if not found.
+        """
+        for stmt in node.body:
+            if isinstance(stmt, ast.Assign):
+                # Check if RHS is a Call to a builtin collection
+                if isinstance(stmt.value, ast.Call):
+                    func_node = stmt.value.func
+
+                    # Handle direct calls like list(), dict(), set()
+                    if isinstance(func_node, ast.Name):
+                        type_name = func_node.id
+                        if (
+                            type_name in self.SEQUENCE_TYPES
+                            or type_name in self.MAPPING_TYPES
+                        ):
+                            target_name = stmt.targets[0].id if isinstance(stmt.targets[0], ast.Name) else None
+                            if target_name:
+                                return (target_name, type_name)
+
+                    # Handle attribute calls like array.array(), collections.deque()
+                    elif isinstance(func_node, ast.Attribute):
+                        attr_name = func_node.attr
+                        if attr_name in self.STDLIB_SEQUENCE_TYPES:
+                            target_name = stmt.targets[0].id if isinstance(stmt.targets[0], ast.Name) else None
+                            if target_name:
+                                return (target_name, attr_name)
+
+                # Check if RHS is a List, Dict, or Set literal
+                if isinstance(stmt.value, (ast.List, ast.Dict, ast.Set)):
+                    target_name = stmt.targets[0].id if isinstance(stmt.targets[0], ast.Name) else None
+                    if target_name:
+                        if isinstance(stmt.value, ast.List):
+                            return (target_name, "list")
+                        elif isinstance(stmt.value, ast.Dict):
+                            return (target_name, "dict")
+                        elif isinstance(stmt.value, ast.Set):
+                            return (target_name, "set")
+
+        return None
+
+    def _create_rug_puller_class(
+        self, var_name: str, type_name: str, prefix: str
+    ) -> ast.ClassDef:
+        """Create the RugPuller class based on the target type."""
+        class_name = f"RugPuller_{prefix}"
+
+        if type_name in self.SEQUENCE_TYPES or type_name in self.STDLIB_SEQUENCE_TYPES:
+            # For sequences: implement __index__ that clears and returns 0
+            code = dedent(f"""
+                class {class_name}:
+                    '''Evil object that clears the target during __index__'''
+                    def __index__(self):
+                        # Rug pull: clear the container while it's being indexed
+                        {var_name}.clear()
+                        return 0
+            """)
+        else:  # Mappings/Sets
+            # For mappings/sets: implement __hash__ and __eq__ that clear
+            code = dedent(f"""
+                class {class_name}:
+                    '''Evil object that clears the target during __hash__'''
+                    def __hash__(self):
+                        # Rug pull: clear the container during hashing
+                        {var_name}.clear()
+                        return 42
+
+                    def __eq__(self, other):
+                        return True
+            """)
+
+        return ast.parse(code).body[0]
+
+    def _create_trigger_statement(
+        self, var_name: str, type_name: str, class_name: str
+    ) -> list[ast.stmt]:
+        """Create the trigger statement wrapped in try/except."""
+        if type_name == "set":
+            # For sets, use 'in' operator
+            trigger_code = dedent(f"""
+                try:
+                    _ = {class_name}() in {var_name}
+                except (IndexError, KeyError, RuntimeError, ValueError):
+                    pass  # Expected errors from rug pull
+            """)
+        else:
+            # For sequences and dicts, use [] operator
+            trigger_code = dedent(f"""
+                try:
+                    _ = {var_name}[{class_name}()]
+                except (IndexError, KeyError, RuntimeError, ValueError):
+                    pass  # Expected errors from rug pull
+            """)
+
+        return ast.parse(trigger_code).body
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> ast.FunctionDef:
+        self.generic_visit(node)
+
+        if not node.name.startswith("uop_harness") or not node.body:
+            return node
+
+        if random.random() < 0.10:  # 10% chance
+            # Try to find a target variable
+            target_info = self._find_target_variable(node)
+
+            if target_info is None:
+                # No suitable variable found, inject one
+                var_name = "fuzzer_list"
+                type_name = "list"
+                # Inject a list variable at the start
+                init_code = f"{var_name} = [1, 2, 3, 4, 5]"
+                init_node = ast.parse(init_code).body[0]
+                node.body.insert(0, init_node)
+                print(
+                    f"    -> Injecting new list variable '{var_name}' for rug pull attack",
+                    file=sys.stderr,
+                )
+            else:
+                var_name, type_name = target_info
+                print(
+                    f"    -> Targeting existing variable '{var_name}' ({type_name}) for rug pull attack",
+                    file=sys.stderr,
+                )
+
+            # Create unique prefix
+            prefix = f"{random.randint(1000, 9999)}"
+            class_name = f"RugPuller_{prefix}"
+
+            # Create the RugPuller class
+            rug_puller_class = self._create_rug_puller_class(var_name, type_name, prefix)
+
+            # Create the trigger statement
+            trigger_stmts = self._create_trigger_statement(var_name, type_name, class_name)
+
+            # Inject into the function
+            injection_point = random.randint(0, len(node.body))
+            full_injection = [rug_puller_class] + trigger_stmts
+            node.body[injection_point:injection_point] = full_injection
+            ast.fix_missing_locations(node)
+
+        return node

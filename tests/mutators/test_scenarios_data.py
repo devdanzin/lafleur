@@ -19,6 +19,7 @@ from lafleur.mutators.scenarios_data import (
     IterableMutator,
     MagicMethodMutator,
     NumericMutator,
+    ReentrantSideEffectMutator,
     _create_hash_attack,
     _create_len_attack,
     _create_pow_attack,
@@ -704,6 +705,151 @@ class TestMagicMethodMutators(unittest.TestCase):
         func = mutated.body[0]
         code_str = ast.unparse(func)
         self.assertIn("tuple", code_str)
+
+
+class TestReentrantSideEffectMutator(unittest.TestCase):
+    """Test ReentrantSideEffectMutator ("rug pull" attacks)."""
+
+    def setUp(self):
+        """Set random seed for reproducible tests."""
+        random.seed(42)
+
+    def test_rug_pull_attack_on_list(self):
+        """Test rug pull attack on a list (sequence type)."""
+        code = dedent("""
+            def uop_harness_test():
+                my_list = [1, 2, 3, 4, 5]
+                x = my_list[0]
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.05):  # Trigger mutation
+            with patch("random.randint", return_value=1234):  # Fixed prefix
+                mutator = ReentrantSideEffectMutator()
+                mutated = mutator.visit(tree)
+
+        # Verify structure
+        func = mutated.body[0]
+        code_str = ast.unparse(func)
+
+        # Should have RugPuller class
+        self.assertIn("RugPuller_1234", code_str)
+
+        # Should have __index__ method (for sequences)
+        self.assertIn("__index__", code_str)
+
+        # Should clear the target list
+        self.assertIn("my_list.clear()", code_str)
+
+        # Should have try/except wrapper
+        self.assertIn("try:", code_str)
+        self.assertIn("except", code_str)
+
+        # Should have trigger statement using []
+        self.assertIn("my_list[RugPuller_1234()]", code_str)
+
+    def test_rug_pull_attack_on_set(self):
+        """Test rug pull attack on a set (mapping type)."""
+        code = dedent("""
+            def uop_harness_test():
+                my_set = {1, 2, 3}
+                x = 1 in my_set
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.05):  # Trigger mutation
+            with patch("random.randint", return_value=5678):  # Fixed prefix
+                mutator = ReentrantSideEffectMutator()
+                mutated = mutator.visit(tree)
+
+        # Verify structure
+        func = mutated.body[0]
+        code_str = ast.unparse(func)
+
+        # Should have RugPuller class
+        self.assertIn("RugPuller_5678", code_str)
+
+        # Should have __hash__ method (for sets)
+        self.assertIn("__hash__", code_str)
+
+        # Should have __eq__ method
+        self.assertIn("__eq__", code_str)
+
+        # Should clear the target set
+        self.assertIn("my_set.clear()", code_str)
+
+        # Should have try/except wrapper
+        self.assertIn("try:", code_str)
+        self.assertIn("except", code_str)
+
+        # Should use 'in' operator for sets
+        self.assertIn("in my_set", code_str)
+
+    def test_rug_pull_attack_on_dict(self):
+        """Test rug pull attack on a dict."""
+        code = dedent("""
+            def uop_harness_test():
+                my_dict = {"a": 1, "b": 2}
+                x = my_dict["a"]
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.05):
+            with patch("random.randint", return_value=9999):
+                mutator = ReentrantSideEffectMutator()
+                mutated = mutator.visit(tree)
+
+        func = mutated.body[0]
+        code_str = ast.unparse(func)
+
+        # Should have RugPuller class with __hash__
+        self.assertIn("RugPuller_9999", code_str)
+        self.assertIn("__hash__", code_str)
+        self.assertIn("my_dict.clear()", code_str)
+
+        # Should use [] operator for dicts
+        self.assertIn("my_dict[RugPuller_9999()]", code_str)
+
+    def test_rug_pull_injects_variable_when_none_found(self):
+        """Test that mutator injects a list when no suitable variable is found."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 42
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.05):
+            with patch("random.randint", return_value=4321):
+                mutator = ReentrantSideEffectMutator()
+                mutated = mutator.visit(tree)
+
+        func = mutated.body[0]
+        code_str = ast.unparse(func)
+
+        # Should have injected fuzzer_list variable
+        self.assertIn("fuzzer_list = [1, 2, 3, 4, 5]", code_str)
+
+        # Should target the injected list
+        self.assertIn("fuzzer_list.clear()", code_str)
+        self.assertIn("fuzzer_list[RugPuller_4321()]", code_str)
+
+    def test_rug_pull_handles_no_mutation(self):
+        """Test that mutator doesn't modify when random check fails."""
+        code = dedent("""
+            def uop_harness_test():
+                my_list = [1, 2, 3]
+        """)
+        tree = ast.parse(code)
+        original_code = ast.unparse(tree)
+
+        with patch("random.random", return_value=0.5):  # Above threshold (0.10)
+            mutator = ReentrantSideEffectMutator()
+            mutated = mutator.visit(tree)
+
+        # Should not have modified the code
+        mutated_code = ast.unparse(mutated)
+        # The code should be essentially the same (minor formatting differences may occur)
+        self.assertNotIn("RugPuller", mutated_code)
 
 
 if __name__ == "__main__":

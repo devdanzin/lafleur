@@ -54,6 +54,7 @@ from lafleur.mutators.scenarios_data import (
     IterableMutator,
     MagicMethodMutator,
     NumericMutator,
+    ReentrantSideEffectMutator,
 )
 from lafleur.mutators.scenarios_runtime import (
     FrameManipulator,
@@ -145,6 +146,7 @@ class ASTMutator:
             MagicMethodMutator,
             NumericMutator,
             IterableMutator,
+            ReentrantSideEffectMutator,
             GCInjector,
             DictPolluter,
             FunctionPatcher,

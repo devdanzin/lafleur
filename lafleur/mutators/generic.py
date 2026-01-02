@@ -220,6 +220,30 @@ class LiteralTypeSwapMutator(ast.NodeTransformer):
         node.values = new_values
         return node
 
+    # T-strings (Template Strings) are only available in Python 3.14+
+    if hasattr(ast, "TemplateStr"):
+
+        def visit_TemplateStr(self, node: ast.TemplateStr) -> ast.TemplateStr:
+            """
+            Protect t-string literal parts from type swapping.
+
+            T-strings (ast.TemplateStr) contain both literal text parts (ast.Constant)
+            and interpolations (ast.Interpolation). The literal parts MUST remain
+            strings for ast.unparse to work correctly. This method visits only the
+            Interpolation nodes, skipping Constant nodes to prevent conversion to bytes.
+            """
+            new_values = []
+            for child in node.values:
+                if isinstance(child, ast.Constant):
+                    # Skip mutation for literal parts of t-strings to prevent
+                    # ast.unparse from crashing (cannot handle bytes in TemplateStr).
+                    new_values.append(child)
+                else:
+                    # Visit interpolations (e.g., {x})
+                    new_values.append(self.visit(child))
+            node.values = new_values
+            return node
+
 
 class ImportChaosMutator(ast.NodeTransformer):
     """

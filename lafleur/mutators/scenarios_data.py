@@ -803,3 +803,121 @@ class ReentrantSideEffectMutator(ast.NodeTransformer):
             ast.fix_missing_locations(node)
 
         return node
+
+
+class LatticeSurfingMutator(ast.NodeTransformer):
+    """
+    Attack the JIT's Abstract Interpretation Lattice.
+
+    This mutator exploits CPython JIT's _GUARD_TYPE_VERSION assumptions by
+    injecting objects that dynamically flip their __class__ during execution.
+    The "Surfer" classes change their type when magic methods are called,
+    stress-testing type guards and deoptimization logic.
+    """
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> ast.FunctionDef:
+        self.generic_visit(node)
+
+        if not node.name.startswith("uop_harness"):
+            return node
+
+        if random.random() < 0.1:  # 10% chance
+            # Find variables assigned constant integers or booleans
+            targets = self._find_constant_assignments(node)
+
+            if not targets:
+                return node
+
+            # Limit to 1-2 variables to keep code coherent
+            num_to_mutate = min(random.randint(1, 2), len(targets))
+            chosen_targets = random.sample(targets, num_to_mutate)
+
+            print(
+                f"    -> Injecting Lattice Surfing into {num_to_mutate} variable(s): "
+                f"{', '.join(t[0] for t in chosen_targets)}",
+                file=sys.stderr,
+            )
+
+            # Inject the Surfer classes at the beginning
+            surfer_classes = self._create_surfer_classes()
+            node.body = surfer_classes + node.body
+
+            # Replace the assignments
+            for var_name, value in chosen_targets:
+                self._replace_assignment(node, var_name, value)
+
+            ast.fix_missing_locations(node)
+
+        return node
+
+    def _find_constant_assignments(
+        self, node: ast.FunctionDef
+    ) -> list[tuple[str, int | bool]]:
+        """Find variables assigned constant integers or booleans."""
+        targets = []
+
+        for stmt in node.body:
+            if isinstance(stmt, ast.Assign):
+                # Check for simple assignment: x = 42 or flag = True
+                if len(stmt.targets) == 1 and isinstance(stmt.targets[0], ast.Name):
+                    var_name = stmt.targets[0].id
+                    if isinstance(stmt.value, ast.Constant):
+                        val = stmt.value.value
+                        if isinstance(val, (int, bool)) and not isinstance(val, type(None)):
+                            targets.append((var_name, val))
+
+        return targets
+
+    def _create_surfer_classes(self) -> list[ast.stmt]:
+        """Create the _SurferA and _SurferB classes."""
+        surfer_code = dedent("""
+            class _SurferA:
+                def __init__(self, val):
+                    self.val = val
+                def __bool__(self):
+                    self.__class__ = _SurferB  # The Lattice Surf
+                    return True
+                def __int__(self):
+                    self.__class__ = _SurferB
+                    return int(self.val)
+                def __index__(self):  # For list indexing
+                    self.__class__ = _SurferB
+                    return int(self.val)
+                def __add__(self, other):
+                    self.__class__ = _SurferB
+                    return self.val + other
+
+            class _SurferB:  # Mirror image
+                def __init__(self, val):
+                    self.val = val
+                def __bool__(self):
+                    self.__class__ = _SurferA
+                    return False  # Return opposite boolean to confuse control flow
+                def __int__(self):
+                    self.__class__ = _SurferA
+                    return int(self.val)
+                def __index__(self):
+                    self.__class__ = _SurferA
+                    return int(self.val)
+                def __add__(self, other):
+                    self.__class__ = _SurferA
+                    return self.val + other
+        """)
+        return ast.parse(surfer_code).body
+
+    def _replace_assignment(self, node: ast.FunctionDef, var_name: str, value: int | bool):
+        """Replace assignment 'var_name = value' with 'var_name = _SurferA(value)'."""
+        for i, stmt in enumerate(node.body):
+            if isinstance(stmt, ast.Assign):
+                if (
+                    len(stmt.targets) == 1
+                    and isinstance(stmt.targets[0], ast.Name)
+                    and stmt.targets[0].id == var_name
+                ):
+                    # Replace with _SurferA(value) call
+                    stmt.value = ast.Call(
+                        func=ast.Name(id="_SurferA", ctx=ast.Load()),
+                        args=[ast.Constant(value=value)],
+                        keywords=[],
+                    )
+                    break

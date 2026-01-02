@@ -59,6 +59,7 @@ All notable changes to this project should be documented in this file.
 - A `LiteralTypeSwapMutator` that swaps literal constants with different-typed values to stress JIT type specialization and guards, by @devdanzin.
 - A `YieldFromInjector` that targets generator suspension, `yield from` delegation, and stack unwinding during cleanup with try/finally blocks, by @devdanzin.
 - A `RedundantStatementSanitizer` that removes consecutive identical statements probabilistically to control file size bloat from mutators like StatementDuplicator, by @devdanzin.
+- A `LatticeSurfingMutator` that attacks the JIT's Abstract Interpretation Lattice by injecting objects that dynamically flip their `__class__` to stress-test `_GUARD_TYPE_VERSION` guards, by @devdanzin.
 
 
 ### Enhanced

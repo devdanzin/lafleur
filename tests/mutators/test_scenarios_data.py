@@ -17,6 +17,7 @@ from lafleur.mutators.scenarios_data import (
     ComprehensionBomb,
     DictPolluter,
     IterableMutator,
+    LatticeSurfingMutator,
     MagicMethodMutator,
     NumericMutator,
     ReentrantSideEffectMutator,
@@ -850,6 +851,159 @@ class TestReentrantSideEffectMutator(unittest.TestCase):
         mutated_code = ast.unparse(mutated)
         # The code should be essentially the same (minor formatting differences may occur)
         self.assertNotIn("RugPuller", mutated_code)
+
+
+class TestLatticeSurfingMutator(unittest.TestCase):
+    """Test LatticeSurfingMutator mutator."""
+
+    def setUp(self):
+        """Set random seed for reproducible tests."""
+        random.seed(42)
+
+    def test_injects_surfer_classes(self):
+        """Test that _SurferA and _SurferB classes are injected."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 42
+                y = True
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.05):  # Below 0.1 threshold
+            with patch("random.randint", return_value=1):  # Mutate 1 variable
+                with patch("random.sample") as mock_sample:
+                    # Make it choose the first variable
+                    mock_sample.side_effect = lambda targets, k: targets[:k]
+                    mutator = LatticeSurfingMutator()
+                    mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should have injected the Surfer classes
+        self.assertIn("class _SurferA:", result)
+        self.assertIn("class _SurferB:", result)
+
+    def test_replaces_int_assignment(self):
+        """Test that integer assignment is replaced with _SurferA(value)."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 42
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.05):
+            with patch("random.randint", return_value=1):
+                with patch("random.sample") as mock_sample:
+                    mock_sample.side_effect = lambda targets, k: targets[:k]
+                    mutator = LatticeSurfingMutator()
+                    mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should replace x = 42 with x = _SurferA(42)
+        self.assertIn("x = _SurferA(42)", result)
+        self.assertNotIn("x = 42", result)  # Original assignment should be gone
+
+    def test_replaces_bool_assignment(self):
+        """Test that boolean assignment is replaced with _SurferA(value)."""
+        code = dedent("""
+            def uop_harness_test():
+                flag = True
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.05):
+            with patch("random.randint", return_value=1):
+                with patch("random.sample") as mock_sample:
+                    mock_sample.side_effect = lambda targets, k: targets[:k]
+                    mutator = LatticeSurfingMutator()
+                    mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should replace flag = True with flag = _SurferA(True)
+        self.assertIn("flag = _SurferA(True)", result)
+
+    def test_surfer_class_flip_flop(self):
+        """Test that Surfer classes flip between _SurferA and _SurferB."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 42
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.05):
+            with patch("random.randint", return_value=1):
+                with patch("random.sample") as mock_sample:
+                    mock_sample.side_effect = lambda targets, k: targets[:k]
+                    mutator = LatticeSurfingMutator()
+                    mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # _SurferA should flip to _SurferB in magic methods
+        self.assertIn("self.__class__ = _SurferB", result)
+        # _SurferB should flip to _SurferA in magic methods
+        self.assertIn("self.__class__ = _SurferA", result)
+
+    def test_limits_mutation_to_1_or_2_variables(self):
+        """Test that only 1-2 variables are mutated."""
+        code = dedent("""
+            def uop_harness_test():
+                a = 1
+                b = 2
+                c = 3
+                d = 4
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.05):
+            with patch("random.randint", return_value=2):  # Mutate 2 variables
+                with patch("random.sample") as mock_sample:
+                    # Choose first 2
+                    mock_sample.side_effect = lambda targets, k: targets[:k]
+                    mutator = LatticeSurfingMutator()
+                    mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should have exactly 2 _SurferA() calls
+        surfer_count = result.count("_SurferA(")
+        self.assertEqual(surfer_count, 2)
+
+    def test_no_mutation_when_random_check_fails(self):
+        """Test that mutator doesn't modify when random check fails."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 42
+        """)
+        tree = ast.parse(code)
+        original_code = ast.unparse(tree)
+
+        with patch("random.random", return_value=0.5):  # Above 0.1 threshold
+            mutator = LatticeSurfingMutator()
+            mutated = mutator.visit(tree)
+
+        mutated_code = ast.unparse(mutated)
+        # Should not have modified the code
+        self.assertNotIn("_SurferA", mutated_code)
+        self.assertNotIn("_SurferB", mutated_code)
+
+    def test_produces_valid_code(self):
+        """Test that output is valid, parseable Python."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 42
+                y = True
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.05):
+            with patch("random.randint", return_value=1):
+                with patch("random.sample") as mock_sample:
+                    mock_sample.side_effect = lambda targets, k: targets[:k]
+                    mutator = LatticeSurfingMutator()
+                    mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should be parseable
+        reparsed = ast.parse(result)
+        self.assertIsInstance(reparsed, ast.Module)
 
 
 if __name__ == "__main__":

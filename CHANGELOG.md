@@ -59,7 +59,6 @@ All notable changes to this project should be documented in this file.
 - A `LiteralTypeSwapMutator` that swaps literal constants with different-typed values to stress JIT type specialization and guards, by @devdanzin.
 
 
-
 ### Enhanced
 
 - Timeout log files will be compressed with zstd if larger than 1MB, by @devdanzin.

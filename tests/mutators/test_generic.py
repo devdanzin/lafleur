@@ -133,6 +133,357 @@ class TestBoundaryValuesMutator(unittest.TestCase):
         self.assertIsInstance(reparsed, ast.Module)
 
 
+class TestLiteralTypeSwapMutator(unittest.TestCase):
+    """Test LiteralTypeSwapMutator mutator."""
+
+    def test_int_to_float(self):
+        """Test that integer can be swapped to float."""
+        code = "x = 42"
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.3):  # Below 0.5 threshold
+            with patch("random.choice", return_value=42.0):  # float(42)
+                mutator = LiteralTypeSwapMutator()
+                mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should have converted to float
+        self.assertIn("42.0", result)
+
+    def test_int_to_str(self):
+        """Test that integer can be swapped to string."""
+        code = "x = 42"
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.3):
+            with patch("random.choice", return_value="42"):
+                mutator = LiteralTypeSwapMutator()
+                mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should have converted to string
+        self.assertIn("'42'", result)
+
+    def test_str_to_int(self):
+        """Test that digit string can be swapped to int."""
+        code = "x = '100'"
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.3):
+            with patch("random.choice", return_value=100):
+                mutator = LiteralTypeSwapMutator()
+                mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should have converted to int
+        self.assertIn("100", result)
+        self.assertNotIn("'100'", result)
+
+    def test_str_to_bytes(self):
+        """Test that string can be swapped to bytes."""
+        code = "x = 'hello'"
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.3):
+            with patch("random.choice", return_value=b"hello"):
+                mutator = LiteralTypeSwapMutator()
+                mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should have converted to bytes
+        self.assertIn("b'hello'", result)
+
+    def test_float_to_int(self):
+        """Test that float can be swapped to int."""
+        code = "x = 3.14"
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.3):
+            with patch("random.choice", return_value=3):
+                mutator = LiteralTypeSwapMutator()
+                mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should have converted to int
+        self.assertEqual("x = 3", result)
+
+    def test_bool_to_int(self):
+        """Test that bool can be swapped to int."""
+        code = "x = True"
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.3):
+            with patch("random.choice", return_value=1):
+                mutator = LiteralTypeSwapMutator()
+                mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should have converted to int
+        self.assertEqual("x = 1", result)
+
+    def test_none_to_zero(self):
+        """Test that None can be swapped to 0."""
+        code = "x = None"
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.3):
+            with patch("random.choice", return_value=0):
+                mutator = LiteralTypeSwapMutator()
+                mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should have converted to 0
+        self.assertEqual("x = 0", result)
+
+    def test_bytes_to_str(self):
+        """Test that bytes can be swapped to str."""
+        code = "x = b'test'"
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.3):
+            with patch("random.choice", return_value="test"):
+                mutator = LiteralTypeSwapMutator()
+                mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should have converted to str
+        self.assertIn("'test'", result)
+        self.assertNotIn("b'test'", result)
+
+    def test_no_mutation_with_high_probability(self):
+        """Test that mutation doesn't occur above 0.5 threshold."""
+        code = "x = 42"
+        tree = ast.parse(code)
+        original = ast.unparse(tree)
+
+        with patch("random.random", return_value=0.9):  # Above 0.5 threshold
+            mutator = LiteralTypeSwapMutator()
+            mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        self.assertEqual(original, result)
+
+    def test_produces_valid_code(self):
+        """Test that output is valid, parseable Python."""
+        code = dedent("""
+            def test():
+                x = 42
+                y = 'hello'
+                z = 3.14
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.3):
+            mutator = LiteralTypeSwapMutator()
+            mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should be parseable
+        reparsed = ast.parse(result)
+        self.assertIsInstance(reparsed, ast.Module)
+
+
+class TestImportChaosMutator(unittest.TestCase):
+    """Test ImportChaosMutator mutator."""
+
+    def setUp(self):
+        """Set random seed for reproducible tests."""
+        random.seed(42)
+
+    def test_injects_random_imports(self):
+        """Test that random standard library imports are injected."""
+        code = dedent("""
+            def test():
+                x = 42
+        """)
+        tree = ast.parse(code)
+
+        # Mock sys.stdlib_module_names to have a small, deterministic set
+        mock_modules = {"os", "sys", "json", "random", "math"}
+        with patch("sys.stdlib_module_names", mock_modules):
+            with patch("random.randint", return_value=2):
+                with patch("random.sample", return_value=["os", "json"]):
+                    mutator = ImportChaosMutator()
+                    mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should have try/except wrapped imports
+        self.assertIn("try:", result)
+        self.assertIn("import os", result)
+        self.assertIn("import json", result)
+        self.assertIn("except", result)
+
+    def test_respects_blacklist(self):
+        """Test that blacklisted modules are not imported."""
+        code = dedent("""
+            def test():
+                x = 42
+        """)
+        tree = ast.parse(code)
+
+        # Mock sys.stdlib_module_names with blacklisted modules
+        mock_modules = {"antigravity", "tkinter", "os", "sys"}
+        with patch("sys.stdlib_module_names", mock_modules):
+            mutator = ImportChaosMutator()
+            safe_imports = mutator._get_safe_imports()
+
+        # Blacklisted modules should not be in safe imports
+        self.assertNotIn("antigravity", safe_imports)
+        self.assertNotIn("tkinter", safe_imports)
+        # Safe modules should be included
+        self.assertIn("os", safe_imports)
+        self.assertIn("sys", safe_imports)
+
+    def test_filters_underscore_prefixed_modules(self):
+        """Test that modules starting with underscore are filtered out."""
+        code = dedent("""
+            def test():
+                x = 42
+        """)
+        tree = ast.parse(code)
+
+        # Mock sys.stdlib_module_names with underscore-prefixed modules
+        mock_modules = {"_thread", "_ast", "os", "sys"}
+        with patch("sys.stdlib_module_names", mock_modules):
+            mutator = ImportChaosMutator()
+            safe_imports = mutator._get_safe_imports()
+
+        # Underscore-prefixed modules should not be in safe imports
+        self.assertNotIn("_thread", safe_imports)
+        self.assertNotIn("_ast", safe_imports)
+        # Safe modules should be included
+        self.assertIn("os", safe_imports)
+        self.assertIn("sys", safe_imports)
+
+    def test_wraps_imports_in_try_except(self):
+        """Test that each import is wrapped in try/except."""
+        code = dedent("""
+            def test():
+                x = 42
+        """)
+        tree = ast.parse(code)
+
+        mock_modules = {"os", "sys", "json"}
+        with patch("sys.stdlib_module_names", mock_modules):
+            with patch("random.randint", return_value=1):
+                with patch("random.sample", return_value=["os"]):
+                    mutator = ImportChaosMutator()
+                    mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should have exception handler for ImportError and Exception
+        self.assertIn("try:", result)
+        self.assertIn("import os", result)
+        self.assertIn("except (ImportError, Exception):", result)
+        self.assertIn("pass", result)
+
+    def test_injects_at_module_level(self):
+        """Test that imports are injected at the module level."""
+        code = dedent("""
+            def test():
+                x = 42
+            def another():
+                y = 10
+        """)
+        tree = ast.parse(code)
+
+        mock_modules = {"os", "sys"}
+        with patch("sys.stdlib_module_names", mock_modules):
+            with patch("random.randint", return_value=1):
+                with patch("random.sample", return_value=["os"]):
+                    mutator = ImportChaosMutator()
+                    mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        lines = result.split('\n')
+        # Try/import should be at the beginning before function definitions
+        try_idx = next(i for i, line in enumerate(lines) if 'try:' in line)
+        def_idx = next(i for i, line in enumerate(lines) if 'def test():' in line)
+        self.assertLess(try_idx, def_idx)
+
+    def test_caches_safe_imports(self):
+        """Test that safe imports are cached at class level."""
+        mock_modules = {"os", "sys", "json"}
+
+        # Reset cache
+        ImportChaosMutator._safe_imports = None
+
+        with patch("sys.stdlib_module_names", mock_modules):
+            mutator1 = ImportChaosMutator()
+            safe1 = mutator1._get_safe_imports()
+
+            mutator2 = ImportChaosMutator()
+            safe2 = mutator2._get_safe_imports()
+
+        # Should be the same cached object
+        self.assertIs(safe1, safe2)
+
+    def test_produces_valid_code(self):
+        """Test that output is valid, parseable Python."""
+        code = dedent("""
+            def test():
+                x = 42
+                return x + 10
+        """)
+        tree = ast.parse(code)
+
+        mock_modules = {"os", "sys", "json", "random"}
+        with patch("sys.stdlib_module_names", mock_modules):
+            with patch("random.randint", return_value=3):
+                with patch("random.sample", return_value=["os", "sys", "json"]):
+                    mutator = ImportChaosMutator()
+                    mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should be parseable
+        reparsed = ast.parse(result)
+        self.assertIsInstance(reparsed, ast.Module)
+
+    def test_handles_empty_module(self):
+        """Test handling of module with no statements."""
+        code = dedent("""
+            pass
+        """)
+        tree = ast.parse(code)
+
+        mock_modules = {"os", "sys"}
+        with patch("sys.stdlib_module_names", mock_modules):
+            with patch("random.randint", return_value=1):
+                with patch("random.sample", return_value=["os"]):
+                    mutator = ImportChaosMutator()
+                    mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should still inject imports before pass
+        self.assertIn("import os", result)
+        self.assertIn("pass", result)
+
+    def test_variable_import_count(self):
+        """Test that import count varies between 1 and 5."""
+        code = dedent("""
+            def test():
+                x = 42
+        """)
+
+        mock_modules = {"os", "sys", "json", "math", "random", "time"}
+
+        # Test with randint returning 5
+        tree = ast.parse(code)
+        with patch("sys.stdlib_module_names", mock_modules):
+            with patch("random.randint", return_value=5):
+                with patch("random.sample", return_value=["os", "sys", "json", "math", "random"]):
+                    mutator = ImportChaosMutator()
+                    mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should have 5 imports
+        self.assertEqual(result.count("import os"), 1)
+        self.assertEqual(result.count("import sys"), 1)
+        self.assertEqual(result.count("import json"), 1)
+        self.assertEqual(result.count("import math"), 1)
+        self.assertEqual(result.count("import random"), 1)
+
+
 class TestBlockTransposerMutator(unittest.TestCase):
     """Test BlockTransposerMutator mutator."""
 

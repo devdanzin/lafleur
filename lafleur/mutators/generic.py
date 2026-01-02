@@ -199,6 +199,27 @@ class LiteralTypeSwapMutator(ast.NodeTransformer):
 
         return node
 
+    def visit_JoinedStr(self, node: ast.JoinedStr) -> ast.JoinedStr:
+        """
+        Protect f-string literal parts from type swapping.
+
+        F-strings (ast.JoinedStr) contain both literal text parts (ast.Constant)
+        and formatted values (ast.FormattedValue). The literal parts MUST remain
+        strings for ast.unparse to work correctly. This method visits only the
+        FormattedValue nodes, skipping Constant nodes to prevent conversion to bytes.
+        """
+        new_values = []
+        for child in node.values:
+            if isinstance(child, ast.FormattedValue):
+                # Visit formatted expressions (e.g., {x})
+                new_values.append(self.visit(child))
+            else:
+                # Skip mutation for literal parts of f-strings to prevent
+                # ast.unparse from crashing (cannot handle bytes in JoinedStr).
+                new_values.append(child)
+        node.values = new_values
+        return node
+
 
 class ImportChaosMutator(ast.NodeTransformer):
     """

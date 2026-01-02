@@ -50,6 +50,7 @@ from lafleur.mutators.scenarios_control import (
     GuardExhaustionGenerator,
     RecursionWrappingMutator,
     TraceBreaker,
+    YieldFromInjector,
 )
 from lafleur.mutators.scenarios_data import (
     BuiltinNamespaceCorruptor,
@@ -167,6 +168,7 @@ class ASTMutator:
             DecoratorMutator,
             RecursionWrappingMutator,
             ContextManagerInjector,
+            YieldFromInjector,
             DescriptorChaosGenerator,
             MROShuffler,
             FrameManipulator,

@@ -133,6 +133,73 @@ class ConstantPerturbator(ast.NodeTransformer):
         return node
 
 
+class LiteralTypeSwapMutator(ast.NodeTransformer):
+    """
+    Swaps literal constants with values of different types.
+
+    This mutator targets JIT type specialization and guard mechanisms by
+    replacing constants with different-typed values (e.g., int -> float,
+    str -> bytes), forcing deoptimizations and type guard failures.
+    """
+
+    def visit_Constant(self, node: ast.Constant) -> ast.Constant:
+        if random.random() > 0.5:
+            return node
+
+        val = node.value
+        replacements = []
+
+        # Build list of potential replacements based on type
+        if isinstance(val, bool):
+            # Handle bool before int (since bool is subclass of int)
+            replacements = [int(val), str(val)]
+
+        elif isinstance(val, int):
+            replacements = [float(val), str(val), bool(val)]
+            # Add bytes conversion for ASCII-safe integers
+            try:
+                replacements.append(bytes(str(val), "ascii"))
+            except Exception:
+                pass
+
+        elif isinstance(val, float):
+            # Try converting to int (may fail for inf/nan)
+            try:
+                replacements.append(int(val))
+            except (ValueError, OverflowError):
+                pass
+            replacements.append(str(val))
+
+        elif isinstance(val, str):
+            # str -> bytes
+            try:
+                replacements.append(bytes(val, "utf-8"))
+            except Exception:
+                pass
+            # str -> int if it's a digit string
+            if val.isdigit():
+                try:
+                    replacements.append(int(val))
+                except ValueError:
+                    pass
+
+        elif isinstance(val, bytes):
+            # bytes -> str
+            try:
+                replacements.append(val.decode("utf-8"))
+            except Exception:
+                pass
+
+        elif val is None:
+            replacements = [0, False, ""]
+
+        # Select and apply a random replacement
+        if replacements:
+            node.value = random.choice(replacements)
+
+        return node
+
+
 class BoundaryValuesMutator(ast.NodeTransformer):
     """
     Replaces numeric constants with interesting boundary values to stress

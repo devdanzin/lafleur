@@ -55,6 +55,7 @@ All notable changes to this project should be documented in this file.
 - A `ReentrantSideEffectMutator` that creates "rug pull" attacks on mutable containers by clearing them during access operations, by @devdanzin.
 - A `ComparisonChainerMutator` that extends simple comparisons into chained comparisons to stress JIT stack management, by @devdanzin.
 - A `ContextManagerInjector` that wraps code blocks in context managers to stress-test SETUP_WITH and exception propagation, by @devdanzin.
+- A `LiteralTypeSwapMutator` that swaps literal constants with different-typed values to stress JIT type specialization and guards, by @devdanzin.
 
 
 ### Enhanced

@@ -12,6 +12,7 @@ from lafleur.mutators.utils import (
     FuzzerSetupNormalizer,
     EmptyBodySanitizer,
     HarnessInstrumentor,
+    RedundantStatementSanitizer,
 )
 from lafleur.mutators.generic import VariableRenamer
 
@@ -21,5 +22,6 @@ __all__ = [
     "FuzzerSetupNormalizer",
     "EmptyBodySanitizer",
     "HarnessInstrumentor",
+    "RedundantStatementSanitizer",
     "VariableRenamer",
 ]

@@ -11,6 +11,7 @@ with stateful or contract-violating behaviors used by various scenarios.
 from __future__ import annotations
 
 import ast
+import random
 import sys
 from textwrap import dedent
 
@@ -83,6 +84,129 @@ class EmptyBodySanitizer(ast.NodeTransformer):
             node.body = [ast.Pass()]
             ast.fix_missing_locations(node)
 
+        return node
+
+
+class RedundantStatementSanitizer(ast.NodeTransformer):
+    """
+    Removes consecutive, identical statements probabilistically to control
+    file size bloat caused by mutators like StatementDuplicator.
+
+    This preserves some "warming loop" behavior (useful for JIT stressing)
+    while preventing infinite growth across mutation cycles.
+    """
+
+    def __init__(self, removal_probability: float = 0.9):
+        """
+        Initialize the sanitizer.
+
+        Args:
+            removal_probability: Probability of removing a duplicate statement (default 0.9)
+        """
+        self.removal_probability = removal_probability
+
+    def _deduplicate_list(self, statements: list[ast.stmt]) -> list[ast.stmt]:
+        """
+        Remove consecutive identical statements probabilistically.
+
+        Args:
+            statements: List of AST statement nodes
+
+        Returns:
+            Deduplicated list of statements
+        """
+        if not statements:
+            return statements
+
+        new_list = []
+        for node in statements:
+            # If the list is empty, always add the first node
+            if not new_list:
+                new_list.append(node)
+                continue
+
+            # Compare with the last added node
+            last_node_dump = ast.dump(new_list[-1])
+            current_node_dump = ast.dump(node)
+
+            if last_node_dump == current_node_dump:
+                # Identical: remove with removal_probability
+                if random.random() < self.removal_probability:
+                    # Skip (remove) - random value < removal_probability
+                    pass
+                else:
+                    # Keep it - random value >= removal_probability
+                    new_list.append(node)
+            else:
+                # Different: always add
+                new_list.append(node)
+
+        return new_list
+
+    def visit_Module(self, node: ast.Module) -> ast.Module:
+        """Process Module body."""
+        self.generic_visit(node)
+        node.body = self._deduplicate_list(node.body)
+        return node
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> ast.FunctionDef:
+        """Process FunctionDef body."""
+        self.generic_visit(node)
+        node.body = self._deduplicate_list(node.body)
+        return node
+
+    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> ast.AsyncFunctionDef:
+        """Process AsyncFunctionDef body."""
+        self.generic_visit(node)
+        node.body = self._deduplicate_list(node.body)
+        return node
+
+    def visit_For(self, node: ast.For) -> ast.For:
+        """Process For body and orelse."""
+        self.generic_visit(node)
+        node.body = self._deduplicate_list(node.body)
+        node.orelse = self._deduplicate_list(node.orelse)
+        return node
+
+    def visit_AsyncFor(self, node: ast.AsyncFor) -> ast.AsyncFor:
+        """Process AsyncFor body and orelse."""
+        self.generic_visit(node)
+        node.body = self._deduplicate_list(node.body)
+        node.orelse = self._deduplicate_list(node.orelse)
+        return node
+
+    def visit_While(self, node: ast.While) -> ast.While:
+        """Process While body and orelse."""
+        self.generic_visit(node)
+        node.body = self._deduplicate_list(node.body)
+        node.orelse = self._deduplicate_list(node.orelse)
+        return node
+
+    def visit_If(self, node: ast.If) -> ast.If:
+        """Process If body and orelse."""
+        self.generic_visit(node)
+        node.body = self._deduplicate_list(node.body)
+        node.orelse = self._deduplicate_list(node.orelse)
+        return node
+
+    def visit_With(self, node: ast.With) -> ast.With:
+        """Process With body."""
+        self.generic_visit(node)
+        node.body = self._deduplicate_list(node.body)
+        return node
+
+    def visit_AsyncWith(self, node: ast.AsyncWith) -> ast.AsyncWith:
+        """Process AsyncWith body."""
+        self.generic_visit(node)
+        node.body = self._deduplicate_list(node.body)
+        return node
+
+    def visit_Try(self, node: ast.Try) -> ast.Try:
+        """Process Try body, orelse, and finalbody."""
+        self.generic_visit(node)
+        node.body = self._deduplicate_list(node.body)
+        node.orelse = self._deduplicate_list(node.orelse)
+        node.finalbody = self._deduplicate_list(node.finalbody)
         return node
 
 

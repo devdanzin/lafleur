@@ -9,11 +9,13 @@ lafleur/mutators/utils.py
 import ast
 import unittest
 from textwrap import dedent
+from unittest.mock import patch
 
 from lafleur.mutators.utils import (
     EmptyBodySanitizer,
     FuzzerSetupNormalizer,
     HarnessInstrumentor,
+    RedundantStatementSanitizer,
     genLyingEqualityObject,
     genSimpleObject,
     genStatefulBoolObject,
@@ -544,6 +546,203 @@ class TestIsSimpleStatement(unittest.TestCase):
         """Test that complex expressions are simple."""
         node = ast.parse("x = [i**2 for i in range(10) if i % 2 == 0]").body[0]
         self.assertTrue(is_simple_statement(node))
+
+
+class TestRedundantStatementSanitizer(unittest.TestCase):
+    """Test RedundantStatementSanitizer transformer."""
+
+    def test_removes_consecutive_identical_statements(self):
+        """Test that consecutive identical statements are removed."""
+        code = dedent("""
+            def test():
+                x = 1
+                x = 1
+                x = 1
+                x = 1
+                x = 1
+        """)
+        tree = ast.parse(code)
+
+        # Mock random.random to always remove duplicates
+        # With removal_probability=0.9, random < 0.9 means remove
+        with patch("lafleur.mutators.utils.random.random", return_value=0.5):  # < 0.9, will remove
+            sanitizer = RedundantStatementSanitizer()
+            mutated = sanitizer.visit(tree)
+
+        # Should have only 1 statement (all duplicates removed)
+        self.assertEqual(len(mutated.body[0].body), 1)
+
+    def test_keeps_some_duplicates_probabilistically(self):
+        """Test that some duplicates are kept based on probability."""
+        code = dedent("""
+            def test():
+                x = 1
+                x = 1
+                x = 1
+                x = 1
+                x = 1
+        """)
+        tree = ast.parse(code)
+
+        # Mock random.random to alternate between keeping and removing
+        # Side effects: [keep, remove, keep, remove, ...]
+        # random >= 0.9 means keep (0.05 < 0.9 is False, so keep first duplicate)
+        # random >= 0.9 means remove (0.95 >= 0.9 is True, skip second duplicate)
+        with patch("lafleur.mutators.utils.random.random", side_effect=[0.05, 0.95, 0.05, 0.95]):
+            sanitizer = RedundantStatementSanitizer()
+            mutated = sanitizer.visit(tree)
+
+        # Should have 3 statements: original + 2 kept duplicates
+        self.assertEqual(len(mutated.body[0].body), 3)
+
+    def test_preserves_non_identical_statements(self):
+        """Test that non-identical statements are always preserved."""
+        code = dedent("""
+            def test():
+                x = 1
+                y = 2
+                z = 3
+        """)
+        tree = ast.parse(code)
+
+        # Even with high removal probability, different statements should remain
+        with patch("lafleur.mutators.utils.random.random", return_value=0.99):
+            sanitizer = RedundantStatementSanitizer()
+            mutated = sanitizer.visit(tree)
+
+        # Should still have all 3 statements
+        self.assertEqual(len(mutated.body[0].body), 3)
+
+    def test_handles_mixed_statements(self):
+        """Test handling of mixed identical and non-identical statements."""
+        code = dedent("""
+            def test():
+                x = 1
+                x = 1
+                y = 2
+                x = 1
+                z = 3
+        """)
+        tree = ast.parse(code)
+
+        # Always remove duplicates
+        with patch("lafleur.mutators.utils.random.random", return_value=0.5):
+            sanitizer = RedundantStatementSanitizer()
+            mutated = sanitizer.visit(tree)
+
+        # Should have 4 statements: x=1, y=2, x=1 (not consecutive), z=3
+        self.assertEqual(len(mutated.body[0].body), 4)
+
+    def test_processes_if_body(self):
+        """Test that if statement bodies are processed."""
+        code = dedent("""
+            if True:
+                x = 1
+                x = 1
+                x = 1
+        """)
+        tree = ast.parse(code)
+
+        with patch("lafleur.mutators.utils.random.random", return_value=0.5):
+            sanitizer = RedundantStatementSanitizer()
+            mutated = sanitizer.visit(tree)
+
+        # Should have only 1 statement in if body
+        self.assertEqual(len(mutated.body[0].body), 1)
+
+    def test_processes_for_body(self):
+        """Test that for loop bodies are processed."""
+        code = dedent("""
+            for i in range(10):
+                x = 1
+                x = 1
+                x = 1
+        """)
+        tree = ast.parse(code)
+
+        with patch("lafleur.mutators.utils.random.random", return_value=0.5):
+            sanitizer = RedundantStatementSanitizer()
+            mutated = sanitizer.visit(tree)
+
+        # Should have only 1 statement in for body
+        self.assertEqual(len(mutated.body[0].body), 1)
+
+    def test_processes_while_body(self):
+        """Test that while loop bodies are processed."""
+        code = dedent("""
+            while True:
+                x = 1
+                x = 1
+                x = 1
+        """)
+        tree = ast.parse(code)
+
+        with patch("lafleur.mutators.utils.random.random", return_value=0.5):
+            sanitizer = RedundantStatementSanitizer()
+            mutated = sanitizer.visit(tree)
+
+        # Should have only 1 statement in while body
+        self.assertEqual(len(mutated.body[0].body), 1)
+
+    def test_processes_try_body(self):
+        """Test that try block bodies are processed."""
+        code = dedent("""
+            try:
+                x = 1
+                x = 1
+                x = 1
+            except:
+                pass
+        """)
+        tree = ast.parse(code)
+
+        with patch("lafleur.mutators.utils.random.random", return_value=0.5):
+            sanitizer = RedundantStatementSanitizer()
+            mutated = sanitizer.visit(tree)
+
+        # Should have only 1 statement in try body
+        self.assertEqual(len(mutated.body[0].body), 1)
+
+    def test_custom_removal_probability(self):
+        """Test custom removal probability."""
+        code = dedent("""
+            def test():
+                x = 1
+                x = 1
+                x = 1
+        """)
+        tree = ast.parse(code)
+
+        # Set removal probability to 0.5 (50% chance)
+        # With removal_probability=0.5, random < 0.5 means remove
+        with patch("lafleur.mutators.utils.random.random", return_value=0.3):  # < 0.5, will remove
+            sanitizer = RedundantStatementSanitizer(removal_probability=0.5)
+            mutated = sanitizer.visit(tree)
+
+        # Should have only 1 statement (all duplicates removed)
+        self.assertEqual(len(mutated.body[0].body), 1)
+
+    def test_produces_valid_code(self):
+        """Test that output is valid, parseable Python."""
+        code = dedent("""
+            def test():
+                x = 1
+                x = 1
+                y = 2
+                y = 2
+                z = 3
+                z = 3
+        """)
+        tree = ast.parse(code)
+
+        with patch("lafleur.mutators.utils.random.random", side_effect=[0.05, 0.95, 0.05, 0.95, 0.05]):
+            sanitizer = RedundantStatementSanitizer()
+            mutated = sanitizer.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should be parseable
+        reparsed = ast.parse(result)
+        self.assertIsInstance(reparsed, ast.Module)
 
 
 if __name__ == "__main__":

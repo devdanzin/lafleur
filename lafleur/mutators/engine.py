@@ -40,6 +40,7 @@ from lafleur.mutators.generic import (
     VariableSwapper,
 )
 from lafleur.mutators.scenarios_control import (
+    ContextManagerInjector,
     CoroutineStateCorruptor,
     DeepCallMutator,
     ExceptionHandlerMaze,
@@ -161,6 +162,7 @@ class ASTMutator:
             NewUnpackingMutator,
             DecoratorMutator,
             RecursionWrappingMutator,
+            ContextManagerInjector,
             DescriptorChaosGenerator,
             MROShuffler,
             FrameManipulator,

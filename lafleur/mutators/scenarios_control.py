@@ -520,3 +520,175 @@ class CoroutineStateCorruptor(ast.NodeTransformer):
             ast.fix_missing_locations(node)
 
         return node
+
+
+class ContextManagerInjector(ast.NodeTransformer):
+    """
+    Wraps blocks of code in context managers to stress-test the JIT's handling
+    of SETUP_WITH and exception propagation.
+
+    This mutator uses three strategies:
+    - Simple: contextlib.nullcontext() (clean entry/exit)
+    - Resource: open(os.devnull, 'w') (real resource management)
+    - Evil: Custom context manager that randomly raises in __enter__/__exit__
+    """
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> ast.FunctionDef:
+        self.generic_visit(node)
+
+        if not node.name.startswith("uop_harness"):
+            return node
+
+        # Only apply with low probability
+        if random.random() < 0.15:
+            # Need at least 2 statements to wrap a slice
+            if len(node.body) < 2:
+                return node
+
+            # Choose a random contiguous slice (2-5 statements)
+            slice_size = min(random.randint(2, 5), len(node.body))
+            start_idx = random.randint(0, len(node.body) - slice_size)
+            end_idx = start_idx + slice_size
+
+            # Extract the slice to wrap
+            statements_to_wrap = node.body[start_idx:end_idx]
+
+            # Choose strategy
+            strategy = random.choice(["simple", "resource", "evil"])
+            uid = random.randint(1000, 9999)
+
+            if strategy == "simple":
+                print(
+                    f"    -> Injecting context manager (nullcontext) wrapping {slice_size} statements",
+                    file=sys.stderr,
+                )
+                # Strategy A: contextlib.nullcontext()
+                # Ensure import
+                import_node = ast.Import(names=[ast.alias(name="contextlib")])
+                if import_node not in node.body:
+                    node.body.insert(0, import_node)
+
+                # Create with statement
+                context_expr = ast.Call(
+                    func=ast.Attribute(
+                        value=ast.Name(id="contextlib", ctx=ast.Load()),
+                        attr="nullcontext",
+                        ctx=ast.Load(),
+                    ),
+                    args=[],
+                    keywords=[],
+                )
+                with_node = ast.With(
+                    items=[ast.withitem(context_expr=context_expr, optional_vars=None)],
+                    body=statements_to_wrap,
+                )
+
+            elif strategy == "resource":
+                print(
+                    f"    -> Injecting context manager (os.devnull) wrapping {slice_size} statements",
+                    file=sys.stderr,
+                )
+                # Strategy B: open(os.devnull, 'w')
+                # Ensure import
+                import_node = ast.Import(names=[ast.alias(name="os")])
+                if import_node not in node.body:
+                    node.body.insert(0, import_node)
+
+                # Create with statement
+                context_expr = ast.Call(
+                    func=ast.Name(id="open", ctx=ast.Load()),
+                    args=[
+                        ast.Attribute(
+                            value=ast.Name(id="os", ctx=ast.Load()),
+                            attr="devnull",
+                            ctx=ast.Load(),
+                        ),
+                        ast.Constant(value="w"),
+                    ],
+                    keywords=[],
+                )
+                # Store in variable to avoid issues
+                with_node = ast.With(
+                    items=[
+                        ast.withitem(
+                            context_expr=context_expr,
+                            optional_vars=ast.Name(id=f"_ctx_{uid}", ctx=ast.Store()),
+                        )
+                    ],
+                    body=statements_to_wrap,
+                )
+
+            else:  # strategy == "evil"
+                print(
+                    f"    -> Injecting context manager (EvilContext) wrapping {slice_size} statements",
+                    file=sys.stderr,
+                )
+                # Strategy C: Custom EvilContext class
+                evil_class_code = dedent(f"""
+                    class EvilContext_{uid}:
+                        '''Context manager that randomly raises in __enter__/__exit__'''
+                        def __enter__(self):
+                            # Randomly raise to stress exception handling
+                            if fuzzer_rng.random() < 0.3:
+                                raise RuntimeError("Evil __enter__")
+                            return self
+
+                        def __exit__(self, exc_type, exc_val, exc_tb):
+                            # Either raise or swallow exceptions
+                            if fuzzer_rng.random() < 0.3:
+                                raise RuntimeError("Evil __exit__")
+                            elif fuzzer_rng.random() < 0.5:
+                                return True  # Swallow exceptions
+                            return False
+                """)
+                evil_class_ast = ast.parse(evil_class_code).body[0]
+
+                # Insert class definition at top of function (after any imports)
+                insert_idx = 0
+                for i, stmt in enumerate(node.body):
+                    if not isinstance(stmt, (ast.Import, ast.ImportFrom)):
+                        insert_idx = i
+                        break
+                node.body.insert(insert_idx, evil_class_ast)
+
+                # Create with statement wrapped in try/except
+                context_expr = ast.Call(
+                    func=ast.Name(id=f"EvilContext_{uid}", ctx=ast.Load()),
+                    args=[],
+                    keywords=[],
+                )
+
+                with_body_wrapped = ast.With(
+                    items=[ast.withitem(context_expr=context_expr, optional_vars=None)],
+                    body=statements_to_wrap,
+                )
+
+                # Wrap the entire with statement in try/except to handle evil behavior
+                with_node = ast.Try(
+                    body=[with_body_wrapped],
+                    handlers=[
+                        ast.ExceptHandler(
+                            type=ast.Name(id="Exception", ctx=ast.Load()),
+                            name=None,
+                            body=[ast.Pass()],
+                        )
+                    ],
+                    orelse=[],
+                    finalbody=[],
+                )
+
+            # Replace the slice with the wrapped version
+            # Adjust start_idx if we inserted imports/class
+            actual_start_idx = start_idx
+            if strategy == "simple" or strategy == "resource":
+                actual_start_idx += 1  # Account for import
+            elif strategy == "evil":
+                # Account for class definition
+                for i, stmt in enumerate(node.body[:start_idx + 1]):
+                    if isinstance(stmt, ast.ClassDef):
+                        actual_start_idx += 1
+
+            node.body[actual_start_idx : actual_start_idx + slice_size] = [with_node]
+            ast.fix_missing_locations(node)
+
+        return node

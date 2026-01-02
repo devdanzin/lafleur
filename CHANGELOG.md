@@ -52,6 +52,7 @@ All notable changes to this project should be documented in this file.
 - An `ExceptionGroupMutator` targeting exception group UOPs, by @devdanzin.
 - An `AsyncConstructMutator` targeting async construct UOPs, by @devdanzin.
 - A `SysMonitoringMutator` targeting sys monitoring UOPs, by @devdanzin.
+- A `ReentrantSideEffectMutator` that creates "rug pull" attacks on mutable containers by clearing them during access operations, by @devdanzin.
 
 
 ### Enhanced

@@ -62,6 +62,7 @@ All notable changes to this project should be documented in this file.
 - A `LatticeSurfingMutator` that attacks the JIT's Abstract Interpretation Lattice by injecting objects that dynamically flip their `__class__` to stress-test `_GUARD_TYPE_VERSION` guards, by @devdanzin.
 - A `BloomFilterSaturator` that exploits the JIT's global variable tracking by saturating the bloom filter (reaching the ~4096 mutation limit) and then modifying watched globals to trigger stale-cache bugs, by @devdanzin.
 - A `StackCacheThrasher` that stresses the JIT's Stack Cache and Register Allocator by creating deeply nested right-associative expressions (8 levels) that force stack depth beyond the 3-item cache limit, triggering _SPILL and _RELOAD instructions, by @devdanzin.
+- A `BoundaryComparisonMutator` that stresses the JIT's platform-specific assembly optimizers (Tools/jit/_optimizers.py) by generating edge-case comparisons (NaN vs NaN, NaN vs Inf, 0.0 vs -0.0) that force CPU flags into unusual states (like Parity Flag set) to expose incorrect branch inversion logic, by @devdanzin.
 - A `MaxOperandMutator` that stresses the JIT's Copy-and-Patch encoding by forcing EXTENDED_ARG bytecodes (300 local variables for LOAD_FAST > 255, or 200-statement blocks for jump offsets > 255), by @devdanzin.
 
 

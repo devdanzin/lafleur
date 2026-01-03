@@ -14,6 +14,7 @@ from unittest.mock import patch
 
 from lafleur.mutators.scenarios_data import (
     BloomFilterSaturator,
+    BoundaryComparisonMutator,
     BuiltinNamespaceCorruptor,
     ComprehensionBomb,
     DictPolluter,
@@ -1300,6 +1301,153 @@ class TestStackCacheThrasher(unittest.TestCase):
 
         with patch("random.random", return_value=0.1):
             mutator = StackCacheThrasher()
+            mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should be parseable
+        reparsed = ast.parse(result)
+        self.assertIsInstance(reparsed, ast.Module)
+
+
+class TestBoundaryComparisonMutator(unittest.TestCase):
+    """Test BoundaryComparisonMutator mutator."""
+
+    def setUp(self):
+        """Set random seed for reproducible tests."""
+        random.seed(42)
+
+    def test_injects_edge_case_floats(self):
+        """Test that edge-case float values are injected."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.1):  # Below 0.2 threshold
+            mutator = BoundaryComparisonMutator()
+            mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should have NaN, Inf, -0.0, 0.0, and dummy counter
+        self.assertIn("_bnd_nan = float('nan')", result)
+        self.assertIn("_bnd_inf = float('inf')", result)
+        self.assertIn("_bnd_nzero = -0.0", result)
+        self.assertIn("_bnd_zero = 0.0", result)
+        self.assertIn("_bnd_dummy = 0", result)
+
+    def test_creates_comparison_blocks(self):
+        """Test that comparison If statements are created."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.1):
+            mutator = BoundaryComparisonMutator()
+            mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should have comparisons with edge-case values
+        self.assertIn("if _bnd_nan == _bnd_nan:", result)
+        self.assertIn("if _bnd_nan != _bnd_inf:", result)
+        self.assertIn("if _bnd_zero < _bnd_nzero:", result)
+        self.assertIn("_bnd_dummy += 1", result)
+
+    def test_uses_all_comparison_operators(self):
+        """Test that Eq, NotEq, Lt, and Gt operators are used."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.1):
+            mutator = BoundaryComparisonMutator()
+            mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should have all operators in comparisons
+        self.assertIn("==", result)
+        self.assertIn("!=", result)
+        self.assertIn("<", result)
+        self.assertIn(">", result)
+
+    def test_has_side_effect_in_if_body(self):
+        """Test that If blocks contain _bnd_dummy += 1."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.1):
+            mutator = BoundaryComparisonMutator()
+            mutated = mutator.visit(tree)
+
+        # Find the If statements
+        func = mutated.body[0]
+        if_stmts = [stmt for stmt in func.body if isinstance(stmt, ast.If)]
+
+        # Should have multiple If statements
+        self.assertGreater(len(if_stmts), 0)
+
+        # Each If should have AugAssign in body
+        for if_stmt in if_stmts:
+            self.assertEqual(len(if_stmt.body), 1)
+            self.assertIsInstance(if_stmt.body[0], ast.AugAssign)
+            self.assertEqual(if_stmt.body[0].target.id, "_bnd_dummy")
+
+    def test_tests_all_combinations(self):
+        """Test that all three combinations are tested for each operator."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.1):
+            mutator = BoundaryComparisonMutator()
+            mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should have all three combinations
+        # NaN vs NaN
+        self.assertIn("_bnd_nan == _bnd_nan", result)
+        # NaN vs Inf
+        self.assertIn("_bnd_nan", result)
+        self.assertIn("_bnd_inf", result)
+        # 0.0 vs -0.0
+        self.assertIn("_bnd_zero", result)
+        self.assertIn("_bnd_nzero", result)
+
+    def test_no_mutation_when_random_check_fails(self):
+        """Test that mutator doesn't modify when random check fails."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.5):  # Above 0.2 threshold
+            mutator = BoundaryComparisonMutator()
+            mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should not have modified the code
+        self.assertNotIn("_bnd_", result)
+
+    def test_produces_valid_code(self):
+        """Test that output is valid, parseable Python."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.1):
+            mutator = BoundaryComparisonMutator()
             mutated = mutator.visit(tree)
 
         result = ast.unparse(mutated)

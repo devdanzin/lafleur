@@ -1096,3 +1096,116 @@ class StackCacheThrasher(ast.NodeTransformer):
             ast.fix_missing_locations(node)
 
         return node
+
+
+class BoundaryComparisonMutator(ast.NodeTransformer):
+    """
+    Stress the JIT's platform-specific assembly optimizers.
+
+    The JIT's assembly optimizers (Tools/jit/_optimizers.py) rewrite branch
+    instructions. By generating edge-case comparisons (NaNs, signed zeros),
+    we force CPU flags into unusual states (like Parity Flag set) that might
+    be mishandled by incorrect branch inversion logic.
+    """
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> ast.FunctionDef:
+        self.generic_visit(node)
+
+        if not node.name.startswith("uop_harness"):
+            return node
+
+        if random.random() < 0.2:  # 20% chance
+            print(
+                f"    -> Injecting boundary comparisons into '{node.name}'",
+                file=sys.stderr,
+            )
+
+            # Step A: Initialize edge-case floats
+            init_stmts = [
+                # NaN value
+                ast.Assign(
+                    targets=[ast.Name(id="_bnd_nan", ctx=ast.Store())],
+                    value=ast.Call(
+                        func=ast.Name(id="float", ctx=ast.Load()),
+                        args=[ast.Constant(value="nan")],
+                        keywords=[],
+                    ),
+                ),
+                # Infinity
+                ast.Assign(
+                    targets=[ast.Name(id="_bnd_inf", ctx=ast.Store())],
+                    value=ast.Call(
+                        func=ast.Name(id="float", ctx=ast.Load()),
+                        args=[ast.Constant(value="inf")],
+                        keywords=[],
+                    ),
+                ),
+                # Negative zero
+                ast.Assign(
+                    targets=[ast.Name(id="_bnd_nzero", ctx=ast.Store())],
+                    value=ast.UnaryOp(op=ast.USub(), operand=ast.Constant(value=0.0)),
+                ),
+                # Positive zero
+                ast.Assign(
+                    targets=[ast.Name(id="_bnd_zero", ctx=ast.Store())],
+                    value=ast.Constant(value=0.0),
+                ),
+                # Dummy counter
+                ast.Assign(
+                    targets=[ast.Name(id="_bnd_dummy", ctx=ast.Store())],
+                    value=ast.Constant(value=0),
+                ),
+            ]
+
+            # Step B: Create comparison blocks
+            comparison_stmts = []
+
+            # Comparison operators to test
+            operators = [
+                ast.Eq(),  # ==
+                ast.NotEq(),  # !=
+                ast.Lt(),  # <
+                ast.Gt(),  # >
+            ]
+
+            # Combinations to test
+            combinations = [
+                ("_bnd_nan", "_bnd_nan"),  # NaN vs NaN
+                ("_bnd_nan", "_bnd_inf"),  # NaN vs Inf
+                ("_bnd_zero", "_bnd_nzero"),  # 0.0 vs -0.0
+            ]
+
+            # Generate If statements for each operator/combination pair
+            for op in operators:
+                for left_var, right_var in combinations:
+                    # Create comparison: if left_var op right_var:
+                    if_stmt = ast.If(
+                        test=ast.Compare(
+                            left=ast.Name(id=left_var, ctx=ast.Load()),
+                            ops=[op],
+                            comparators=[ast.Name(id=right_var, ctx=ast.Load())],
+                        ),
+                        body=[
+                            # _bnd_dummy += 1
+                            ast.AugAssign(
+                                target=ast.Name(id="_bnd_dummy", ctx=ast.Store()),
+                                op=ast.Add(),
+                                value=ast.Constant(value=1),
+                            )
+                        ],
+                        orelse=[],
+                    )
+                    comparison_stmts.append(if_stmt)
+
+            # Inject: initializations + comparisons in the middle of function
+            injection_point = len(node.body) // 2 if len(node.body) > 1 else len(node.body)
+            node.body = (
+                init_stmts
+                + node.body[:injection_point]
+                + comparison_stmts
+                + node.body[injection_point:]
+            )
+
+            ast.fix_missing_locations(node)
+
+        return node

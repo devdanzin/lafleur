@@ -55,6 +55,7 @@ from lafleur.mutators.scenarios_control import (
 )
 from lafleur.mutators.scenarios_data import (
     BloomFilterSaturator,
+    BoundaryComparisonMutator,
     BuiltinNamespaceCorruptor,
     ComprehensionBomb,
     DictPolluter,
@@ -163,6 +164,7 @@ class ASTMutator:
             LatticeSurfingMutator,
             BloomFilterSaturator,
             StackCacheThrasher,
+            BoundaryComparisonMutator,
             GCInjector,
             DictPolluter,
             FunctionPatcher,

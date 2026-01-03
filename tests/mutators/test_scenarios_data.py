@@ -27,6 +27,7 @@ from lafleur.mutators.scenarios_data import (
     NumericMutator,
     ReentrantSideEffectMutator,
     StackCacheThrasher,
+    TypeShadowingMutator,
     _create_hash_attack,
     _create_len_attack,
     _create_pow_attack,
@@ -1890,6 +1891,165 @@ class TestCodeObjectHotSwapper(unittest.TestCase):
 
         with patch("random.random", return_value=0.1):
             mutator = CodeObjectHotSwapper()
+            mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should be parseable
+        reparsed = ast.parse(result)
+        self.assertIsInstance(reparsed, ast.Module)
+
+
+class TestTypeShadowingMutator(unittest.TestCase):
+    """Test TypeShadowingMutator mutator."""
+
+    def setUp(self):
+        """Set random seed for reproducible tests."""
+        random.seed(42)
+
+    def test_injects_sys_getframe_call(self):
+        """Test that sys._getframe().f_locals is injected."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.1):  # Below 0.2 threshold
+            mutator = TypeShadowingMutator()
+            mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should have sys._getframe().f_locals
+        self.assertIn("_getframe", result)
+        self.assertIn("f_locals", result)
+
+    def test_injects_float_variable_setup(self):
+        """Test that float variable is set up for JIT training."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.1):
+            mutator = TypeShadowingMutator()
+            mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should have float setup
+        self.assertIn("_shadow_x = 3.14", result)
+        self.assertIn("_shadow_x + 1.0", result)
+
+    def test_injects_warmup_loop(self):
+        """Test that the warmup loop is injected."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.1):
+            mutator = TypeShadowingMutator()
+            mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should have hot loop
+        self.assertIn("for _shadow_i in range(2000):", result)
+
+    def test_injects_type_swap_at_iteration_1500(self):
+        """Test that type is swapped at iteration 1500."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.1):
+            mutator = TypeShadowingMutator()
+            mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should swap at iteration 1500
+        self.assertIn("if _shadow_i == 1500:", result)
+        self.assertIn("EVIL_STRING", result)
+
+    def test_injects_sys_import(self):
+        """Test that sys is imported locally via __import__."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.1):
+            mutator = TypeShadowingMutator()
+            mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should import sys locally
+        self.assertIn("_shadow_sys = __import__('sys')", result)
+
+    def test_has_try_except_wrapper(self):
+        """Test that type operation is wrapped in try-except."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.1):
+            mutator = TypeShadowingMutator()
+            mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should have try-except for TypeError
+        self.assertIn("try:", result)
+        self.assertIn("except TypeError:", result)
+
+    def test_no_mutation_when_random_check_fails(self):
+        """Test that mutator doesn't modify when random check fails."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.5):  # Above 0.2 threshold
+            mutator = TypeShadowingMutator()
+            mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should not have modified the code
+        self.assertNotIn("_shadow_x", result)
+        self.assertNotIn("_getframe", result)
+
+    def test_ignores_non_harness_functions(self):
+        """Test that non-harness functions are not mutated."""
+        code = dedent("""
+            def regular_function():
+                x = 1
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.1):
+            mutator = TypeShadowingMutator()
+            mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should not have modified the code
+        self.assertNotIn("_shadow_x", result)
+        self.assertNotIn("_getframe", result)
+
+    def test_produces_valid_code(self):
+        """Test that output is valid, parseable Python."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.1):
+            mutator = TypeShadowingMutator()
             mutated = mutator.visit(tree)
 
         result = ast.unparse(mutated)

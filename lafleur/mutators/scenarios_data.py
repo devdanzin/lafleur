@@ -1412,3 +1412,64 @@ class CodeObjectHotSwapper(ast.NodeTransformer):
             ast.fix_missing_locations(node)
 
         return node
+
+
+class TypeShadowingMutator(ast.NodeTransformer):
+    """
+    Attack the _GUARD_TYPE_VERSION optimization via frame local manipulation.
+
+    We train the JIT on a float variable, then use sys._getframe().f_locals
+    to change its type behind the scenes (bypassing standard bytecodes),
+    and immediately trigger the type-specialized operation again. This tests
+    if the JIT correctly guards against type changes via f_locals writes.
+    """
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> ast.FunctionDef:
+        self.generic_visit(node)
+
+        if not node.name.startswith("uop_harness"):
+            return node
+
+        if random.random() < 0.2:  # 20% chance
+            print(
+                f"    -> Injecting type shadowing attack into '{node.name}'",
+                file=sys.stderr,
+            )
+
+            # Build the type shadowing scenario
+            shadow_code = dedent("""
+                # Import sys locally to ensure availability
+                _shadow_sys = __import__('sys')
+
+                # Setup: Initialize as float for JIT specialization
+                _shadow_x = 3.14
+
+                for _shadow_i in range(2000):
+                    # 1. Train the JIT: x is a float
+                    _shadow_tmp = _shadow_x + 1.0
+
+                    # 2. The Attack: Swap type via f_locals (bypasses bytecodes)
+                    if _shadow_i == 1500:
+                        _shadow_sys._getframe().f_locals['_shadow_x'] = "EVIL_STRING"
+
+                    # 3. The Trigger: Execute specialized operation again
+                    # If JIT doesn't see the f_locals write, it might run float_add on string
+                    try:
+                        _shadow_tmp = _shadow_x + 1.0
+                    except TypeError:
+                        # Catch successful deopt/error, restore for next iterations
+                        _shadow_x = 3.14
+            """)
+            shadow_logic = ast.parse(shadow_code).body
+
+            # Inject at the middle of the function body
+            injection_point = len(node.body) // 2 if len(node.body) > 1 else len(node.body)
+            node.body = (
+                node.body[:injection_point]
+                + shadow_logic
+                + node.body[injection_point:]
+            )
+
+            ast.fix_missing_locations(node)
+
+        return node

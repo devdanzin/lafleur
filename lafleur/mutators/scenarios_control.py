@@ -844,3 +844,101 @@ class YieldFromInjector(ast.NodeTransformer):
             body=[depth_check, try_finally],
             decorator_list=[],
         )
+
+
+class MaxOperandMutator(ast.NodeTransformer):
+    """
+    Stress the JIT's Copy-and-Patch encoding logic.
+
+    This mutator verifies that the JIT correctly patches "holes" when operand
+    values exceed standard 1-byte limits (forcing EXTENDED_ARG in Python bytecode).
+
+    Two strategies:
+    - Strategy A: Locals Saturation (force LOAD_FAST index > 255)
+    - Strategy B: Jump Stretching (force jump offset > 255 bytes)
+    """
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> ast.FunctionDef:
+        self.generic_visit(node)
+
+        if not node.name.startswith("uop_harness"):
+            return node
+
+        if random.random() < 0.2:  # 20% chance
+            # Randomly choose between Strategy A and B
+            strategy = random.choice(["locals", "jumps"])
+
+            if strategy == "locals":
+                self._apply_locals_saturation(node)
+            else:
+                self._apply_jump_stretching(node)
+
+            ast.fix_missing_locations(node)
+
+        return node
+
+    def _apply_locals_saturation(self, node: ast.FunctionDef):
+        """
+        Strategy A: Force LOAD_FAST index > 255 by creating 300 variables.
+        """
+        print(
+            f"    -> Applying Locals Saturation strategy to '{node.name}' (300 variables)",
+            file=sys.stderr,
+        )
+
+        # Generate 300 assignments: _jit_op_0 = 0, _jit_op_1 = 0, ..., _jit_op_299 = 0
+        padding_stmts = []
+        for i in range(300):
+            var_name = f"_jit_op_{i}"
+            assign = ast.Assign(
+                targets=[ast.Name(id=var_name, ctx=ast.Store())],
+                value=ast.Constant(value=0),
+            )
+            padding_stmts.append(assign)
+
+        # Append a statement reading the last variable: _ = _jit_op_299
+        read_last = ast.Assign(
+            targets=[ast.Name(id="_", ctx=ast.Store())],
+            value=ast.Name(id="_jit_op_299", ctx=ast.Load()),
+        )
+        padding_stmts.append(read_last)
+
+        # Prepend to function body
+        node.body = padding_stmts + node.body
+
+    def _apply_jump_stretching(self, node: ast.FunctionDef):
+        """
+        Strategy B: Force jump offset > 255 bytes by creating a large padding block.
+        """
+        print(
+            f"    -> Applying Jump Stretching strategy to '{node.name}' (200 statements)",
+            file=sys.stderr,
+        )
+
+        # Create a padding block of 200 statements
+        padding_block = []
+        for i in range(200):
+            assign = ast.Assign(
+                targets=[ast.Name(id="_pad_jump", ctx=ast.Store())],
+                value=ast.Constant(value=1),
+            )
+            padding_block.append(assign)
+
+        # Wrap in an if statement: if getattr(object, '__doc__', True): <padding_block>
+        # This is technically always true but harder to analyze statically
+        if_node = ast.If(
+            test=ast.Call(
+                func=ast.Name(id="getattr", ctx=ast.Load()),
+                args=[
+                    ast.Name(id="object", ctx=ast.Load()),
+                    ast.Constant(value="__doc__"),
+                    ast.Constant(value=True),
+                ],
+                keywords=[],
+            ),
+            body=padding_block,
+            orelse=[],
+        )
+
+        # Prepend to function body
+        node.body = [if_node] + node.body

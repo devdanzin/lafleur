@@ -69,6 +69,7 @@ All notable changes to this project should be documented in this file.
 - A `GlobalOptimizationInvalidator` that exploits the JIT's "Global-to-Constant Promotion" by training the JIT to trust a global variable (`range`), then swapping it for an `_EvilGlobal` callable class mid-loop (at iteration 1000 of 2000) to force complex deoptimization, by @devdanzin.
 - A `CodeObjectHotSwapper` that targets `_RETURN_GENERATOR` opcode by training the JIT on `_gen_A()` generators (1000 warmup iterations), then swapping `_gen_A.__code__ = _gen_B.__code__` to force deoptimization when the JIT's cached metadata becomes stale, by @devdanzin.
 - A `TypeShadowingMutator` that attacks `_GUARD_TYPE_VERSION` by training the JIT on a float variable, then using `sys._getframe().f_locals` to change its type to a string mid-loop (bypassing standard bytecodes), and triggering the type-specialized operation again, by @devdanzin.
+- A `ZombieTraceMutator` that stresses the JIT's executor lifecycle management (`pycore_optimizer.h`) by rapidly creating and destroying JIT traces in a loop (50 iterations), defining hot functions that trigger Tier 2 compilation, then letting them go out of scope to test the `pending_deletion` linked list logic for `_PyExecutorObject` cleanup, by @devdanzin.
 
 
 ### Enhanced

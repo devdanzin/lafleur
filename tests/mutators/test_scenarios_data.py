@@ -28,6 +28,7 @@ from lafleur.mutators.scenarios_data import (
     ReentrantSideEffectMutator,
     StackCacheThrasher,
     TypeShadowingMutator,
+    ZombieTraceMutator,
     _create_hash_attack,
     _create_len_attack,
     _create_pow_attack,
@@ -2050,6 +2051,162 @@ class TestTypeShadowingMutator(unittest.TestCase):
 
         with patch("random.random", return_value=0.1):
             mutator = TypeShadowingMutator()
+            mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should be parseable
+        reparsed = ast.parse(result)
+        self.assertIsInstance(reparsed, ast.Module)
+
+
+class TestZombieTraceMutator(unittest.TestCase):
+    """Test ZombieTraceMutator mutator."""
+
+    def setUp(self):
+        """Set random seed for reproducible tests."""
+        random.seed(42)
+
+    def test_injects_zombie_churn_function(self):
+        """Test that _zombie_churn function is injected."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.1):  # Below 0.2 threshold
+            mutator = ZombieTraceMutator()
+            mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should have the churn function definition
+        self.assertIn("def _zombie_churn():", result)
+
+    def test_injects_zombie_churn_call(self):
+        """Test that _zombie_churn() is called."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.1):
+            mutator = ZombieTraceMutator()
+            mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should call the churn function
+        self.assertIn("_zombie_churn()", result)
+
+    def test_injects_loop_creating_victims(self):
+        """Test that the loop creating victim functions is injected."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.1):
+            mutator = ZombieTraceMutator()
+            mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should have the victim creation loop
+        self.assertIn("for _zombie_iter in range(50):", result)
+
+    def test_injects_victim_function(self):
+        """Test that _zombie_victim function is injected."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.1):
+            mutator = ZombieTraceMutator()
+            mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should have the victim function definition
+        self.assertIn("def _zombie_victim():", result)
+
+    def test_victim_has_hot_loop(self):
+        """Test that victim function has a hot loop to trigger JIT."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.1):
+            mutator = ZombieTraceMutator()
+            mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should have hot loop in victim
+        self.assertIn("for _zombie_i in range(1000):", result)
+        self.assertIn("_zombie_x += 1", result)
+
+    def test_victim_is_called(self):
+        """Test that victim function is called to trigger JIT compilation."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.1):
+            mutator = ZombieTraceMutator()
+            mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should call the victim function
+        self.assertIn("_zombie_victim()", result)
+
+    def test_no_mutation_when_random_check_fails(self):
+        """Test that mutator doesn't modify when random check fails."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.5):  # Above 0.2 threshold
+            mutator = ZombieTraceMutator()
+            mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should not have modified the code
+        self.assertNotIn("_zombie_churn", result)
+        self.assertNotIn("_zombie_victim", result)
+
+    def test_ignores_non_harness_functions(self):
+        """Test that non-harness functions are not mutated."""
+        code = dedent("""
+            def regular_function():
+                x = 1
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.1):
+            mutator = ZombieTraceMutator()
+            mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should not have modified the code
+        self.assertNotIn("_zombie_churn", result)
+        self.assertNotIn("_zombie_victim", result)
+
+    def test_produces_valid_code(self):
+        """Test that output is valid, parseable Python."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.1):
+            mutator = ZombieTraceMutator()
             mutated = mutator.visit(tree)
 
         result = ast.unparse(mutated)

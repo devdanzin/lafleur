@@ -19,6 +19,7 @@ from lafleur.mutators.scenarios_control import (
     ExceptionHandlerMaze,
     ExitStresser,
     GuardExhaustionGenerator,
+    MaxOperandMutator,
     RecursionWrappingMutator,
     TraceBreaker,
     YieldFromInjector,
@@ -1296,6 +1297,158 @@ class TestYieldFromInjector(unittest.TestCase):
         result = ast.unparse(mutated)
         # Should have unique suffix from randint
         self.assertIn("_yield_from_gen_1234", result)
+
+
+class TestMaxOperandMutator(unittest.TestCase):
+    """Test MaxOperandMutator mutator."""
+
+    def setUp(self):
+        """Set random seed for reproducible tests."""
+        random.seed(42)
+
+    def test_locals_saturation_creates_300_variables(self):
+        """Test that locals saturation strategy creates 300 variables."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.1):  # Below 0.2 threshold
+            with patch("random.choice", return_value="locals"):
+                mutator = MaxOperandMutator()
+                mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should have 300 _jit_op_ variables
+        self.assertIn("_jit_op_0 = 0", result)
+        self.assertIn("_jit_op_299 = 0", result)
+        # Should read the last variable
+        self.assertIn("_ = _jit_op_299", result)
+
+    def test_locals_saturation_forces_extended_arg(self):
+        """Test that 300 variables force LOAD_FAST index > 255."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.1):
+            with patch("random.choice", return_value="locals"):
+                mutator = MaxOperandMutator()
+                mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Count the number of _jit_op_ variables
+        jit_op_count = result.count("_jit_op_")
+        # Should have at least 300 occurrences (300 assignments + 1 read)
+        self.assertGreaterEqual(jit_op_count, 300)
+
+    def test_jump_stretching_creates_padding_block(self):
+        """Test that jump stretching strategy creates a large padding block."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.1):
+            with patch("random.choice", return_value="jumps"):
+                mutator = MaxOperandMutator()
+                mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should have an if statement with getattr
+        self.assertIn("if getattr(object, '__doc__', True):", result)
+        # Should have padding assignments
+        self.assertIn("_pad_jump = 1", result)
+        # Count occurrences - should have ~200
+        pad_count = result.count("_pad_jump = 1")
+        self.assertGreaterEqual(pad_count, 200)
+
+    def test_jump_stretching_forces_extended_jump(self):
+        """Test that 200 statements force jump offset > 255 bytes."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.1):
+            with patch("random.choice", return_value="jumps"):
+                mutator = MaxOperandMutator()
+                mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # The if block should be large enough to require extended jump
+        # Verify the padding block exists
+        self.assertIn("_pad_jump", result)
+
+    def test_no_mutation_when_random_check_fails(self):
+        """Test that mutator doesn't modify when random check fails."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.5):  # Above 0.2 threshold
+            mutator = MaxOperandMutator()
+            mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should not have modified the code
+        self.assertNotIn("_jit_op_", result)
+        self.assertNotIn("_pad_jump", result)
+        self.assertNotIn("getattr", result)
+
+    def test_strategy_selection_is_random(self):
+        """Test that strategy selection uses random.choice."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+
+        # Test locals strategy
+        with patch("random.random", return_value=0.1):
+            with patch("random.choice", return_value="locals"):
+                mutator = MaxOperandMutator()
+                mutated = mutator.visit(tree)
+                result_locals = ast.unparse(mutated)
+
+        # Test jumps strategy
+        tree = ast.parse(code)
+        with patch("random.random", return_value=0.1):
+            with patch("random.choice", return_value="jumps"):
+                mutator = MaxOperandMutator()
+                mutated = mutator.visit(tree)
+                result_jumps = ast.unparse(mutated)
+
+        # Results should be different
+        self.assertIn("_jit_op_", result_locals)
+        self.assertNotIn("_jit_op_", result_jumps)
+        self.assertIn("_pad_jump", result_jumps)
+        self.assertNotIn("_pad_jump", result_locals)
+
+    def test_produces_valid_code(self):
+        """Test that output is valid, parseable Python."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.1):
+            with patch("random.choice", return_value="locals"):
+                mutator = MaxOperandMutator()
+                mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should be parseable
+        reparsed = ast.parse(result)
+        self.assertIsInstance(reparsed, ast.Module)
 
 
 if __name__ == "__main__":

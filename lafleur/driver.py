@@ -146,10 +146,21 @@ def run_session(files: list[str]) -> int:
             errors_occurred = True
             continue
 
+        # Save original sys.argv to restore later
+        original_argv = sys.argv
+
         try:
             # Read and compile the script
             source = path.read_text(encoding="utf-8")
             code = compile(source, str(path), "exec")
+
+            # Mock runtime environment to mimic standalone execution
+            # This ensures `if __name__ == "__main__":` blocks execute
+            shared_globals["__name__"] = "__main__"
+            shared_globals["__file__"] = str(path.resolve())
+
+            # Mock sys.argv so scripts see their own path, not the driver's
+            sys.argv = [str(path)]
 
             # Execute in shared namespace
             exec(code, shared_globals)
@@ -186,6 +197,10 @@ def run_session(files: list[str]) -> int:
             print(f"[DRIVER:STATS] {json.dumps(stats)}", flush=True)
             errors_occurred = True
             # Continue to next script - don't stop the session
+
+        finally:
+            # Always restore original sys.argv so driver logic doesn't break
+            sys.argv = original_argv
 
     return 1 if errors_occurred else 0
 

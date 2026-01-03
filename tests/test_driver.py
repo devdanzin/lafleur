@@ -215,6 +215,61 @@ class TestSessionFuzzingDriver(unittest.TestCase):
                     self.assertIn("executors", stats)
                     self.assertIn("functions_scanned", stats)
 
+    def test_environment_mocking(self):
+        """Test that __name__, __file__, and sys.argv are mocked correctly."""
+        check_env_script = self._create_script(
+            "check_env.py",
+            """
+            import sys
+            executed = False
+            argv_0 = None
+            file_path = None
+
+            if __name__ == "__main__":
+                executed = True
+                argv_0 = sys.argv[0]
+                file_path = __file__
+            """,
+        )
+
+        stdout, stderr, returncode = self._run_driver(check_env_script)
+
+        self.assertEqual(returncode, 0)
+
+        # Now verify the variables were set correctly by running a second script
+        # that checks them
+        verify_script = self._create_script(
+            "verify.py",
+            """
+            assert executed == True, "if __name__ == '__main__' block did not execute"
+            assert argv_0.endswith("check_env.py"), f"sys.argv[0] was {argv_0}, expected to end with check_env.py"
+            assert "check_env.py" in file_path, f"__file__ was {file_path}, expected to contain check_env.py"
+            """,
+        )
+
+        stdout, stderr, returncode = self._run_driver(check_env_script, verify_script)
+
+        self.assertEqual(returncode, 0)
+
+    def test_file_dunder_is_set(self):
+        """Test that __file__ is set to the script path."""
+        a_script = self._create_script(
+            "a.py",
+            """
+            script_file = __file__
+            """,
+        )
+        b_script = self._create_script(
+            "b.py",
+            """
+            assert "a.py" in script_file, f"__file__ from a.py was {script_file}"
+            """,
+        )
+
+        stdout, stderr, returncode = self._run_driver(a_script, b_script)
+
+        self.assertEqual(returncode, 0)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

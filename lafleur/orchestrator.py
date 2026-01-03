@@ -259,6 +259,7 @@ class LafleurOrchestrator:
         prune_corpus_flag: bool = False,
         force_prune: bool = False,
         timing_fuzz: bool = False,
+        session_fuzz: bool = False,
         max_timeout_log_size: int = 400,
         max_crash_log_size: int = 400,
         target_python: str = sys.executable,
@@ -284,6 +285,7 @@ class LafleurOrchestrator:
         self.run_stats = load_run_stats()
 
         self.timing_fuzz = timing_fuzz
+        self.session_fuzz = session_fuzz
         self.score_tracker = MutatorScoreTracker(self.ast_mutator.transformers)
 
         self.min_corpus_files = min_corpus_files
@@ -1122,10 +1124,26 @@ class LafleurOrchestrator:
             print("[COVERAGE] Running child with JIT=True.", file=sys.stderr)
             # Re-write the original source to ensure we're not running instrumented code
             child_source_path.write_text(source_code)
+
+            # Build the command based on session fuzzing mode
+            if self.session_fuzz:
+                # Session mode: run parent (warmup) then child (attack) in same process
+                print("[SESSION] Using session driver for warm JIT fuzzing.", file=sys.stderr)
+                cmd = [
+                    self.target_python,
+                    "-m",
+                    "lafleur.driver",
+                    str(parent_path),  # Warmup script
+                    str(child_source_path),  # Attack script
+                ]
+            else:
+                # Normal mode: run child in fresh process
+                cmd = [self.target_python, str(child_source_path)]
+
             with open(child_log_path, "w") as log_file:
                 start_time = time.monotonic()
                 result = subprocess.run(
-                    [self.target_python, str(child_source_path)],
+                    cmd,
                     stdout=log_file,
                     stderr=subprocess.STDOUT,
                     timeout=self.timeout,
@@ -2062,6 +2080,11 @@ def main():
         help="Enable JIT performance regression fuzzing mode.",
     )
     parser.add_argument(
+        "--session-fuzz",
+        action="store_true",
+        help="Enable session fuzzing mode. Scripts run in a persistent process to preserve JIT state.",
+    )
+    parser.add_argument(
         "--max-timeout-log-size",
         type=int,
         default=400,
@@ -2135,6 +2158,8 @@ Initial Stats:
             keep_tmp_logs=args.keep_tmp_logs,
             prune_corpus_flag=args.prune_corpus,
             force_prune=args.force,
+            timing_fuzz=args.timing_fuzz,
+            session_fuzz=args.session_fuzz,
             max_timeout_log_size=args.max_timeout_log_size,
             max_crash_log_size=args.max_crash_log_size,
             target_python=args.target_python,

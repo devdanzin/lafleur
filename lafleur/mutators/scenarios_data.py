@@ -1278,3 +1278,69 @@ class AbstractInterpreterConfusionMutator(ast.NodeTransformer):
                 )
 
         return node
+
+
+class GlobalOptimizationInvalidator(ast.NodeTransformer):
+    """
+    Exploit the JIT's "Global-to-Constant Promotion".
+
+    The JIT often optimizes global variables (like `range`) into hardcoded
+    pointers if they don't change. We train the JIT to trust a global, then
+    swap it for a different object inside the hot loop, forcing a complex
+    deoptimization path.
+    """
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> ast.FunctionDef:
+        self.generic_visit(node)
+
+        if not node.name.startswith("uop_harness"):
+            return node
+
+        if random.random() < 0.2:  # 20% chance
+            print(
+                f"    -> Injecting global optimization invalidation into '{node.name}'",
+                file=sys.stderr,
+            )
+
+            # Step 1: Inject the _EvilGlobal class definition
+            evil_class_code = dedent("""
+                class _EvilGlobal:
+                    def __init__(self, *args): pass
+                    def __call__(self, *args): return 42
+            """)
+            evil_class = ast.parse(evil_class_code).body
+
+            # Step 2: Build the invalidation loop
+            # This follows the pattern from test_promote_globals_to_constants
+            invalidation_code = dedent("""
+                global _jit_target
+                _jit_target = range
+                try:
+                    for _jit_i in range(2000):
+                        # The Hot Operation: Call the global
+                        _jit_x = _jit_target(1)
+
+                        # The Switch: Mid-loop invalidation
+                        if _jit_i == 1000:
+                            globals()['_jit_target'] = _EvilGlobal()
+                except (TypeError, ValueError, AttributeError):
+                    # Catch Python-level errors (we only care about C-level crashes)
+                    pass
+                finally:
+                    # Cleanup: Restore it so we don't break the rest of the script
+                    globals()['_jit_target'] = range
+            """)
+            invalidation_loop = ast.parse(invalidation_code).body
+
+            # Inject at the middle of the function body
+            injection_point = len(node.body) // 2 if len(node.body) > 1 else len(node.body)
+            node.body = (
+                evil_class
+                + node.body[:injection_point]
+                + invalidation_loop
+                + node.body[injection_point:]
+            )
+
+            ast.fix_missing_locations(node)
+
+        return node

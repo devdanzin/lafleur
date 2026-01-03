@@ -66,6 +66,7 @@ All notable changes to this project should be documented in this file.
 - An `AbstractInterpreterConfusionMutator` that stress-tests the JIT's specialized micro-ops (like _BINARY_OP_SUBSCR_LIST_INT) by wrapping subscript indices with _ChameleonInt (an int subclass that can raise exceptions during __index__() or __hash__()), verifying that the JIT correctly handles exceptions from within index conversion and unwinds properly, by @devdanzin.
 - A `MaxOperandMutator` that stresses the JIT's Copy-and-Patch encoding by forcing EXTENDED_ARG bytecodes (300 local variables for LOAD_FAST > 255, or 200-statement blocks for jump offsets > 255), by @devdanzin.
 - A `SessionFuzzingDriver` (`lafleur/driver.py`) and `--session-fuzz` CLI flag that enables "warm JIT" fuzzing. In this mode, scripts run sequentially in the same process via `exec()`, allowing JIT state (traces, caches, global watchers) to persist. The driver runs a parent script (warmup) followed by the child (attack), by @devdanzin.
+- A `GlobalOptimizationInvalidator` that exploits the JIT's "Global-to-Constant Promotion" by training the JIT to trust a global variable (`range`), then swapping it for an `_EvilGlobal` callable class mid-loop (at iteration 1000 of 2000) to force complex deoptimization, by @devdanzin.
 
 
 ### Enhanced

@@ -19,6 +19,7 @@ from lafleur.mutators.scenarios_data import (
     BuiltinNamespaceCorruptor,
     ComprehensionBomb,
     DictPolluter,
+    GlobalOptimizationInvalidator,
     IterableMutator,
     LatticeSurfingMutator,
     MagicMethodMutator,
@@ -1596,6 +1597,151 @@ class TestAbstractInterpreterConfusionMutator(unittest.TestCase):
 
         with patch("random.random", return_value=0.1):
             mutator = AbstractInterpreterConfusionMutator()
+            mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should be parseable
+        reparsed = ast.parse(result)
+        self.assertIsInstance(reparsed, ast.Module)
+
+
+class TestGlobalOptimizationInvalidator(unittest.TestCase):
+    """Test GlobalOptimizationInvalidator mutator."""
+
+    def setUp(self):
+        """Set random seed for reproducible tests."""
+        random.seed(42)
+
+    def test_injects_evil_global_class(self):
+        """Test that _EvilGlobal class is injected."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.1):  # Below 0.2 threshold
+            mutator = GlobalOptimizationInvalidator()
+            mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should have _EvilGlobal class definition
+        self.assertIn("class _EvilGlobal:", result)
+        self.assertIn("def __init__(self, *args):", result)
+        self.assertIn("def __call__(self, *args):", result)
+        self.assertIn("return 42", result)
+
+    def test_injects_global_declaration(self):
+        """Test that global _jit_target is declared."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.1):
+            mutator = GlobalOptimizationInvalidator()
+            mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should have global declaration
+        self.assertIn("global _jit_target", result)
+
+    def test_injects_hot_loop(self):
+        """Test that the hot loop is injected."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.1):
+            mutator = GlobalOptimizationInvalidator()
+            mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should have the hot loop
+        self.assertIn("for _jit_i in range(2000):", result)
+        self.assertIn("_jit_x = _jit_target(1)", result)
+
+    def test_injects_mid_loop_invalidation(self):
+        """Test that global is swapped mid-loop."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.1):
+            mutator = GlobalOptimizationInvalidator()
+            mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should swap at iteration 1000
+        self.assertIn("if _jit_i == 1000:", result)
+        self.assertIn("globals()['_jit_target'] = _EvilGlobal()", result)
+
+    def test_restores_global_after_loop(self):
+        """Test that global is restored after the loop."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.1):
+            mutator = GlobalOptimizationInvalidator()
+            mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should have finally block restoring range
+        self.assertIn("finally:", result)
+        self.assertIn("globals()['_jit_target'] = range", result)
+
+    def test_has_try_except_wrapper(self):
+        """Test that loop is wrapped in try-except."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.1):
+            mutator = GlobalOptimizationInvalidator()
+            mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should have try-except
+        self.assertIn("try:", result)
+        self.assertIn("except (TypeError, ValueError, AttributeError):", result)
+
+    def test_no_mutation_when_random_check_fails(self):
+        """Test that mutator doesn't modify when random check fails."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.5):  # Above 0.2 threshold
+            mutator = GlobalOptimizationInvalidator()
+            mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should not have modified the code
+        self.assertNotIn("_EvilGlobal", result)
+        self.assertNotIn("_jit_target", result)
+
+    def test_produces_valid_code(self):
+        """Test that output is valid, parseable Python."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.1):
+            mutator = GlobalOptimizationInvalidator()
             mutated = mutator.visit(tree)
 
         result = ast.unparse(mutated)

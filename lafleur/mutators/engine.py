@@ -54,6 +54,7 @@ from lafleur.mutators.scenarios_control import (
     YieldFromInjector,
 )
 from lafleur.mutators.scenarios_data import (
+    AbstractInterpreterConfusionMutator,
     BloomFilterSaturator,
     BoundaryComparisonMutator,
     BuiltinNamespaceCorruptor,
@@ -165,6 +166,7 @@ class ASTMutator:
             BloomFilterSaturator,
             StackCacheThrasher,
             BoundaryComparisonMutator,
+            AbstractInterpreterConfusionMutator,
             GCInjector,
             DictPolluter,
             FunctionPatcher,

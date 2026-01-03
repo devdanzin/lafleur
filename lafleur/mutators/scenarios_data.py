@@ -1209,3 +1209,72 @@ class BoundaryComparisonMutator(ast.NodeTransformer):
             ast.fix_missing_locations(node)
 
         return node
+
+
+class AbstractInterpreterConfusionMutator(ast.NodeTransformer):
+    """
+    Stress-test the JIT's specialized micro-ops with exception-raising indices.
+
+    The JIT has specialized micro-ops like _BINARY_OP_SUBSCR_LIST_INT that expect
+    simple index operations. By wrapping indices with _ChameleonInt (an int subclass
+    that can raise exceptions during __index__() or __hash__()), we verify that the
+    JIT correctly handles exceptions from within index conversion and unwinds properly.
+    """
+
+    def __init__(self):
+        super().__init__()
+        self.chameleon_class_injected = False
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> ast.FunctionDef:
+        if not node.name.startswith("uop_harness"):
+            return node
+
+        # Inject the _ChameleonInt class at the top of the function
+        chameleon_class_code = dedent("""
+            class _ChameleonInt(int):
+                def __index__(self):
+                    # 10% chance to fail
+                    if (self % 10) == 7:
+                        raise ValueError("Chameleon Fail")
+                    return int(self)
+                def __hash__(self):
+                    # 10% chance to fail
+                    if (self % 10) == 8:
+                        raise TypeError("Chameleon Hash Fail")
+                    return super().__hash__()
+        """)
+
+        chameleon_class = ast.parse(chameleon_class_code).body
+        self.chameleon_class_injected = True
+
+        print(
+            f"    -> Injecting _ChameleonInt into '{node.name}'",
+            file=sys.stderr,
+        )
+
+        # Prepend the class definition
+        node.body = chameleon_class + node.body
+
+        # Now visit the rest of the function to modify subscripts
+        self.generic_visit(node)
+
+        ast.fix_missing_locations(node)
+        return node
+
+    def visit_Subscript(self, node: ast.Subscript) -> ast.Subscript:
+        # Only modify if we've injected the chameleon class
+        if not self.chameleon_class_injected:
+            return node
+
+        # Only wrap simple indices (Constant or Name)
+        if isinstance(node.slice, (ast.Constant, ast.Name)):
+            # 30% chance to wrap
+            if random.random() < 0.3:
+                # Wrap the index with _ChameleonInt(index)
+                node.slice = ast.Call(
+                    func=ast.Name(id="_ChameleonInt", ctx=ast.Load()),
+                    args=[node.slice],
+                    keywords=[],
+                )
+
+        return node

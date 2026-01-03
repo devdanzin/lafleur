@@ -13,6 +13,7 @@ from textwrap import dedent
 from unittest.mock import patch
 
 from lafleur.mutators.scenarios_data import (
+    AbstractInterpreterConfusionMutator,
     BloomFilterSaturator,
     BoundaryComparisonMutator,
     BuiltinNamespaceCorruptor,
@@ -1448,6 +1449,153 @@ class TestBoundaryComparisonMutator(unittest.TestCase):
 
         with patch("random.random", return_value=0.1):
             mutator = BoundaryComparisonMutator()
+            mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should be parseable
+        reparsed = ast.parse(result)
+        self.assertIsInstance(reparsed, ast.Module)
+
+
+class TestAbstractInterpreterConfusionMutator(unittest.TestCase):
+    """Test AbstractInterpreterConfusionMutator mutator."""
+
+    def setUp(self):
+        """Set random seed for reproducible tests."""
+        random.seed(42)
+
+    def test_injects_chameleon_class(self):
+        """Test that _ChameleonInt class is injected."""
+        code = dedent("""
+            def uop_harness_test():
+                l = [1, 2, 3]
+                x = l[0]
+        """)
+        tree = ast.parse(code)
+
+        mutator = AbstractInterpreterConfusionMutator()
+        mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should have _ChameleonInt class definition
+        self.assertIn("class _ChameleonInt(int):", result)
+        self.assertIn("def __index__(self):", result)
+        self.assertIn("def __hash__(self):", result)
+        self.assertIn("raise ValueError('Chameleon Fail')", result)
+        self.assertIn("raise TypeError('Chameleon Hash Fail')", result)
+
+    def test_wraps_constant_indices(self):
+        """Test that constant indices are wrapped with _ChameleonInt."""
+        code = dedent("""
+            def uop_harness_test():
+                l = [1, 2, 3]
+                x = l[0]
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.1):  # Below 0.3 threshold
+            mutator = AbstractInterpreterConfusionMutator()
+            mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should wrap the index
+        self.assertIn("l[_ChameleonInt(0)]", result)
+
+    def test_wraps_name_indices(self):
+        """Test that Name indices are wrapped with _ChameleonInt."""
+        code = dedent("""
+            def uop_harness_test():
+                l = [1, 2, 3]
+                i = 0
+                x = l[i]
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.1):  # Below 0.3 threshold
+            mutator = AbstractInterpreterConfusionMutator()
+            mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should wrap the index
+        self.assertIn("l[_ChameleonInt(i)]", result)
+
+    def test_no_wrapping_when_random_check_fails(self):
+        """Test that indices are not wrapped when random check fails."""
+        code = dedent("""
+            def uop_harness_test():
+                l = [1, 2, 3]
+                x = l[0]
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.5):  # Above 0.3 threshold
+            mutator = AbstractInterpreterConfusionMutator()
+            mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should still have the class but not wrap the index
+        self.assertIn("class _ChameleonInt(int):", result)
+        # Index should not be wrapped
+        self.assertIn("l[0]", result)
+        self.assertNotIn("l[_ChameleonInt(0)]", result)
+
+    def test_chameleon_class_has_correct_behavior(self):
+        """Test that _ChameleonInt class has __index__ and __hash__ methods."""
+        code = dedent("""
+            def uop_harness_test():
+                l = [1, 2, 3]
+                x = l[0]
+        """)
+        tree = ast.parse(code)
+
+        mutator = AbstractInterpreterConfusionMutator()
+        mutated = mutator.visit(tree)
+
+        # Find the class definition
+        func = mutated.body[0]
+        chameleon_class = None
+        for stmt in func.body:
+            if isinstance(stmt, ast.ClassDef) and stmt.name == "_ChameleonInt":
+                chameleon_class = stmt
+                break
+
+        self.assertIsNotNone(chameleon_class)
+        # Check that it has the correct methods
+        method_names = [m.name for m in chameleon_class.body if isinstance(m, ast.FunctionDef)]
+        self.assertIn("__index__", method_names)
+        self.assertIn("__hash__", method_names)
+
+    def test_only_wraps_simple_indices(self):
+        """Test that only simple indices (Constant, Name) are wrapped."""
+        code = dedent("""
+            def uop_harness_test():
+                l = [1, 2, 3]
+                x = l[0]
+                y = l[1:2]
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.1):  # Below 0.3 threshold
+            mutator = AbstractInterpreterConfusionMutator()
+            mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should wrap constant index
+        self.assertIn("_ChameleonInt(0)", result)
+        # Should NOT wrap slice
+        self.assertIn("l[1:2]", result)
+
+    def test_produces_valid_code(self):
+        """Test that output is valid, parseable Python."""
+        code = dedent("""
+            def uop_harness_test():
+                l = [1, 2, 3]
+                x = l[0]
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.1):
+            mutator = AbstractInterpreterConfusionMutator()
             mutated = mutator.visit(tree)
 
         result = ast.unparse(mutated)

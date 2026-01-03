@@ -1473,3 +1473,55 @@ class TypeShadowingMutator(ast.NodeTransformer):
             ast.fix_missing_locations(node)
 
         return node
+
+
+class ZombieTraceMutator(ast.NodeTransformer):
+    """
+    Stress the JIT's executor lifecycle management (pycore_optimizer.h).
+
+    We rapidly create and destroy JIT traces by defining hot functions in a loop,
+    calling them to trigger Tier 2 compilation, then letting them go out of scope.
+    This targets potential bugs in the pending_deletion linked list logic for
+    _PyExecutorObject cleanup.
+    """
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> ast.FunctionDef:
+        self.generic_visit(node)
+
+        if not node.name.startswith("uop_harness"):
+            return node
+
+        if random.random() < 0.2:  # 20% chance
+            print(
+                f"    -> Injecting zombie trace churn into '{node.name}'",
+                file=sys.stderr,
+            )
+
+            # Define the zombie churn helper function
+            churn_code = dedent("""
+                def _zombie_churn():
+                    # Loop to rapidly create and destroy JIT state
+                    for _zombie_iter in range(50):
+                        # Define a victim function with a hot loop
+                        def _zombie_victim():
+                            _zombie_x = 0
+                            for _zombie_i in range(1000):
+                                _zombie_x += 1
+                            return _zombie_x
+
+                        # Call it to trigger JIT compilation
+                        _zombie_victim()
+                        # _zombie_victim goes out of scope; Executor marked pending_deletion
+            """)
+            churn_func = ast.parse(churn_code).body
+
+            # Call the churn function
+            call_code = "_zombie_churn()"
+            call_stmt = ast.parse(call_code).body
+
+            # Inject: churn function definition + call at start of function body
+            node.body = churn_func + call_stmt + node.body
+
+            ast.fix_missing_locations(node)
+
+        return node

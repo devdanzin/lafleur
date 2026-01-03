@@ -69,6 +69,7 @@ from lafleur.mutators.scenarios_data import (
     ReentrantSideEffectMutator,
     StackCacheThrasher,
     TypeShadowingMutator,
+    ZombieTraceMutator,
 )
 from lafleur.mutators.scenarios_runtime import (
     FrameManipulator,
@@ -173,6 +174,7 @@ class ASTMutator:
             GlobalOptimizationInvalidator,
             CodeObjectHotSwapper,
             TypeShadowingMutator,
+            ZombieTraceMutator,
             GCInjector,
             DictPolluter,
             FunctionPatcher,

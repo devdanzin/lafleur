@@ -1344,3 +1344,71 @@ class GlobalOptimizationInvalidator(ast.NodeTransformer):
             ast.fix_missing_locations(node)
 
         return node
+
+
+class CodeObjectHotSwapper(ast.NodeTransformer):
+    """
+    Target the _RETURN_GENERATOR opcode and JIT deoptimization.
+
+    We compile a hot path that creates generators, then swap the underlying
+    __code__ object of the function, and try to create the generator again.
+    This tests if the JIT holds onto stale Code Objects.
+    """
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> ast.FunctionDef:
+        self.generic_visit(node)
+
+        if not node.name.startswith("uop_harness"):
+            return node
+
+        if random.random() < 0.2:  # 20% chance
+            print(
+                f"    -> Injecting code object hot swap into '{node.name}'",
+                file=sys.stderr,
+            )
+
+            # Step 1: Inject the generator functions
+            generators_code = dedent("""
+                def _gen_A():
+                    yield 1
+                    yield 2
+
+                def _gen_B():
+                    yield 100
+                    yield 200
+                    yield 300
+            """)
+            generators = ast.parse(generators_code).body
+
+            # Step 2: Build the warmup, swap, and trigger
+            swap_code = dedent("""
+                # Warmup: Create generators in a hot loop
+                for _swap_i in range(1000):
+                    _swap_g = _gen_A()
+                    next(_swap_g)
+
+                # The Swap: Replace code object mid-execution
+                try:
+                    _gen_A.__code__ = _gen_B.__code__
+
+                    # The Trigger: Create generator with swapped code
+                    _swap_g = _gen_A()
+                    _swap_result = next(_swap_g)  # Should yield 100, not 1
+                except (ValueError, TypeError, AttributeError):
+                    # Swapping code objects can raise errors if closures differ
+                    pass
+            """)
+            swap_logic = ast.parse(swap_code).body
+
+            # Inject at the middle of the function body
+            injection_point = len(node.body) // 2 if len(node.body) > 1 else len(node.body)
+            node.body = (
+                generators
+                + node.body[:injection_point]
+                + swap_logic
+                + node.body[injection_point:]
+            )
+
+            ast.fix_missing_locations(node)
+
+        return node

@@ -17,6 +17,7 @@ from lafleur.mutators.scenarios_data import (
     BloomFilterSaturator,
     BoundaryComparisonMutator,
     BuiltinNamespaceCorruptor,
+    CodeObjectHotSwapper,
     ComprehensionBomb,
     DictPolluter,
     GlobalOptimizationInvalidator,
@@ -1742,6 +1743,153 @@ class TestGlobalOptimizationInvalidator(unittest.TestCase):
 
         with patch("random.random", return_value=0.1):
             mutator = GlobalOptimizationInvalidator()
+            mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should be parseable
+        reparsed = ast.parse(result)
+        self.assertIsInstance(reparsed, ast.Module)
+
+
+class TestCodeObjectHotSwapper(unittest.TestCase):
+    """Test CodeObjectHotSwapper mutator."""
+
+    def setUp(self):
+        """Set random seed for reproducible tests."""
+        random.seed(42)
+
+    def test_injects_generator_functions(self):
+        """Test that _gen_A and _gen_B generator functions are injected."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.1):  # Below 0.2 threshold
+            mutator = CodeObjectHotSwapper()
+            mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should have both generator functions
+        self.assertIn("def _gen_A():", result)
+        self.assertIn("def _gen_B():", result)
+        # Generators should have yields
+        self.assertIn("yield 1", result)
+        self.assertIn("yield 100", result)
+
+    def test_injects_warmup_loop(self):
+        """Test that the warmup loop is injected to train the JIT."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.1):
+            mutator = CodeObjectHotSwapper()
+            mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should have warmup loop
+        self.assertIn("for _swap_i in range(1000):", result)
+        self.assertIn("_swap_g = _gen_A()", result)
+        self.assertIn("next(_swap_g)", result)
+
+    def test_injects_code_object_swap(self):
+        """Test that the __code__ attribute swap is injected."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.1):
+            mutator = CodeObjectHotSwapper()
+            mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should swap code objects
+        self.assertIn("_gen_A.__code__ = _gen_B.__code__", result)
+
+    def test_creates_generator_after_swap(self):
+        """Test that a generator is created after the swap to trigger deopt."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.1):
+            mutator = CodeObjectHotSwapper()
+            mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # After swap, should create a new generator and call next
+        self.assertIn("_swap_result = next(_swap_g)", result)
+
+    def test_has_try_except_wrapper(self):
+        """Test that swap code is wrapped in try-except."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.1):
+            mutator = CodeObjectHotSwapper()
+            mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should have try-except
+        self.assertIn("try:", result)
+        self.assertIn("except (ValueError, TypeError, AttributeError):", result)
+
+    def test_no_mutation_when_random_check_fails(self):
+        """Test that mutator doesn't modify when random check fails."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.5):  # Above 0.2 threshold
+            mutator = CodeObjectHotSwapper()
+            mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should not have modified the code
+        self.assertNotIn("_gen_A", result)
+        self.assertNotIn("_gen_B", result)
+        self.assertNotIn("__code__", result)
+
+    def test_ignores_non_harness_functions(self):
+        """Test that non-harness functions are not mutated."""
+        code = dedent("""
+            def regular_function():
+                x = 1
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.1):
+            mutator = CodeObjectHotSwapper()
+            mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should not have modified the code
+        self.assertNotIn("_gen_A", result)
+        self.assertNotIn("__code__", result)
+
+    def test_produces_valid_code(self):
+        """Test that output is valid, parseable Python."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.1):
+            mutator = CodeObjectHotSwapper()
             mutated = mutator.visit(tree)
 
         result = ast.unparse(mutated)

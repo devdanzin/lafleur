@@ -63,6 +63,7 @@ from lafleur.mutators.scenarios_data import (
     MagicMethodMutator,
     NumericMutator,
     ReentrantSideEffectMutator,
+    StackCacheThrasher,
 )
 from lafleur.mutators.scenarios_runtime import (
     FrameManipulator,
@@ -161,6 +162,7 @@ class ASTMutator:
             ReentrantSideEffectMutator,
             LatticeSurfingMutator,
             BloomFilterSaturator,
+            StackCacheThrasher,
             GCInjector,
             DictPolluter,
             FunctionPatcher,

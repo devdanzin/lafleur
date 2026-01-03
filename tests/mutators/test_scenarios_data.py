@@ -22,6 +22,7 @@ from lafleur.mutators.scenarios_data import (
     MagicMethodMutator,
     NumericMutator,
     ReentrantSideEffectMutator,
+    StackCacheThrasher,
     _create_hash_attack,
     _create_len_attack,
     _create_pow_attack,
@@ -1143,6 +1144,162 @@ class TestBloomFilterSaturator(unittest.TestCase):
 
         with patch("random.random", return_value=0.1):
             mutator = BloomFilterSaturator()
+            mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should be parseable
+        reparsed = ast.parse(result)
+        self.assertIsInstance(reparsed, ast.Module)
+
+
+class TestStackCacheThrasher(unittest.TestCase):
+    """Test StackCacheThrasher mutator."""
+
+    def setUp(self):
+        """Set random seed for reproducible tests."""
+        random.seed(42)
+
+    def test_injects_8_variables(self):
+        """Test that 8 stack variables are injected."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.1):  # Below 0.3 threshold
+            mutator = StackCacheThrasher()
+            mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should have 8 _st_ variables
+        self.assertIn("_st_0 = 0", result)
+        self.assertIn("_st_1 = 1", result)
+        self.assertIn("_st_7 = 7", result)
+
+    def test_creates_right_associative_expression(self):
+        """Test that a right-associative expression is created."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.1):
+            mutator = StackCacheThrasher()
+            mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should have the nested expression with all variables
+        self.assertIn("_st_0", result)
+        self.assertIn("_st_7", result)
+        # Should have various operators
+        self.assertIn("+", result)
+        self.assertIn("-", result)
+        self.assertIn("*", result)
+        self.assertIn("|", result)
+        self.assertIn("&", result)
+        self.assertIn("^", result)
+
+    def test_expression_assigned_to_throwaway(self):
+        """Test that the expression is assigned to _."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.1):
+            mutator = StackCacheThrasher()
+            mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should assign to _
+        self.assertIn("_ =", result)
+
+    def test_nested_binop_structure(self):
+        """Test that the expression has deeply nested BinOp structure."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.1):
+            mutator = StackCacheThrasher()
+            mutated = mutator.visit(tree)
+
+        # Find the assignment to _
+        func = mutated.body[0]
+        # Find the thrashing statement (should be somewhere in the body)
+        thrash_stmt = None
+        for stmt in func.body:
+            if isinstance(stmt, ast.Assign) and isinstance(stmt.targets[0], ast.Name):
+                if stmt.targets[0].id == "_":
+                    thrash_stmt = stmt
+                    break
+
+        self.assertIsNotNone(thrash_stmt)
+        # The value should be a BinOp
+        self.assertIsInstance(thrash_stmt.value, ast.BinOp)
+
+        # Walk down the right side to verify nesting depth
+        depth = 0
+        current = thrash_stmt.value
+        while isinstance(current, ast.BinOp):
+            depth += 1
+            current = current.right
+
+        # Should have at least 7 levels of nesting
+        self.assertGreaterEqual(depth, 7)
+
+    def test_forces_stack_depth_greater_than_3(self):
+        """Test that the expression forces stack depth > 3."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.1):
+            mutator = StackCacheThrasher()
+            mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # The expression should use all 8 variables, which forces deep evaluation
+        # All 8 variables should be present
+        for i in range(8):
+            self.assertIn(f"_st_{i}", result)
+
+        # The expression should be assigned to _
+        self.assertIn("_ = _st_0 +", result)
+
+    def test_no_mutation_when_random_check_fails(self):
+        """Test that mutator doesn't modify when random check fails."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.5):  # Above 0.3 threshold
+            mutator = StackCacheThrasher()
+            mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should not have modified the code
+        self.assertNotIn("_st_", result)
+
+    def test_produces_valid_code(self):
+        """Test that output is valid, parseable Python."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.1):
+            mutator = StackCacheThrasher()
             mutated = mutator.visit(tree)
 
         result = ast.unparse(mutated)

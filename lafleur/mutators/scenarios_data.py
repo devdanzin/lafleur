@@ -997,3 +997,102 @@ class BloomFilterSaturator(ast.NodeTransformer):
             ast.fix_missing_locations(node)
 
         return node
+
+
+class StackCacheThrasher(ast.NodeTransformer):
+    """
+    Stress the JIT's Stack Cache and Register Allocator.
+
+    The JIT caches the top 3 stack items in registers. By creating
+    right-associative expressions with depth > 3, we force the JIT to emit
+    _SPILL and _RELOAD instructions, testing stack pointer consistency.
+    """
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> ast.FunctionDef:
+        self.generic_visit(node)
+
+        if not node.name.startswith("uop_harness"):
+            return node
+
+        if random.random() < 0.3:  # 30% chance
+            print(
+                f"    -> Injecting stack cache thrashing into '{node.name}'",
+                file=sys.stderr,
+            )
+
+            # Step A: Initialize 8 local variables
+            init_stmts = []
+            for i in range(8):
+                var_name = f"_st_{i}"
+                assign = ast.Assign(
+                    targets=[ast.Name(id=var_name, ctx=ast.Store())],
+                    value=ast.Constant(value=i),
+                )
+                init_stmts.append(assign)
+
+            # Step B: Create right-associative expression
+            # _ = _st_0 + (_st_1 - (_st_2 * (_st_3 | (_st_4 & (_st_5 ^ (_st_6 + _st_7))))))
+
+            # Build from innermost to outermost
+            # Level 7 (innermost): _st_6 + _st_7
+            expr = ast.BinOp(
+                left=ast.Name(id="_st_6", ctx=ast.Load()),
+                op=ast.Add(),
+                right=ast.Name(id="_st_7", ctx=ast.Load()),
+            )
+
+            # Level 6: _st_5 ^ (...)
+            expr = ast.BinOp(
+                left=ast.Name(id="_st_5", ctx=ast.Load()),
+                op=ast.BitXor(),
+                right=expr,
+            )
+
+            # Level 5: _st_4 & (...)
+            expr = ast.BinOp(
+                left=ast.Name(id="_st_4", ctx=ast.Load()),
+                op=ast.BitAnd(),
+                right=expr,
+            )
+
+            # Level 4: _st_3 | (...)
+            expr = ast.BinOp(
+                left=ast.Name(id="_st_3", ctx=ast.Load()),
+                op=ast.BitOr(),
+                right=expr,
+            )
+
+            # Level 3: _st_2 * (...)
+            expr = ast.BinOp(
+                left=ast.Name(id="_st_2", ctx=ast.Load()),
+                op=ast.Mult(),
+                right=expr,
+            )
+
+            # Level 2: _st_1 - (...)
+            expr = ast.BinOp(
+                left=ast.Name(id="_st_1", ctx=ast.Load()),
+                op=ast.Sub(),
+                right=expr,
+            )
+
+            # Level 1 (outermost): _st_0 + (...)
+            expr = ast.BinOp(
+                left=ast.Name(id="_st_0", ctx=ast.Load()),
+                op=ast.Add(),
+                right=expr,
+            )
+
+            # Assign to _ (throwaway)
+            thrash_stmt = ast.Assign(
+                targets=[ast.Name(id="_", ctx=ast.Store())],
+                value=expr,
+            )
+
+            # Inject: initializations at the beginning, thrashing statement in the middle/end
+            injection_point = len(node.body) // 2 if len(node.body) > 1 else len(node.body)
+            node.body = init_stmts + node.body[:injection_point] + [thrash_stmt] + node.body[injection_point:]
+
+            ast.fix_missing_locations(node)
+
+        return node

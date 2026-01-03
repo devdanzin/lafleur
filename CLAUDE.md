@@ -96,8 +96,10 @@ grep -L -E "(statically|indentation|unsupported|formatting|invalid syntax)" cras
   - `mutators/` — AST-based mutation strategies
     - `engine.py` — ASTMutator class, registers all transformers
     - `generic.py` — General-purpose mutators (OperatorSwapper, ConstantPerturbator, etc.)
-    - `jit_specific.py` — JIT-targeted mutators (TypeInstabilityInjector, GuardRemover, etc.)
-    - `scenarios_types.py` — Complex scenario injectors (MROShuffler, SuperResolutionAttacker, etc.)
+    - `scenarios_types.py` — Type system attacks (TypeInstabilityInjector, InlineCachePolluter, etc.)
+    - `scenarios_control.py` — Control flow stress testing (DeepCallMutator, TraceBreaker, etc.)
+    - `scenarios_data.py` — Data structure manipulation (DictPolluter, GlobalOptimizationInvalidator, etc.)
+    - `scenarios_runtime.py` — Runtime state corruption (FrameManipulator, GCInjector, etc.)
     - `utils.py` — Shared utilities for mutators
   - `coverage_parser.py` — Parses JIT trace logs for uop-edge coverage
   - `corpus_manager.py` — Manages test case corpus and scheduling
@@ -164,7 +166,8 @@ The mutators are organized into several submodules under `lafleur/mutators/`:
 - Dictionary pollution, comprehension bombs
 - Iterator/iterable misbehavior, numeric edge cases
 - Magic method attacks, builtin namespace corruption
-- Examples: `DictPolluter`, `MagicMethodMutator`, `NumericMutator`, `IterableMutator`
+- Global optimization invalidation, code object hot-swapping
+- Examples: `DictPolluter`, `MagicMethodMutator`, `GlobalOptimizationInvalidator`, `CodeObjectHotSwapper`
 
 **scenarios_runtime.py** - Runtime state corruption
 - Frame manipulation, garbage collection stress
@@ -264,6 +267,8 @@ Effective mutators target these JIT weaknesses, among others:
 - **Inline caching** — JIT caches attribute lookups; invalidate with `__class__` changes
 - **Deoptimization** — Force JIT to fall back to interpreter mid-execution
 - **MRO manipulation** — Change class hierarchy after JIT has traced
+- **Global-to-constant promotion** — JIT promotes stable globals to constants; swap them mid-execution
+- **Code object metadata** — JIT caches function/generator metadata; swap `__code__` attributes
 
 ## Important Environment Variables
 

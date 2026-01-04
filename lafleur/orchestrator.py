@@ -1068,6 +1068,7 @@ class LafleurOrchestrator:
                         divergence_reason="exit_code_mismatch",
                         jit_output=f"Exit Code: {jit_run.returncode}",
                         nojit_output=f"Exit Code: {nojit_run.returncode}",
+                        parent_path=parent_path,
                     )
 
                 # 2. Check for stderr mismatch (after filtering)
@@ -1083,6 +1084,7 @@ class LafleurOrchestrator:
                         divergence_reason="stderr_mismatch",
                         jit_output=filtered_jit_stderr,
                         nojit_output=filtered_nojit_stderr,
+                        parent_path=parent_path,
                     )
 
                 # 3. Check for stdout mismatch
@@ -1096,6 +1098,7 @@ class LafleurOrchestrator:
                         divergence_reason="stdout_mismatch",
                         jit_output=jit_run.stdout,
                         nojit_output=nojit_run.stdout,
+                        parent_path=parent_path,
                     )
             print("  [~] No divergences found.", file=sys.stderr)
 
@@ -1159,6 +1162,7 @@ class LafleurOrchestrator:
                 jit_avg_time_ms=jit_avg_ms,
                 nojit_avg_time_ms=nojit_avg_ms,
                 nojit_cv=nojit_cv,
+                parent_path=parent_path,
             )
         except subprocess.TimeoutExpired:
             return self._handle_timeout(child_source_path, child_log_path, parent_path)
@@ -1173,6 +1177,7 @@ class LafleurOrchestrator:
                 log_path=child_log_path,
                 source_path=child_source_path,
                 execution_time_ms=0,
+                parent_path=parent_path,
             )
 
     def _handle_analysis_data(
@@ -1501,8 +1506,62 @@ class LafleurOrchestrator:
             if not is_deepening_session or not found_new_coverage_in_cycle:
                 break
 
+    def _save_session_crash(self, scripts: list[Path], exit_code: int) -> Path:
+        """
+        Save a session crash bundle containing all scripts in the sequence.
+
+        In session fuzzing mode, crashes may depend on JIT state built by earlier
+        scripts in the sequence. This method creates a crash directory containing
+        all scripts with sequential prefixes, plus a reproduce.sh script.
+
+        Args:
+            scripts: List of script paths in execution order (e.g., [parent, child])
+            exit_code: The exit code from the crashed execution
+
+        Returns:
+            Path to the created crash directory
+        """
+        # Generate unique directory name with timestamp
+        timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+        random_suffix = random.randint(1000, 9999)
+        crash_dir = CRASHES_DIR / f"session_crash_{timestamp}_{random_suffix}"
+
+        # Create the crash directory
+        crash_dir.mkdir(parents=True, exist_ok=True)
+
+        # Copy scripts with sequential prefixes
+        script_names = []
+        for i, script_path in enumerate(scripts):
+            if i == 0:
+                dest_name = f"{i:02d}_warmup.py"
+            elif i == len(scripts) - 1:
+                dest_name = f"{i:02d}_attack.py"
+            else:
+                dest_name = f"{i:02d}_script.py"
+
+            dest_path = crash_dir / dest_name
+            shutil.copy2(script_path, dest_path)
+            script_names.append(dest_name)
+
+        # Create reproduce.sh script
+        reproduce_script = crash_dir / "reproduce.sh"
+        reproduce_content = dedent(f"""
+            #!/bin/bash
+            # Session crash reproducer
+            # Exit code: {exit_code}
+            # Generated: {timestamp}
+
+            python3 -m lafleur.driver {' '.join(script_names)}
+        """).strip()
+
+        reproduce_script.write_text(reproduce_content)
+        reproduce_script.chmod(0o755)  # Make executable
+
+        return crash_dir
+
     def _check_for_crash(
-        self, return_code: int, log_content: str, source_path: Path, log_path: Path
+        self, return_code: int, log_content: str, source_path: Path, log_path: Path,
+        parent_path: Path | None = None
     ) -> bool:
         """Check for crashes, determine the cause (Signal/Retcode/Keyword), and save artifacts."""
         crash_reason = None
@@ -1551,27 +1610,55 @@ class LafleurOrchestrator:
             # Process the log (truncate/compress) using the crash-specific limit
             log_to_save = self._process_log_file(log_path, self.max_crash_log_bytes, "Crash log")
 
-            # Construct descriptive filename: crash_signal_SIGSEGV_child_... .py
-            crash_base_name = f"crash_{crash_reason}_{source_path.name}"
-            crash_source_path = CRASHES_DIR / crash_base_name
+            # Branch based on session fuzzing mode
+            if getattr(self, 'session_fuzz', False) and parent_path is not None:
+                # Session mode: save crash bundle with all scripts
+                print(
+                    "  [SESSION] Saving crash bundle with parent and child scripts.",
+                    file=sys.stderr,
+                )
+                crash_dir = self._save_session_crash([parent_path, source_path], return_code)
 
-            # Determine destination log name, preserving extensions/markers
-            if log_to_save.name.endswith("_truncated.log"):
-                crash_log_path = CRASHES_DIR / f"{Path(crash_base_name).stem}_truncated.log"
-            elif log_to_save.name.endswith(".log.zst"):
-                crash_log_path = CRASHES_DIR / f"{Path(crash_base_name).stem}.log.zst"
+                # Determine log destination name
+                if log_to_save.name.endswith("_truncated.log"):
+                    crash_log_name = f"session_{crash_reason}_truncated.log"
+                elif log_to_save.name.endswith(".log.zst"):
+                    crash_log_name = f"session_{crash_reason}.log.zst"
+                else:
+                    crash_log_name = f"session_{crash_reason}.log"
+
+                crash_log_path = crash_dir / crash_log_name
+
+                try:
+                    shutil.copy(log_to_save, crash_log_path)
+                    if log_to_save != log_path:
+                        log_to_save.unlink()
+                    print(f"  [!!!] Session crash bundle saved to: {crash_dir}", file=sys.stderr)
+                except IOError as e:
+                    print(f"  [!] Error saving session crash log: {e}", file=sys.stderr)
+
             else:
-                crash_log_path = CRASHES_DIR / f"{Path(crash_base_name).stem}.log"
+                # Standard mode: save single child file
+                crash_base_name = f"crash_{crash_reason}_{source_path.name}"
+                crash_source_path = CRASHES_DIR / crash_base_name
 
-            try:
-                shutil.copy(source_path, crash_source_path)
-                shutil.copy(log_to_save, crash_log_path)
+                # Determine destination log name, preserving extensions/markers
+                if log_to_save.name.endswith("_truncated.log"):
+                    crash_log_path = CRASHES_DIR / f"{Path(crash_base_name).stem}_truncated.log"
+                elif log_to_save.name.endswith(".log.zst"):
+                    crash_log_path = CRASHES_DIR / f"{Path(crash_base_name).stem}.log.zst"
+                else:
+                    crash_log_path = CRASHES_DIR / f"{Path(crash_base_name).stem}.log"
 
-                # Clean up the processed temp log if we created one
-                if log_to_save != log_path:
-                    log_to_save.unlink()
-            except IOError as e:
-                print(f"  [!] Error saving crash artifacts: {e}", file=sys.stderr)
+                try:
+                    shutil.copy(source_path, crash_source_path)
+                    shutil.copy(log_to_save, crash_log_path)
+
+                    # Clean up the processed temp log if we created one
+                    if log_to_save != log_path:
+                        log_to_save.unlink()
+                except IOError as e:
+                    print(f"  [!] Error saving crash artifacts: {e}", file=sys.stderr)
 
             return True
 
@@ -1806,7 +1893,8 @@ class LafleurOrchestrator:
             print(f"  [!] Warning: Could not read log file for analysis: {e}", file=sys.stderr)
 
         if self._check_for_crash(
-            exec_result.returncode, log_content, exec_result.source_path, exec_result.log_path
+            exec_result.returncode, log_content, exec_result.source_path, exec_result.log_path,
+            exec_result.parent_path
         ):
             return {"status": "CRASH"}
 

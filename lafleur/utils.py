@@ -105,3 +105,4 @@ class ExecutionResult:
     nojit_avg_time_ms: float | None = None
     nojit_cv: float | None = None
     parent_path: Path | None = None
+    session_files: list[Path] | None = None

@@ -114,6 +114,9 @@ DEFAULT_MAX_LOG_SIZE = 400 * 1024 * 1024  # 400 MB
 TRUNCATE_HEAD_SIZE = 50 * 1024  # 50 KB
 TRUNCATE_TAIL_SIZE = 300 * 1024  # 300 KB
 
+# Session fuzzing: The Mixer strategy
+MIXER_PROBABILITY = 0.3  # 30% chance to prepend polluter scripts
+
 CRASH_KEYWORDS = [
     "Segmentation fault",
     "Traceback (most recent call last):",
@@ -1129,16 +1132,45 @@ class LafleurOrchestrator:
             child_source_path.write_text(source_code)
 
             # Build the command based on session fuzzing mode
-            if self.session_fuzz:
+            session_files = None
+            if getattr(self, 'session_fuzz', False):
                 # Session mode: run parent (warmup) then child (attack) in same process
                 print("[SESSION] Using session driver for warm JIT fuzzing.", file=sys.stderr)
+
+                # The Mixer: Prepend random corpus files to pollute JIT state
+                if random.random() < MIXER_PROBABILITY:
+                    # Select 1-3 random polluter scripts from corpus
+                    num_polluters = random.randint(1, 3)
+                    polluters = []
+
+                    # Try to get polluters from corpus (handle empty corpus gracefully)
+                    try:
+                        for _ in range(num_polluters):
+                            polluter_path = self.corpus_manager.get_random_parent()
+                            if polluter_path:
+                                polluters.append(CORPUS_DIR / polluter_path)
+                    except (AttributeError, IndexError):
+                        # Corpus empty or get_random_parent not available
+                        pass
+
+                    if polluters:
+                        session_files = polluters + [parent_path, child_source_path]
+                        print(
+                            f"  [MIXER] Active: Added {len(polluters)} polluter(s) to session.",
+                            file=sys.stderr,
+                        )
+                    else:
+                        # Fallback to standard session
+                        session_files = [parent_path, child_source_path]
+                else:
+                    # Standard session mode
+                    session_files = [parent_path, child_source_path]
+
                 cmd = [
                     self.target_python,
                     "-m",
                     "lafleur.driver",
-                    str(parent_path),  # Warmup script
-                    str(child_source_path),  # Attack script
-                ]
+                ] + [str(f) for f in session_files]
             else:
                 # Normal mode: run child in fresh process
                 cmd = [self.target_python, str(child_source_path)]
@@ -1163,6 +1195,7 @@ class LafleurOrchestrator:
                 nojit_avg_time_ms=nojit_avg_ms,
                 nojit_cv=nojit_cv,
                 parent_path=parent_path,
+                session_files=session_files if getattr(self, 'session_fuzz', False) else None,
             )
         except subprocess.TimeoutExpired:
             return self._handle_timeout(child_source_path, child_log_path, parent_path)
@@ -1178,6 +1211,7 @@ class LafleurOrchestrator:
                 source_path=child_source_path,
                 execution_time_ms=0,
                 parent_path=parent_path,
+                session_files=session_files if getattr(self, 'session_fuzz', False) else None,
             )
 
     def _handle_analysis_data(
@@ -1561,7 +1595,7 @@ class LafleurOrchestrator:
 
     def _check_for_crash(
         self, return_code: int, log_content: str, source_path: Path, log_path: Path,
-        parent_path: Path | None = None
+        parent_path: Path | None = None, session_files: list[Path] | None = None
     ) -> bool:
         """Check for crashes, determine the cause (Signal/Retcode/Keyword), and save artifacts."""
         crash_reason = None
@@ -1613,11 +1647,14 @@ class LafleurOrchestrator:
             # Branch based on session fuzzing mode
             if getattr(self, 'session_fuzz', False) and parent_path is not None:
                 # Session mode: save crash bundle with all scripts
+                # Use session_files if available (includes polluters), otherwise use parent+child
+                scripts_to_save = session_files if session_files else [parent_path, source_path]
+                num_scripts = len(scripts_to_save)
                 print(
-                    "  [SESSION] Saving crash bundle with parent and child scripts.",
+                    f"  [SESSION] Saving crash bundle with {num_scripts} script(s).",
                     file=sys.stderr,
                 )
-                crash_dir = self._save_session_crash([parent_path, source_path], return_code)
+                crash_dir = self._save_session_crash(scripts_to_save, return_code)
 
                 # Determine log destination name
                 if log_to_save.name.endswith("_truncated.log"):
@@ -1894,7 +1931,7 @@ class LafleurOrchestrator:
 
         if self._check_for_crash(
             exec_result.returncode, log_content, exec_result.source_path, exec_result.log_path,
-            exec_result.parent_path
+            exec_result.parent_path, exec_result.session_files
         ):
             return {"status": "CRASH"}
 

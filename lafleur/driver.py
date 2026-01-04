@@ -18,6 +18,7 @@ Output Protocol:
 from __future__ import annotations
 
 import argparse
+import ctypes
 import json
 import sys
 import traceback
@@ -33,11 +34,32 @@ except ImportError:
     HAS_OPCODE = False
 
 try:
-    import _testinternalcapi
+    import _testinternalcapi  # noqa: F401
 
     HAS_TESTINTERNALCAPI = True
 except ImportError:
     HAS_TESTINTERNALCAPI = False
+
+
+class PyExecutorObject(ctypes.Structure):
+    # Based on _PyExecutorObject in pycore_optimizer.h
+    # Note: offsets assume 64-bit architecture
+    _fields_ = [
+        ("ob_refcnt", ctypes.c_ssize_t),
+        ("ob_type", ctypes.c_void_p),
+        ("ob_size", ctypes.c_ssize_t),  # PyObject_VAR_HEAD
+        ("trace", ctypes.c_void_p),  # const _PyUOpInstruction *trace
+        # --- _PyVMData vm_data starts here ---
+        ("opcode", ctypes.c_uint8),
+        ("oparg", ctypes.c_uint8),
+        ("valid", ctypes.c_uint8),
+        ("chain_depth", ctypes.c_uint8),
+        ("warm", ctypes.c_bool),
+        ("pending_deletion", ctypes.c_uint8),
+        # We stop defining fields here to avoid alignment guessing games
+        # for the rest of the struct (bloom filters, etc.)
+    ]
+
 
 # Limit integer string conversion to prevent DOS attacks
 if hasattr(sys, "set_int_max_str_digits"):
@@ -59,13 +81,30 @@ def get_jit_stats(namespace: dict) -> dict:
     """
     executor_count = 0
     functions_scanned = 0
+    zombie_traces = 0
+    valid_traces = 0
+    warm_traces = 0
 
     if not HAS_OPCODE:
         return {
             "executors": 0,
             "functions_scanned": 0,
             "jit_available": False,
+            "zombie_traces": 0,
         }
+
+    def inspect_executor(executor):
+        nonlocal zombie_traces, valid_traces, warm_traces
+        try:
+            executor_ptr = ctypes.cast(id(executor), ctypes.POINTER(PyExecutorObject))
+            if executor_ptr.contents.pending_deletion:
+                zombie_traces += 1
+            if executor_ptr.contents.valid:
+                valid_traces += 1
+            if executor_ptr.contents.warm:
+                warm_traces += 1
+        except Exception:
+            pass
 
     for name, obj in namespace.items():
         # FIX: The fuzzer might inject bytes keys into globals
@@ -91,6 +130,7 @@ def get_jit_stats(namespace: dict) -> dict:
                             executor = _opcode.get_executor(method.__code__, offset)
                             if executor is not None:
                                 executor_count += 1
+                                inspect_executor(executor)
                                 break  # Only count once per function
                     except (ValueError, TypeError, RuntimeError):
                         pass
@@ -105,6 +145,7 @@ def get_jit_stats(namespace: dict) -> dict:
                     executor = _opcode.get_executor(code_obj, offset)
                     if executor is not None:
                         executor_count += 1
+                        inspect_executor(executor)
                         break  # Only count once per function
             except (ValueError, TypeError, RuntimeError):
                 pass
@@ -113,6 +154,9 @@ def get_jit_stats(namespace: dict) -> dict:
         "executors": executor_count,
         "functions_scanned": functions_scanned,
         "jit_available": True,
+        "zombie_traces": zombie_traces,
+        "valid_traces": valid_traces,
+        "warm_traces": warm_traces,
     }
 
 
@@ -185,19 +229,30 @@ def run_session(files: list[str]) -> int:
 
         except SystemExit as e:
             # Let SystemExit propagate - script requested exit
-            print(f"[DRIVER:STATS] {json.dumps({'file': path.name, 'status': 'exit', 'code': e.code})}", flush=True)
+            print(
+                f"[DRIVER:STATS] {json.dumps({'file': path.name, 'status': 'exit', 'code': e.code})}",
+                flush=True,
+            )
             raise
 
         except KeyboardInterrupt:
             # User interrupted
-            print(f"[DRIVER:STATS] {json.dumps({'file': path.name, 'status': 'interrupted'})}", flush=True)
+            print(
+                f"[DRIVER:STATS] {json.dumps({'file': path.name, 'status': 'interrupted'})}",
+                flush=True,
+            )
             raise
 
         except Exception as e:
             # Catch all other exceptions and continue
             print(f"[DRIVER:ERROR] {filepath}: {type(e).__name__}: {e}", flush=True)
             traceback.print_exc()
-            stats = {"file": path.name, "status": "error", "error": str(e), "type": type(e).__name__}
+            stats = {
+                "file": path.name,
+                "status": "error",
+                "error": str(e),
+                "type": type(e).__name__,
+            }
             print(f"[DRIVER:STATS] {json.dumps(stats)}", flush=True)
             errors_occurred = True
             # Continue to next script - don't stop the session

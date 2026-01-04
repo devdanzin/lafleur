@@ -68,6 +68,10 @@ def get_jit_stats(namespace: dict) -> dict:
         }
 
     for name, obj in namespace.items():
+        # FIX: The fuzzer might inject bytes keys into globals
+        if not isinstance(name, str):
+            continue
+
         # Skip dunder names and imports
         if name.startswith("_"):
             continue
@@ -88,7 +92,7 @@ def get_jit_stats(namespace: dict) -> dict:
                             if executor is not None:
                                 executor_count += 1
                                 break  # Only count once per function
-                    except (ValueError, TypeError):
+                    except (ValueError, TypeError, RuntimeError):
                         pass
                     functions_scanned += 1
             continue
@@ -102,7 +106,7 @@ def get_jit_stats(namespace: dict) -> dict:
                     if executor is not None:
                         executor_count += 1
                         break  # Only count once per function
-            except (ValueError, TypeError):
+            except (ValueError, TypeError, RuntimeError):
                 pass
 
     return {

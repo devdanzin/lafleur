@@ -73,7 +73,8 @@ class TestJITIntrospection(unittest.TestCase):
             # Setup exception
             mock_cast.side_effect = ValueError("Cast failed")
 
-            mock_opcode.get_executor.return_value = mock_executor
+            # Only return executor for the first offset
+            mock_opcode.get_executor.side_effect = [mock_executor] + [None] * 100
 
             def my_func():
                 pass

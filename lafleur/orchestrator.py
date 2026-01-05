@@ -19,7 +19,6 @@ import platform
 import random
 import re
 import shutil
-import signal
 import statistics
 import subprocess
 import socket
@@ -41,6 +40,7 @@ from lafleur.coverage import (
     PROTO_TRACE_REGEX,
     OPTIMIZED_TRACE_REGEX,
 )
+from lafleur.analysis import CrashFingerprinter, CrashType, CrashSignature
 from lafleur.learning import MutatorScoreTracker
 from lafleur.mutators import (
     ASTMutator,
@@ -224,7 +224,7 @@ class InterestingnessScorer:
         zombie_traces = self.jit_stats.get("zombie_traces", 0)
         # max_exit_count = self.jit_stats.get("max_exit_count", 0) # Superseded by density
         max_chain_depth = self.jit_stats.get("max_chain_depth", 0)
-        # min_code_size = self.jit_stats.get("min_code_size", 0) # Less critical
+        min_code_size = self.jit_stats.get("min_code_size", 0)  # Less critical
 
         # Differential Scoring for Exit Density
         child_density = self.jit_stats.get("max_exit_density", 0.0)
@@ -245,6 +245,10 @@ class InterestingnessScorer:
         if max_chain_depth > 3:
             print("  [+] JIT Hyper-Extension (Deep Chains) detected.", file=sys.stderr)
             score += 10.0
+
+        if 0 < min_code_size < 5:
+            # Reward tiny code sizes (stubs) which often indicate interesting edge cases
+            score += 5.0
 
         # 1. Heavily reward new global discoveries.
         score += self.info.global_edges * 10.0
@@ -333,6 +337,8 @@ class LafleurOrchestrator:
 
         # Verify that the target python is suitable for fuzzing before doing anything else
         self.verify_target_capabilities()
+
+        self.fingerprinter = CrashFingerprinter()
 
         # Synchronize the corpus and state at startup.
         self.corpus_manager.synchronize(self.analyze_run, self._build_lineage_profile)
@@ -1570,7 +1576,9 @@ class LafleurOrchestrator:
             if not is_deepening_session or not found_new_coverage_in_cycle:
                 break
 
-    def _save_session_crash(self, scripts: list[Path], exit_code: int) -> Path:
+    def _save_session_crash(
+        self, scripts: list[Path], exit_code: int, crash_signature: CrashSignature | None = None
+    ) -> Path:
         """
         Save a session crash bundle containing all scripts in the sequence.
 
@@ -1581,6 +1589,7 @@ class LafleurOrchestrator:
         Args:
             scripts: List of script paths in execution order (e.g., [parent, child])
             exit_code: The exit code from the crashed execution
+            crash_signature: Optional crash fingerprint metadata
 
         Returns:
             Path to the created crash directory
@@ -1592,6 +1601,13 @@ class LafleurOrchestrator:
 
         # Create the crash directory
         crash_dir.mkdir(parents=True, exist_ok=True)
+
+        # Write metadata.json if signature is provided
+        if crash_signature:
+            metadata_path = crash_dir / "metadata.json"
+            metadata = crash_signature.to_dict()
+            metadata["timestamp"] = timestamp
+            metadata_path.write_text(json.dumps(metadata, indent=2))
 
         # Copy scripts with sequential prefixes
         script_names = []
@@ -1633,43 +1649,44 @@ class LafleurOrchestrator:
         session_files: list[Path] | None = None,
     ) -> bool:
         """Check for crashes, determine the cause (Signal/Retcode/Keyword), and save artifacts."""
+        crash_signature = None
         crash_reason = None
 
-        # 1. Check Return Code
+        # 1. Analyze with Fingerprinter
         if return_code != 0:
-            # Filter out known non-interesting errors
-            if "IndentationError: too many levels of indentation" in log_content:
-                print(
-                    "  [~] Ignoring known-uninteresting IndentationError (too deep).",
-                    file=sys.stderr,
-                )
-                return False
-            elif "SyntaxError: too many statically nested blocks" in log_content:
-                print(
-                    "  [~] Ignoring known-uninteresting SyntaxError (too nested).", file=sys.stderr
-                )
+            crash_signature = self.fingerprinter.analyze(return_code, log_content)
+
+            # Filter out mundane Python errors (Exit Code 1)
+            if crash_signature.crash_type == CrashType.PYTHON_UNCAUGHT:
+                # We typically ignore standard exceptions unless they trigger an internal error
+                # Check for "SyntaxError: too many statically nested blocks" which is boring
+                if "too many statically nested blocks" in log_content:
+                    print("  [~] Ignoring known-uninteresting SyntaxError.", file=sys.stderr)
+                    return False
+                if "IndentationError: too many levels of indentation" in log_content:
+                    print("  [~] Ignoring known-uninteresting IndentationError.", file=sys.stderr)
+                    return False
+
+                # If it's just a Python exception without other signals, ignore it
                 return False
 
-            # Determine if it was a Signal (negative) or Error Code (positive)
-            if return_code < 0:
-                sig_val = abs(return_code)
-                try:
-                    # Attempt to get the standard name (e.g., SIGSEGV)
-                    sig_name = signal.Signals(sig_val).name
-                except ValueError:
-                    # Fallback for obscure signals
-                    sig_name = str(sig_val)
-                crash_reason = f"signal_{sig_name}"
-            else:
-                crash_reason = f"retcode_{return_code}"
+            crash_reason = crash_signature.fingerprint
 
-        # 2. Check Keywords (if not already caught by return code)
+        # 2. Check Keywords (Fallback if return code was 0 but log indicates panic)
         if not crash_reason:
             for keyword in CRASH_KEYWORDS:
                 if keyword.lower() in log_content.lower():
                     # Sanitize keyword: lowercase, spaces to underscores, remove non-alphanumeric
                     safe_kw = re.sub(r"[^a-z0-9_]", "", keyword.lower().replace(" ", "_"))
                     crash_reason = f"keyword_{safe_kw}"
+                    # Retroactively create a signature
+                    crash_signature = CrashSignature(
+                        type="KEYWORD",
+                        crash_type=CrashType.UNKNOWN,
+                        returncode=return_code,
+                        signal_name=None,
+                        fingerprint=crash_reason,
+                    )
                     break
 
         # 3. Save Artifacts if Crash Detected
@@ -1689,15 +1706,15 @@ class LafleurOrchestrator:
                     f"  [SESSION] Saving crash bundle with {num_scripts} script(s).",
                     file=sys.stderr,
                 )
-                crash_dir = self._save_session_crash(scripts_to_save, return_code)
+                crash_dir = self._save_session_crash(scripts_to_save, return_code, crash_signature)
 
                 # Determine log destination name
                 if log_to_save.name.endswith("_truncated.log"):
-                    crash_log_name = f"session_{crash_reason}_truncated.log"
+                    crash_log_name = "session_crash_truncated.log"
                 elif log_to_save.name.endswith(".log.zst"):
-                    crash_log_name = f"session_{crash_reason}.log.zst"
+                    crash_log_name = "session_crash.log.zst"
                 else:
-                    crash_log_name = f"session_{crash_reason}.log"
+                    crash_log_name = "session_crash.log"
 
                 crash_log_path = crash_dir / crash_log_name
 
@@ -1711,7 +1728,9 @@ class LafleurOrchestrator:
 
             else:
                 # Standard mode: save single child file
-                crash_base_name = f"crash_{crash_reason}_{source_path.name}"
+                # Use sanitization for filename
+                safe_reason = re.sub(r"[^a-zA-Z0-9_.-]", "_", crash_reason[:50])
+                crash_base_name = f"crash_{safe_reason}_{source_path.name}"
                 crash_source_path = CRASHES_DIR / crash_base_name
 
                 # Determine destination log name, preserving extensions/markers

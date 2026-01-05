@@ -181,6 +181,7 @@ class InterestingnessScorer:
         jit_avg_time_ms: float | None,
         nojit_avg_time_ms: float | None,
         nojit_cv: float | None,
+        jit_stats: dict | None = None,
     ):
         self.info = coverage_info
         self.parent_file_size = parent_file_size
@@ -190,6 +191,7 @@ class InterestingnessScorer:
         self.jit_avg_time_ms = jit_avg_time_ms
         self.nojit_avg_time_ms = nojit_avg_time_ms
         self.nojit_cv = nojit_cv
+        self.jit_stats = jit_stats or {}
 
     def calculate_score(self) -> float:
         """
@@ -215,6 +217,28 @@ class InterestingnessScorer:
                 if slowdown_ratio > dynamic_threshold:
                     performance_bonus = (slowdown_ratio - 1.0) * 50.0
                     score += performance_bonus
+
+        # --- JIT Vitals Scoring ---
+        zombie_traces = self.jit_stats.get("zombie_traces", 0)
+        max_exit_count = self.jit_stats.get("max_exit_count", 0)
+        max_chain_depth = self.jit_stats.get("max_chain_depth", 0)
+        min_code_size = self.jit_stats.get("min_code_size", 0)
+
+        if zombie_traces > 0:
+            print("  [!] JIT ZOMBIE STATE DETECTED!", file=sys.stderr)
+            score += 50.0
+
+        if max_exit_count > 50:
+            print("  [+] JIT Tachycardia (High Exit Count) detected.", file=sys.stderr)
+            score += 20.0
+
+        if max_chain_depth > 3:
+            print("  [+] JIT Hyper-Extension (Deep Chains) detected.", file=sys.stderr)
+            score += 10.0
+
+        if 0 < min_code_size < 5:
+            # Reward tiny code sizes (stubs) which often indicate interesting edge cases
+            score += 5.0
 
         # 1. Heavily reward new global discoveries.
         score += self.info.global_edges * 10.0
@@ -964,7 +988,7 @@ class LafleurOrchestrator:
         self.run_stats["regression_timeouts_found"] = (
             self.run_stats.get("regression_timeouts_found", 0) + 1
         )
-        print(f"  [!!!] JIT-INDUCED TIMEOUT DETECTED! Saving test case.", file=sys.stderr)
+        print("  [!!!] JIT-INDUCED TIMEOUT DETECTED! Saving test case.", file=sys.stderr)
 
         dest_dir = REGRESSIONS_DIR / "timeouts"
         dest_dir.mkdir(parents=True, exist_ok=True)
@@ -979,7 +1003,7 @@ class LafleurOrchestrator:
     def _save_jit_hang(self, source_path: Path, parent_path: Path):
         """Saves a test case that timed out with the JIT enabled but not disabled."""
         self.run_stats["jit_hangs_found"] = self.run_stats.get("jit_hangs_found", 0) + 1
-        print(f"  [!!!] JIT-INDUCED HANG DETECTED! Saving test case.", file=sys.stderr)
+        print("  [!!!] JIT-INDUCED HANG DETECTED! Saving test case.", file=sys.stderr)
 
         dest_dir = DIVERGENCES_DIR / "jit_hangs"
         dest_dir.mkdir(parents=True, exist_ok=True)
@@ -1133,7 +1157,7 @@ class LafleurOrchestrator:
 
             # Build the command based on session fuzzing mode
             session_files = None
-            if getattr(self, 'session_fuzz', False):
+            if getattr(self, "session_fuzz", False):
                 # Session mode: run parent (warmup) then child (attack) in same process
                 print("[SESSION] Using session driver for warm JIT fuzzing.", file=sys.stderr)
 
@@ -1195,7 +1219,7 @@ class LafleurOrchestrator:
                 nojit_avg_time_ms=nojit_avg_ms,
                 nojit_cv=nojit_cv,
                 parent_path=parent_path,
-                session_files=session_files if getattr(self, 'session_fuzz', False) else None,
+                session_files=session_files if getattr(self, "session_fuzz", False) else None,
             )
         except subprocess.TimeoutExpired:
             return self._handle_timeout(child_source_path, child_log_path, parent_path)
@@ -1211,7 +1235,7 @@ class LafleurOrchestrator:
                 source_path=child_source_path,
                 execution_time_ms=0,
                 parent_path=parent_path,
-                session_files=session_files if getattr(self, 'session_fuzz', False) else None,
+                session_files=session_files if getattr(self, "session_fuzz", False) else None,
             )
 
     def _handle_analysis_data(
@@ -1585,7 +1609,7 @@ class LafleurOrchestrator:
             # Exit code: {exit_code}
             # Generated: {timestamp}
 
-            python3 -m lafleur.driver {' '.join(script_names)}
+            python3 -m lafleur.driver {" ".join(script_names)}
         """).strip()
 
         reproduce_script.write_text(reproduce_content)
@@ -1594,8 +1618,13 @@ class LafleurOrchestrator:
         return crash_dir
 
     def _check_for_crash(
-        self, return_code: int, log_content: str, source_path: Path, log_path: Path,
-        parent_path: Path | None = None, session_files: list[Path] | None = None
+        self,
+        return_code: int,
+        log_content: str,
+        source_path: Path,
+        log_path: Path,
+        parent_path: Path | None = None,
+        session_files: list[Path] | None = None,
     ) -> bool:
         """Check for crashes, determine the cause (Signal/Retcode/Keyword), and save artifacts."""
         crash_reason = None
@@ -1645,7 +1674,7 @@ class LafleurOrchestrator:
             log_to_save = self._process_log_file(log_path, self.max_crash_log_bytes, "Crash log")
 
             # Branch based on session fuzzing mode
-            if getattr(self, 'session_fuzz', False) and parent_path is not None:
+            if getattr(self, "session_fuzz", False) and parent_path is not None:
                 # Session mode: save crash bundle with all scripts
                 # Use session_files if available (includes polluters), otherwise use parent+child
                 scripts_to_save = session_files if session_files else [parent_path, source_path]
@@ -1836,7 +1865,7 @@ class LafleurOrchestrator:
                 raise RuntimeError(error_msg)
 
             print(
-                f"  [+] Target interpreter validated successfully (JIT traces detected).",
+                "  [+] Target interpreter validated successfully (JIT traces detected).",
                 file=sys.stderr,
             )
 
@@ -1847,6 +1876,49 @@ class LafleurOrchestrator:
         except RuntimeError as e:
             print(e)
             sys.exit(1)
+
+    def _parse_jit_stats(self, log_content: str) -> dict:
+        """
+        Parse JIT stats from the driver log output.
+
+        The log may contain multiple [DRIVER:STATS] lines (one per script in session).
+        We aggregate them to find the 'peak stress' values.
+        """
+        aggregated_stats = {
+            "max_exit_count": 0,
+            "max_chain_depth": 0,
+            "zombie_traces": 0,
+            "min_code_size": 0,
+        }
+        min_code_sizes = []
+
+        for line in log_content.splitlines():
+            if "[DRIVER:STATS]" in line:
+                try:
+                    json_str = line.split("[DRIVER:STATS]", 1)[1].strip()
+                    stats = json.loads(json_str)
+
+                    aggregated_stats["max_exit_count"] = max(
+                        aggregated_stats["max_exit_count"], stats.get("max_exit_count", 0)
+                    )
+                    aggregated_stats["max_chain_depth"] = max(
+                        aggregated_stats["max_chain_depth"], stats.get("max_chain_depth", 0)
+                    )
+                    aggregated_stats["zombie_traces"] = max(
+                        aggregated_stats["zombie_traces"], stats.get("zombie_traces", 0)
+                    )
+
+                    code_size = stats.get("min_code_size", 0)
+                    if code_size > 0:
+                        min_code_sizes.append(code_size)
+
+                except (json.JSONDecodeError, IndexError):
+                    pass
+
+        if min_code_sizes:
+            aggregated_stats["min_code_size"] = min(min_code_sizes)
+
+        return aggregated_stats
 
     def _score_and_decide_interestingness(
         self,
@@ -1859,6 +1931,7 @@ class LafleurOrchestrator:
         jit_avg_time_ms: float | None,
         nojit_avg_time_ms: float | None,
         nojit_cv: float | None,
+        jit_stats: dict | None = None,
     ) -> bool:
         """Use the scorer to decide if a child is interesting."""
 
@@ -1881,6 +1954,7 @@ class LafleurOrchestrator:
             jit_avg_time_ms,
             nojit_avg_time_ms,
             nojit_cv,
+            jit_stats,
         )
         score = scorer.calculate_score()
 
@@ -1930,14 +2004,19 @@ class LafleurOrchestrator:
             print(f"  [!] Warning: Could not read log file for analysis: {e}", file=sys.stderr)
 
         if self._check_for_crash(
-            exec_result.returncode, log_content, exec_result.source_path, exec_result.log_path,
-            exec_result.parent_path, exec_result.session_files
+            exec_result.returncode,
+            log_content,
+            exec_result.source_path,
+            exec_result.log_path,
+            exec_result.parent_path,
+            exec_result.session_files,
         ):
             return {"status": "CRASH"}
 
         child_coverage = parse_log_for_edge_coverage(exec_result.log_path, self.coverage_manager)
 
         coverage_info = self._find_new_coverage(child_coverage, parent_lineage_profile, parent_id)
+        jit_stats = self._parse_jit_stats(log_content)
 
         is_interesting = self._score_and_decide_interestingness(
             coverage_info,
@@ -1949,6 +2028,7 @@ class LafleurOrchestrator:
             exec_result.jit_avg_time_ms,
             exec_result.nojit_avg_time_ms,
             exec_result.nojit_cv,
+            jit_stats,
         )
 
         if is_interesting:
@@ -1978,6 +2058,7 @@ class LafleurOrchestrator:
                 "mutation_seed": mutation_seed,
                 "jit_avg_time_ms": exec_result.jit_avg_time_ms,
                 "nojit_avg_time_ms": exec_result.nojit_avg_time_ms,
+                "jit_stats": jit_stats,
             }
 
         return {"status": "NO_CHANGE"}
@@ -2017,7 +2098,7 @@ class LafleurOrchestrator:
     def _save_regression(self, source_path: Path, jit_time: float, nojit_time: float):
         """Saves a test case that causes a significant JIT performance regression."""
         self.run_stats["regressions_found"] = self.run_stats.get("regressions_found", 0) + 1
-        print(f"  [!!!] JIT PERFORMANCE REGRESSION DETECTED! Saving test case.", file=sys.stderr)
+        print("  [!!!] JIT PERFORMANCE REGRESSION DETECTED! Saving test case.", file=sys.stderr)
 
         REGRESSIONS_DIR.mkdir(parents=True, exist_ok=True)
 

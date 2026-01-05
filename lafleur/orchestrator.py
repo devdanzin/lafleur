@@ -182,6 +182,7 @@ class InterestingnessScorer:
         nojit_avg_time_ms: float | None,
         nojit_cv: float | None,
         jit_stats: dict | None = None,
+        parent_jit_stats: dict | None = None,
     ):
         self.info = coverage_info
         self.parent_file_size = parent_file_size
@@ -192,6 +193,7 @@ class InterestingnessScorer:
         self.nojit_avg_time_ms = nojit_avg_time_ms
         self.nojit_cv = nojit_cv
         self.jit_stats = jit_stats or {}
+        self.parent_jit_stats = parent_jit_stats or {}
 
     def calculate_score(self) -> float:
         """
@@ -220,25 +222,29 @@ class InterestingnessScorer:
 
         # --- JIT Vitals Scoring ---
         zombie_traces = self.jit_stats.get("zombie_traces", 0)
-        max_exit_count = self.jit_stats.get("max_exit_count", 0)
+        # max_exit_count = self.jit_stats.get("max_exit_count", 0) # Superseded by density
         max_chain_depth = self.jit_stats.get("max_chain_depth", 0)
-        min_code_size = self.jit_stats.get("min_code_size", 0)
+        # min_code_size = self.jit_stats.get("min_code_size", 0) # Less critical
+
+        # Differential Scoring for Exit Density
+        child_density = self.jit_stats.get("max_exit_density", 0.0)
+        parent_density = self.parent_jit_stats.get("max_exit_density", 0.0)
+        density_threshold = max(10.0, parent_density * 1.25)
+
+        if child_density > density_threshold:
+            print(
+                f"  [+] JIT Tachycardia intensified (Density: {child_density:.2f} > {density_threshold:.2f})",
+                file=sys.stderr,
+            )
+            score += 20.0
 
         if zombie_traces > 0:
             print("  [!] JIT ZOMBIE STATE DETECTED!", file=sys.stderr)
             score += 50.0
 
-        if max_exit_count > 50:
-            print("  [+] JIT Tachycardia (High Exit Count) detected.", file=sys.stderr)
-            score += 20.0
-
         if max_chain_depth > 3:
             print("  [+] JIT Hyper-Extension (Deep Chains) detected.", file=sys.stderr)
             score += 10.0
-
-        if 0 < min_code_size < 5:
-            # Reward tiny code sizes (stubs) which often indicate interesting edge cases
-            score += 5.0
 
         # 1. Heavily reward new global discoveries.
         score += self.info.global_edges * 10.0
@@ -1889,6 +1895,7 @@ class LafleurOrchestrator:
             "max_chain_depth": 0,
             "zombie_traces": 0,
             "min_code_size": 0,
+            "max_exit_density": 0.0,
         }
         min_code_sizes = []
 
@@ -1906,6 +1913,9 @@ class LafleurOrchestrator:
                     )
                     aggregated_stats["zombie_traces"] = max(
                         aggregated_stats["zombie_traces"], stats.get("zombie_traces", 0)
+                    )
+                    aggregated_stats["max_exit_density"] = max(
+                        aggregated_stats["max_exit_density"], stats.get("max_exit_density", 0.0)
                     )
 
                     code_size = stats.get("min_code_size", 0)
@@ -1932,6 +1942,7 @@ class LafleurOrchestrator:
         nojit_avg_time_ms: float | None,
         nojit_cv: float | None,
         jit_stats: dict | None = None,
+        parent_jit_stats: dict | None = None,
     ) -> bool:
         """Use the scorer to decide if a child is interesting."""
 
@@ -1955,6 +1966,7 @@ class LafleurOrchestrator:
             nojit_avg_time_ms,
             nojit_cv,
             jit_stats,
+            parent_jit_stats,
         )
         score = scorer.calculate_score()
 
@@ -2018,6 +2030,12 @@ class LafleurOrchestrator:
         coverage_info = self._find_new_coverage(child_coverage, parent_lineage_profile, parent_id)
         jit_stats = self._parse_jit_stats(log_content)
 
+        # Retrieve parent JIT stats from metadata
+        parent_jit_stats = {}
+        if parent_id:
+            parent_metadata = self.coverage_manager.state["per_file_coverage"].get(parent_id, {})
+            parent_jit_stats = parent_metadata.get("mutation_info", {}).get("jit_stats", {})
+
         is_interesting = self._score_and_decide_interestingness(
             coverage_info,
             parent_id,
@@ -2029,6 +2047,7 @@ class LafleurOrchestrator:
             exec_result.nojit_avg_time_ms,
             exec_result.nojit_cv,
             jit_stats,
+            parent_jit_stats,
         )
 
         if is_interesting:
@@ -2046,6 +2065,9 @@ class LafleurOrchestrator:
             # This is the crucial step: if it's new and not a duplicate, we commit the coverage.
             self._update_global_coverage(child_coverage)
 
+            # Inject jit_stats into mutation_info so it gets saved with the file
+            mutation_info["jit_stats"] = jit_stats
+
             return {
                 "status": "NEW_COVERAGE",
                 "core_code": core_code_to_save,
@@ -2058,7 +2080,7 @@ class LafleurOrchestrator:
                 "mutation_seed": mutation_seed,
                 "jit_avg_time_ms": exec_result.jit_avg_time_ms,
                 "nojit_avg_time_ms": exec_result.nojit_avg_time_ms,
-                "jit_stats": jit_stats,
+                # jit_stats is now inside mutation_info, no need to pass separately if not used by caller
             }
 
         return {"status": "NO_CHANGE"}

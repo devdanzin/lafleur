@@ -12,8 +12,8 @@ import shutil
 import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch, mock_open
-
 from lafleur.orchestrator import LafleurOrchestrator
+from lafleur.analysis import CrashFingerprinter
 
 
 class TestCheckForCrash(unittest.TestCase):
@@ -22,6 +22,7 @@ class TestCheckForCrash(unittest.TestCase):
     def setUp(self):
         self.orchestrator = LafleurOrchestrator.__new__(LafleurOrchestrator)
         self.orchestrator.max_crash_log_bytes = 10_000_000
+        self.orchestrator.fingerprinter = CrashFingerprinter()
 
     def test_no_crash_with_zero_returncode(self):
         """Test that return code 0 with no keywords returns False."""
@@ -75,7 +76,7 @@ class TestCheckForCrash(unittest.TestCase):
                     self.assertTrue(result)
                     stderr_output = mock_stderr.getvalue()
                     self.assertIn("CRASH DETECTED", stderr_output)
-                    self.assertIn("signal_SIGSEGV", stderr_output)
+                    self.assertIn("SIGNAL:SIGSEGV", stderr_output)
 
     def test_detects_returncode_crash(self):
         """Test that positive return code is interpreted as error code."""
@@ -93,7 +94,7 @@ class TestCheckForCrash(unittest.TestCase):
                     self.assertTrue(result)
                     stderr_output = mock_stderr.getvalue()
                     self.assertIn("CRASH DETECTED", stderr_output)
-                    self.assertIn("retcode_42", stderr_output)
+                    self.assertIn("EXIT:42", stderr_output)
 
     def test_detects_keyword_segfault(self):
         """Test that 'Segmentation fault' keyword triggers crash detection."""

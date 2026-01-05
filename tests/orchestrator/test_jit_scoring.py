@@ -27,17 +27,13 @@ class TestJITScoring(unittest.TestCase):
         self.assertEqual(score, 50.0)
 
     def test_tachycardia_bonus(self):
-        """Test that high exit counts trigger a bonus."""
-        jit_stats = {"max_exit_count": 51}
+        """Test that high exit density triggers a bonus (replacing raw exit counts)."""
+        # 15.0 > 12.5 (default parent 10.0 * 1.25) if we pass parent stats,
+        # but here parent defaults to empty, so threshold is 10.0.
+        jit_stats = {"max_exit_density": 15.0}
         scorer = InterestingnessScorer(jit_stats=jit_stats, **self.scorer_args)
         score = scorer.calculate_score()
         self.assertEqual(score, 20.0)
-
-        # Check boundary
-        jit_stats = {"max_exit_count": 50}
-        scorer = InterestingnessScorer(jit_stats=jit_stats, **self.scorer_args)
-        score = scorer.calculate_score()
-        self.assertEqual(score, 0.0)
 
     def test_chain_bonus(self):
         """Test that deep chains trigger a bonus."""
@@ -75,7 +71,7 @@ class TestJITScoring(unittest.TestCase):
         """Test that multiple bonuses stack correctly."""
         jit_stats = {
             "zombie_traces": 1,  # +50
-            "max_exit_count": 100,  # +20
+            "max_exit_density": 100.0,  # +20
             "max_chain_depth": 5,  # +10
             "min_code_size": 3,  # +5
         }

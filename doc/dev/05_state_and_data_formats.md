@@ -28,6 +28,7 @@ It contains a single dictionary with the following top-level keys:
     * `is_sterile`: A boolean flag that is set to `True` if the parent has been mutated many times without producing any new discoveries.
     * `baseline_coverage`: A dictionary representing the coverage this specific file generated when it was discovered. It includes `uops`, `edges`, `rare_events`, and structural metrics like `trace_length` and `side_exits`.
     * `lineage_coverage_profile`: A set-based representation of the union of all coverage found in this file's entire ancestry.
+    * **`mutation_info`**: A dictionary containing extra data about the mutation process that created this file. Crucially, it now stores **JIT Vitals** (e.g., `max_exit_density`, `zombie_traces`) used for differential scoring in future generations. Note that metrics like `max_exit_density` may be "clamped" here to ensure reachable targets for offspring.
 
 ---
 
@@ -85,5 +86,10 @@ The fuzzer saves its findings—the valuable test cases that reveal bugs—into 
 
 * **`corpus/`**: Contains the main collection of "interesting" test cases that have discovered new JIT coverage.
 * **`crashes/`**: Stores test cases that caused the Python interpreter to crash or that contained a keyword indicating a fatal error.
+    * **Standard Mode:** Contains individual files like `crash_123.py`.
+    * **Session Mode:** Contains **Session Bundles**—directories (e.g., `session_crash_123/`) that preserve the full context needed to reproduce the bug. These include:
+        * `00_polluter.py`, `01_warmup.py`: The context scripts that set up the JIT state.
+        * `02_attack.py`: The mutated child script that triggered the crash.
+        * `reproduce.sh`: A generated script to run the bundle in the correct order.
 * **`timeouts/`**: Stores test cases that caused the child process to hang. Large log files in this directory are automatically compressed with `zstd`.
 * **`divergences/`**: When running in differential testing mode, this directory stores test cases that revealed a correctness bug.

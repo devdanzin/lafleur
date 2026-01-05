@@ -17,7 +17,7 @@ To make fuzzing easier and more effective, `lafleur` includes a script for adjus
 1.  **Clone the CPython Repository:** First, clone the CPython source code from the official repository. It is recommended to check out the specific commit or branch that `lafleur` is currently targeting to ensure compatibility.
 
     ```bash
-    git clone https://github.com/python/cpython.git
+    git clone [https://github.com/python/cpython.git](https://github.com/python/cpython.git)
     cd cpython
     ```
 
@@ -56,7 +56,7 @@ Once the prerequisites are met, installing `lafleur` is straightforward.
 2.  **Clone the `lafleur` Repository:**
 
     ```bash
-    git clone https://github.com/devdanzin/lafleur.git
+    git clone [https://github.com/devdanzin/lafleur.git](https://github.com/devdanzin/lafleur.git)
     cd lafleur
     ```
 
@@ -101,6 +101,13 @@ With the project installed, you can run the fuzzer from any directory on your sy
     lafleur --fusil-path /path/to/fusil/fuzzers/fusil-python-threaded
     ```
 
+  * **Running in Session Mode (JIT State Fuzzing):**
+    To enable stateful fuzzing, use the `--session-fuzz` flag. This executes scripts in a shared process (Parent -> Child) and injects random "polluter" scripts to stress the JIT's cache and memory management. This is highly effective for finding "Zombie Traces" (Use-After-Free) and optimization invalidation bugs.
+
+    ```bash
+    lafleur --fusil-path /path/to/fusil/fuzzers/fusil-python-threaded --session-fuzz
+    ```
+
   * **Running in Differential Testing Mode:**
     To enable the "Paired Harness" mode for finding correctness bugs, add the `--differential-testing` flag.
 
@@ -119,7 +126,7 @@ With the project installed, you can run the fuzzer from any directory on your sy
     lafleur --fusil-path /path/to/fusil/fuzzers/fusil-python-threaded --dynamic-runs
     ```
 
-* **Retaining Logs for Analysis:**
+  * **Retaining Logs for Analysis:**
     To keep temporary log files for offline analysis and debugging, use the `--keep-tmp-logs` flag.
 
     ```bash

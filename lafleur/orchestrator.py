@@ -2065,8 +2065,24 @@ class LafleurOrchestrator:
             # This is the crucial step: if it's new and not a duplicate, we commit the coverage.
             self._update_global_coverage(child_coverage)
 
+            # --- Dynamic Density Clamping ---
+            # Prevent a single massive spike from setting an unreachable bar for the next generation.
+            child_density = jit_stats.get("max_exit_density", 0.0)
+            parent_density = parent_jit_stats.get("max_exit_density", 0.0)
+
+            if parent_density > 0:
+                # Allow exponential growth (up to 5x), but clamp massive outliers.
+                saved_density = min(parent_density * 5.0, child_density)
+            else:
+                # First generation or no parent data: trust the child's value.
+                saved_density = child_density
+
+            # Create a copy of stats for persistence, with the clamped density.
+            jit_stats_for_save = jit_stats.copy()
+            jit_stats_for_save["max_exit_density"] = saved_density
+
             # Inject jit_stats into mutation_info so it gets saved with the file
-            mutation_info["jit_stats"] = jit_stats
+            mutation_info["jit_stats"] = jit_stats_for_save
 
             return {
                 "status": "NEW_COVERAGE",

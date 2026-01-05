@@ -21,5 +21,7 @@ This project builds upon the foundational work of others and has benefited great
 
 Development depends heavily on AI for planning and coding, in a collaborative process. The AI's input and ability to quickly and robustly implement, discuss, and iterate on proposed approaches was crucial for the viability of this project.  
 
-* **Gemini Pro:** Constant collaborative AI partner for planning, implementation, and architectural refinement.
+* **Gemini Pro:** Constant collaborative AI partner for planning, implementation, architectural refinement, and prompt writing for agents.
 * **Claude Opus:** Eventual AI consultant for validation of planning and architectural discussions.
+* **Claude Code:** Agentic Collaborator - Architecture & Mutator Implementation.
+* **Gemini CLI:** Agentic Collaborator - Introspection, Scoring Logic & Refactoring.

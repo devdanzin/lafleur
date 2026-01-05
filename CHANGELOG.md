@@ -70,6 +70,13 @@ All notable changes to this project should be documented in this file.
 - A `CodeObjectHotSwapper` that targets `_RETURN_GENERATOR` opcode by training the JIT on `_gen_A()` generators (1000 warmup iterations), then swapping `_gen_A.__code__ = _gen_B.__code__` to force deoptimization when the JIT's cached metadata becomes stale, by @devdanzin.
 - A `TypeShadowingMutator` that attacks `_GUARD_TYPE_VERSION` by training the JIT on a float variable, then using `sys._getframe().f_locals` to change its type to a string mid-loop (bypassing standard bytecodes), and triggering the type-specialized operation again, by @devdanzin.
 - A `ZombieTraceMutator` that stresses the JIT's executor lifecycle management (`pycore_optimizer.h`) by rapidly creating and destroying JIT traces in a loop (50 iterations), defining hot functions that trigger Tier 2 compilation, then letting them go out of scope to test the `pending_deletion` linked list logic for `_PyExecutorObject` cleanup, by @devdanzin.
+- **Session Crash Bundles**: Implemented comprehensive crash reporting for session fuzzing. Crashes now save the entire session lineage (warmup, polluters, attack script) and generate a `reproduce.sh` script for easy debugging, by @devdanzin.
+- **The Mixer**: Enhanced session fuzzing with a strategy that probabilistically injects random "polluter" scripts from the corpus before the main test case to stress JIT caches and state, by @devdanzin.
+- **JIT Introspection (EKG)**: Upgraded `driver.py` to inspect CPython's internal `_PyExecutorObject` using `ctypes`. This allows tracking granular JIT vitals such as zombie traces (`pending_deletion`), trace validity, and warmth, by @devdanzin.
+- **Feedback-Driven Scoring**: Updated the orchestrator to parse and score JIT vitals. The fuzzer now actively rewards mutations that provoke high stress on the JIT, such as high side-exit counts (Tachycardia), deep trace chains (Hyper-Extension), and tiny compiled stubs, by @devdanzin.
+- **Exit Density Metric**: Introduced a normalized metric (`exit_count / code_size`) to measure instability per instruction, avoiding bias towards large traces, by @devdanzin.
+- **Differential Scoring**: Implemented a smart scoring rule where children are only rewarded if their instability (`max_exit_density`) is significantly worse than their parent's, preventing the fuzzer from getting stuck in local optima, by @devdanzin.
+- **Dynamic Density Clamping**: Added a mechanism to clamp the saved instability metrics for the next generation, preventing massive outliers from creating impossible targets for future mutations, by @devdanzin.
 
 
 ### Enhanced

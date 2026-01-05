@@ -93,6 +93,9 @@ def get_jit_stats(namespace: dict) -> dict:
     zombie_traces = 0
     valid_traces = 0
     warm_traces = 0
+    max_exit_count = 0
+    max_chain_depth = 0
+    min_code_size = float("inf")
 
     if not HAS_OPCODE:
         return {
@@ -100,10 +103,14 @@ def get_jit_stats(namespace: dict) -> dict:
             "functions_scanned": 0,
             "jit_available": False,
             "zombie_traces": 0,
+            "max_exit_count": 0,
+            "max_chain_depth": 0,
+            "min_code_size": 0,
         }
 
     def inspect_executor(executor):
         nonlocal zombie_traces, valid_traces, warm_traces
+        nonlocal max_exit_count, max_chain_depth, min_code_size
         try:
             executor_ptr = ctypes.cast(id(executor), ctypes.POINTER(PyExecutorObject))
 
@@ -114,6 +121,16 @@ def get_jit_stats(namespace: dict) -> dict:
                 valid_traces += 1
             if executor_ptr.contents.vm_data.warm:
                 warm_traces += 1
+
+            # Read new metrics
+            exit_count = executor_ptr.contents.exit_count
+            chain_depth = executor_ptr.contents.vm_data.chain_depth
+            code_size = executor_ptr.contents.code_size
+
+            max_exit_count = max(max_exit_count, exit_count)
+            max_chain_depth = max(max_chain_depth, chain_depth)
+            if code_size > 0:
+                min_code_size = min(min_code_size, code_size)
 
         except Exception as e:
             print(f"DEBUG: Introspection failed: {e}")
@@ -171,6 +188,9 @@ def get_jit_stats(namespace: dict) -> dict:
         "zombie_traces": zombie_traces,
         "valid_traces": valid_traces,
         "warm_traces": warm_traces,
+        "max_exit_count": max_exit_count,
+        "max_chain_depth": max_chain_depth,
+        "min_code_size": min_code_size if min_code_size != float("inf") else 0,
     }
 
 

@@ -96,6 +96,7 @@ def get_jit_stats(namespace: dict) -> dict:
     max_exit_count = 0
     max_chain_depth = 0
     min_code_size = float("inf")
+    max_exit_density = 0.0
 
     if not HAS_OPCODE:
         return {
@@ -106,11 +107,12 @@ def get_jit_stats(namespace: dict) -> dict:
             "max_exit_count": 0,
             "max_chain_depth": 0,
             "min_code_size": 0,
+            "max_exit_density": 0.0,
         }
 
     def inspect_executor(executor):
         nonlocal zombie_traces, valid_traces, warm_traces
-        nonlocal max_exit_count, max_chain_depth, min_code_size
+        nonlocal max_exit_count, max_chain_depth, min_code_size, max_exit_density
         try:
             executor_ptr = ctypes.cast(id(executor), ctypes.POINTER(PyExecutorObject))
 
@@ -131,6 +133,9 @@ def get_jit_stats(namespace: dict) -> dict:
             max_chain_depth = max(max_chain_depth, chain_depth)
             if code_size > 0:
                 min_code_size = min(min_code_size, code_size)
+                # Calculate exit density (instability per instruction)
+                density = exit_count / code_size
+                max_exit_density = max(max_exit_density, density)
 
         except Exception as e:
             print(f"DEBUG: Introspection failed: {e}")
@@ -191,6 +196,7 @@ def get_jit_stats(namespace: dict) -> dict:
         "max_exit_count": max_exit_count,
         "max_chain_depth": max_chain_depth,
         "min_code_size": min_code_size if min_code_size != float("inf") else 0,
+        "max_exit_density": max_exit_density,
     }
 
 

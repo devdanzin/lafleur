@@ -23,7 +23,7 @@ import json
 import sys
 import traceback
 from pathlib import Path
-from types import FunctionType, MethodType
+from types import CodeType, FunctionType, MethodType
 
 # Try to import JIT introspection modules
 try:
@@ -41,23 +41,32 @@ except ImportError:
     HAS_TESTINTERNALCAPI = False
 
 
-class PyExecutorObject(ctypes.Structure):
-    # Based on _PyExecutorObject in pycore_optimizer.h
-    # Note: offsets assume 64-bit architecture
+class PyVMData(ctypes.Structure):
+    # Matches _PyVMData in pycore_optimizer.h
     _fields_ = [
-        ("ob_refcnt", ctypes.c_ssize_t),
-        ("ob_type", ctypes.c_void_p),
-        ("ob_size", ctypes.c_ssize_t),  # PyObject_VAR_HEAD
-        ("trace", ctypes.c_void_p),  # const _PyUOpInstruction *trace
-        # --- _PyVMData vm_data starts here ---
         ("opcode", ctypes.c_uint8),
         ("oparg", ctypes.c_uint8),
         ("valid", ctypes.c_uint8),
         ("chain_depth", ctypes.c_uint8),
         ("warm", ctypes.c_bool),
         ("pending_deletion", ctypes.c_uint8),
-        # We stop defining fields here to avoid alignment guessing games
-        # for the rest of the struct (bloom filters, etc.)
+        ("index", ctypes.c_int32),
+        # We stop here. _PyBloomFilter follows, but we don't need it yet.
+    ]
+
+
+class PyExecutorObject(ctypes.Structure):
+    # Matches _PyExecutorObject in pycore_optimizer.h
+    _fields_ = [
+        ("ob_refcnt", ctypes.c_ssize_t),
+        ("ob_type", ctypes.c_void_p),
+        ("ob_size", ctypes.c_ssize_t),
+        ("trace", ctypes.c_void_p),
+        ("vm_data", PyVMData),  # Nested structure
+        ("exit_count", ctypes.c_uint32),
+        ("code_size", ctypes.c_uint32),
+        ("jit_size", ctypes.c_size_t),
+        ("jit_code", ctypes.c_void_p),
     ]
 
 
@@ -97,58 +106,63 @@ def get_jit_stats(namespace: dict) -> dict:
         nonlocal zombie_traces, valid_traces, warm_traces
         try:
             executor_ptr = ctypes.cast(id(executor), ctypes.POINTER(PyExecutorObject))
-            if executor_ptr.contents.pending_deletion:
+
+            # Access fields via .vm_data
+            if executor_ptr.contents.vm_data.pending_deletion:
                 zombie_traces += 1
-            if executor_ptr.contents.valid:
+            if executor_ptr.contents.vm_data.valid:
                 valid_traces += 1
-            if executor_ptr.contents.warm:
+            if executor_ptr.contents.vm_data.warm:
                 warm_traces += 1
-        except Exception:
-            pass
+
+        except Exception as e:
+            print(f"DEBUG: Introspection failed: {e}")
+
+    def walk_code_objects(code_obj: CodeType, visited: set | None = None):
+        """Recursively yield a code object and all its nested code objects."""
+        if visited is None:
+            visited = set()
+
+        if code_obj in visited:
+            return
+
+        visited.add(code_obj)
+        yield code_obj
+
+        for const in code_obj.co_consts:
+            if isinstance(const, CodeType):
+                yield from walk_code_objects(const, visited)
 
     for name, obj in namespace.items():
-        # FIX: The fuzzer might inject bytes keys into globals
-        if not isinstance(name, str):
+        if not isinstance(name, str) or name.startswith("_"):
             continue
 
-        # Skip dunder names and imports
-        if name.startswith("_"):
-            continue
-
-        code_obj = None
+        # Extract root code objects from Functions and Methods
+        root_code_objs = []
         if isinstance(obj, FunctionType):
-            code_obj = obj.__code__
+            root_code_objs.append(obj.__code__)
         elif isinstance(obj, MethodType):
-            code_obj = obj.__func__.__code__
+            root_code_objs.append(obj.__func__.__code__)
         elif isinstance(obj, type):
-            # Check methods in classes
-            for method_name, method in vars(obj).items():
+            for method in vars(obj).values():
                 if isinstance(method, FunctionType):
-                    try:
-                        # Scan bytecode offsets for executors
-                        for offset in range(0, 100, 2):
-                            executor = _opcode.get_executor(method.__code__, offset)
-                            if executor is not None:
-                                executor_count += 1
-                                inspect_executor(executor)
-                                break  # Only count once per function
-                    except (ValueError, TypeError, RuntimeError):
-                        pass
-                    functions_scanned += 1
-            continue
+                    root_code_objs.append(method.__code__)
 
-        if code_obj is not None:
-            functions_scanned += 1
-            try:
-                # Scan bytecode offsets for executors
-                for offset in range(0, 100, 2):
-                    executor = _opcode.get_executor(code_obj, offset)
-                    if executor is not None:
-                        executor_count += 1
-                        inspect_executor(executor)
-                        break  # Only count once per function
-            except (ValueError, TypeError, RuntimeError):
-                pass
+        # Recursively scan all code objects found
+        for root_code in root_code_objs:
+            for code in walk_code_objects(root_code):
+                functions_scanned += 1
+                # Scan the ENTIRE bytecode, not just the first 100 bytes
+                co_code = code.co_code
+                for offset in range(0, len(co_code), 2):
+                    try:
+                        executor = _opcode.get_executor(code, offset)
+                        if executor:
+                            executor_count += 1
+                            inspect_executor(executor)
+                            # Don't break! A function can have multiple executors (loops).
+                    except (ValueError, TypeError):
+                        pass
 
     return {
         "executors": executor_count,

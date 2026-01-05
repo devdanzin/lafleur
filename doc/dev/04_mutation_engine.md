@@ -80,6 +80,10 @@ This is a library of advanced mutators specifically designed to generate pattern
 * **`CodeObjectSwapper`**: Attacks function execution by hot-swapping the `__code__` object of a function with that of another, incompatible function.
 * **`SysMonitoringMutator`**: Attacks the `sys.monitoring` interactions by registering and unregistering tool IDs during execution.
 * **`AsyncConstructMutator`**: Attacks async-specific UOPs by generating complex `async for` and `async with` patterns.
+* **`GlobalOptimizationInvalidator`**: Attacks **"Global-to-Constant Promotion"**. It targets the JIT's optimization that treats globals (like `range`) as constants. It injects a hot loop that uses a global, then swaps that global for an incompatible object (e.g., a dummy callable) mid-execution, forcing a complex deoptimization or a crash if the guard fails.
+* **`CodeObjectHotSwapper`**: Attacks the **`_RETURN_GENERATOR`** opcode. It compiles a generator function, then hot-swaps the function's `__code__` object with one from a different generator, and calls it again. This tests if the JIT holds onto stale `CodeObject` pointers or cached creation paths.
+* **`TypeShadowingMutator`**: Attacks **`_GUARD_TYPE_VERSION`**. It tricks the JIT into optimizing a variable as one type (e.g., `float`), then uses `sys._getframe().f_locals` to overwrite that variable with an incompatible type (e.g., `str`) behind the JIT's back, immediately followed by an operation that requires the original type.
+* **`ZombieTraceMutator`**: Attacks the **Executor Lifecycle** and memory management (`pending_deletion`). It rapidly creates and destroys closures (and their associated JIT traces) in a loop to stress the garbage collector and the JIT's linked list of executors, aiming to trigger Use-After-Free bugs or race conditions.
 
 ---
 

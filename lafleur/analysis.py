@@ -28,7 +28,7 @@ class CrashFingerprinter:
 
     # Regex patterns for extraction
     ASAN_PATTERN = re.compile(r"AddressSanitizer:\s+([a-z0-9-]+)\s+")
-    ASSERT_PATTERN = re.compile(r"Assertion\s+['\"](.*?)['\"]\s+failed")
+    ASSERT_PATTERN = re.compile(r"Assertion\s+[`'\"](.*?)['\"]\s+failed")
     # Captures file and line for assertion if available
     ASSERT_LOC_PATTERN = re.compile(r"([^:\s]+):(\d+):\s+[^:]+:\s+Assertion")
     PYTHON_PANIC_PATTERN = re.compile(r"Fatal Python error:\s+([^\n]+)")

@@ -23,7 +23,7 @@ import json
 import sys
 import traceback
 from pathlib import Path
-from types import CodeType, FunctionType, MethodType
+from types import CodeType, FunctionType, MethodType, ModuleType
 
 # Try to import JIT introspection modules
 try:
@@ -41,6 +41,17 @@ except ImportError:
     HAS_TESTINTERNALCAPI = False
 
 
+# Bloom filter constants
+BLOOM_SEED = 20221211
+PyHASH_MULTIPLIER = 1000003
+BLOOM_K = 6
+BLOOM_WORDS = 8
+
+
+class _PyBloomFilter(ctypes.Structure):
+    _fields_ = [("bits", ctypes.c_uint32 * BLOOM_WORDS)]
+
+
 class PyVMData(ctypes.Structure):
     # Matches _PyVMData in pycore_optimizer.h
     _fields_ = [
@@ -51,7 +62,7 @@ class PyVMData(ctypes.Structure):
         ("warm", ctypes.c_bool),
         ("pending_deletion", ctypes.c_uint8),
         ("index", ctypes.c_int32),
-        # We stop here. _PyBloomFilter follows, but we don't need it yet.
+        ("bloom", _PyBloomFilter),
     ]
 
 
@@ -110,6 +121,53 @@ def get_jit_stats(namespace: dict) -> dict:
             "max_exit_density": 0.0,
         }
 
+    def check_bloom(bloom_filter, obj_address) -> bool:
+        """Replicate CPython's bloom_filter_may_contain."""
+        uhash = BLOOM_SEED
+        addr = obj_address
+        for _ in range(8):  # SIZEOF_VOID_P
+            uhash ^= addr & 255
+            uhash = (uhash * PyHASH_MULTIPLIER) & 0xFFFFFFFFFFFFFFFF  # Keep 64-bit
+            addr >>= 8
+
+        # Check K bits
+        for _ in range(BLOOM_K):
+            bit_index = uhash & 255
+            word_idx = bit_index >> 5
+            bit_mask = 1 << (bit_index & 31)
+            if not (bloom_filter.bits[word_idx] & bit_mask):
+                return False
+            uhash >>= 8
+        return True
+
+    def scan_watched_variables(executor_ptr) -> list[str]:
+        """Identify which globals/builtins are watched by this executor."""
+        watched = []
+        try:
+            # Check globals
+            for name, obj in namespace.items():
+                if isinstance(name, str) and check_bloom(
+                    executor_ptr.contents.vm_data.bloom, id(obj)
+                ):
+                    watched.append(name)
+
+            # Check builtins from the namespace (can be dict or module)
+            builtins_val = namespace.get("__builtins__")
+            if builtins_val:
+                builtins_dict = builtins_val
+                if isinstance(builtins_val, ModuleType):
+                    builtins_dict = vars(builtins_val)
+
+                if isinstance(builtins_dict, dict):
+                    for name, obj in builtins_dict.items():
+                        if isinstance(name, str) and check_bloom(
+                            executor_ptr.contents.vm_data.bloom, id(obj)
+                        ):
+                            watched.append(name)
+        except Exception:
+            pass
+        return watched
+
     def inspect_executor(executor):
         nonlocal zombie_traces, valid_traces, warm_traces
         nonlocal max_exit_count, max_chain_depth, min_code_size, max_exit_density
@@ -136,6 +194,12 @@ def get_jit_stats(namespace: dict) -> dict:
                 # Calculate exit density (instability per instruction)
                 density = exit_count / code_size
                 max_exit_density = max(max_exit_density, density)
+
+                # Scan for watched variables if this executor is unstable
+                if density > 10.0:
+                    watched = scan_watched_variables(executor_ptr)
+                    if watched:
+                        print(f"[EKG] WATCHED: {', '.join(watched)}", flush=True)
 
         except Exception as e:
             print(f"DEBUG: Introspection failed: {e}")

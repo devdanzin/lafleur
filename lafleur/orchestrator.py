@@ -1908,6 +1908,7 @@ class LafleurOrchestrator:
 
         The log may contain multiple [DRIVER:STATS] lines (one per script in session).
         We aggregate them to find the 'peak stress' values.
+        It also parses [EKG] WATCHED: lines to find variables the JIT depends on.
         """
         aggregated_stats = {
             "max_exit_count": 0,
@@ -1915,8 +1916,10 @@ class LafleurOrchestrator:
             "zombie_traces": 0,
             "min_code_size": 0,
             "max_exit_density": 0.0,
+            "watched_dependencies": [],
         }
         min_code_sizes = []
+        watched_dependencies = set()
 
         for line in log_content.splitlines():
             if "[DRIVER:STATS]" in line:
@@ -1943,9 +1946,21 @@ class LafleurOrchestrator:
 
                 except (json.JSONDecodeError, IndexError):
                     pass
+            elif line.startswith("[EKG] WATCHED:"):
+                try:
+                    variables = line.split("[EKG] WATCHED:", 1)[1].strip()
+                    if variables:
+                        for var in variables.split(","):
+                            var = var.strip()
+                            if var:
+                                watched_dependencies.add(var)
+                except IndexError:
+                    pass
 
         if min_code_sizes:
             aggregated_stats["min_code_size"] = min(min_code_sizes)
+
+        aggregated_stats["watched_dependencies"] = sorted(list(watched_dependencies))
 
         return aggregated_stats
 

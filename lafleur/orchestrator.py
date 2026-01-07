@@ -50,6 +50,7 @@ from lafleur.mutators import (
     SlicingMutator,
     VariableRenamer,
 )
+from lafleur.mutators.sniper import SniperMutator
 from lafleur.utils import ExecutionResult, TeeLogger, load_run_stats, save_run_stats
 
 SERIALIZATION_SNIPPET = dedent("""
@@ -713,8 +714,32 @@ class LafleurOrchestrator:
 
         return new_core_ast
 
+    def _run_sniper_stage(
+        self, base_ast: ast.AST, seed: int, watched_keys: list[str] | None = None, **kwargs
+    ) -> tuple[ast.AST, dict[str, Any]]:
+        """Apply the SniperMutator if watched keys are available."""
+        if not watched_keys:
+            # Fallback to havoc if no intelligence available
+            return self._run_havoc_stage(base_ast, seed=seed, **kwargs)
+
+        print(
+            f"  [~] Running SNIPER stage (Targets: {', '.join(watched_keys[:3])})...",
+            file=sys.stderr,
+        )
+        tree = copy.deepcopy(base_ast)
+        mutator = SniperMutator(watched_keys)
+        tree = mutator.visit(tree)
+        ast.fix_missing_locations(tree)
+
+        mutation_info = {
+            "strategy": "sniper",
+            "transformers": ["SniperMutator"],
+            "targets": watched_keys,
+        }
+        return tree, mutation_info
+
     def apply_mutation_strategy(
-        self, base_ast: ast.AST, seed: int
+        self, base_ast: ast.AST, seed: int, watched_keys: list[str] | None = None
     ) -> tuple[ast.AST, dict[str, Any]]:
         """
         Apply a single, seeded mutation strategy to an AST.
@@ -739,6 +764,11 @@ class LafleurOrchestrator:
             self._run_havoc_stage,
             self._run_spam_stage,
         ]
+
+        if watched_keys:
+            # Add sniper strategy if we have targets
+            strategy_candidates.append(self._run_sniper_stage)
+
         strategy_names = [
             s.__name__.replace("_run_", "").replace("_stage", "") for s in strategy_candidates
         ]
@@ -749,11 +779,20 @@ class LafleurOrchestrator:
 
         dynamic_weights = self.score_tracker.get_weights(strategy_names)
 
+        # Boost sniper weight if available (simple heuristic for now)
+        if "sniper" in strategy_names:
+            sniper_idx = strategy_names.index("sniper")
+            # Ensure sniper has at least average weight
+            avg_weight = sum(dynamic_weights) / len(dynamic_weights)
+            dynamic_weights[sniper_idx] = max(dynamic_weights[sniper_idx], avg_weight * 1.5)
+
         chosen_strategy = random.choices(strategy_candidates, weights=dynamic_weights, k=1)[0]
 
         # The `seed` argument is used by the deterministic stage for its own
         # seeding, and the other stages use the globally seeded RANDOM instance.
-        mutated_ast, mutation_info = chosen_strategy(tree_copy, seed=seed)
+        mutated_ast, mutation_info = chosen_strategy(
+            tree_copy, seed=seed, watched_keys=watched_keys
+        )
 
         # Always run the sanitizer last to fix any empty bodies.
         sanitizer = EmptyBodySanitizer()
@@ -764,12 +803,12 @@ class LafleurOrchestrator:
         return mutated_ast, mutation_info
 
     def _get_mutated_harness(
-        self, original_harness_node: ast.AST, seed: int
+        self, original_harness_node: ast.AST, seed: int, watched_keys: list[str] | None = None
     ) -> tuple[ast.AST | None, dict | None]:
         """Apply a mutation strategy and handle transformation errors."""
         try:
             mutated_harness_node, mutation_info = self.apply_mutation_strategy(
-                original_harness_node, seed=seed
+                original_harness_node, seed=seed, watched_keys=watched_keys
             )
             mutation_info["runtime_seed"] = seed + 1
             return mutated_harness_node, mutation_info
@@ -1409,6 +1448,11 @@ class LafleurOrchestrator:
             core_logic_to_mutate = base_harness_node
             prefix = base_harness_node.name.replace("uop_harness_", "")
 
+            # Retrieve watched dependencies from parent metadata
+            watched_keys = (
+                parent_metadata.get("mutation_info", {}).get("jit_stats", {}).get("watched_dependencies")
+            )
+
             if self.use_dynamic_runs:
                 num_runs = 2 + int(math.floor(math.log(max(1.0, current_parent_score / 15))))
                 num_runs = min(num_runs, 10)
@@ -1440,7 +1484,7 @@ class LafleurOrchestrator:
                 )
 
                 mutated_harness_node, mutation_info = self._get_mutated_harness(
-                    core_logic_to_mutate, mutation_seed
+                    core_logic_to_mutate, mutation_seed, watched_keys=watched_keys
                 )
                 if not mutated_harness_node:
                     continue

@@ -143,12 +143,20 @@ def get_jit_stats(namespace: dict) -> dict:
     def scan_watched_variables(executor_ptr) -> list[str]:
         """Identify which globals/builtins are watched by this executor."""
         watched = []
+        bloom = executor_ptr.contents.vm_data.bloom
+
+        def is_watched(obj) -> bool:
+            if check_bloom(bloom, id(obj)):
+                return True
+            # Also check code object for functions
+            if hasattr(obj, "__code__") and check_bloom(bloom, id(obj.__code__)):
+                return True
+            return False
+
         try:
             # Check globals
             for name, obj in namespace.items():
-                if isinstance(name, str) and check_bloom(
-                    executor_ptr.contents.vm_data.bloom, id(obj)
-                ):
+                if isinstance(name, str) and is_watched(obj):
                     watched.append(name)
 
             # Check builtins from the namespace (can be dict or module)
@@ -160,9 +168,7 @@ def get_jit_stats(namespace: dict) -> dict:
 
                 if isinstance(builtins_dict, dict):
                     for name, obj in builtins_dict.items():
-                        if isinstance(name, str) and check_bloom(
-                            executor_ptr.contents.vm_data.bloom, id(obj)
-                        ):
+                        if isinstance(name, str) and is_watched(obj):
                             watched.append(name)
         except Exception:
             pass

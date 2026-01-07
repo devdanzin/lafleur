@@ -1450,8 +1450,15 @@ class LafleurOrchestrator:
 
             # Retrieve watched dependencies from parent metadata
             watched_keys = (
-                parent_metadata.get("mutation_info", {}).get("jit_stats", {}).get("watched_dependencies")
+                parent_metadata.get("mutation_info", {})
+                .get("jit_stats", {})
+                .get("watched_dependencies")
             )
+
+            # Filter out the harness itself, as we can't snipe it
+            if watched_keys:
+                current_harness_name = base_harness_node.name
+                watched_keys = [k for k in watched_keys if k != current_harness_name]
 
             if self.use_dynamic_runs:
                 num_runs = 2 + int(math.floor(math.log(max(1.0, current_parent_score / 15))))

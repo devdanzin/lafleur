@@ -75,11 +75,14 @@ flowchart TD
     style F fill:#f9f,stroke:#333,stroke-width:2px
     style I fill:#bbf,stroke:#333,stroke-width:2px
     style J fill:#d4edda,stroke:#333,stroke-width:2px
+
 ```
 
 ### Module Breakdown
 
 The `lafleur` project is organized into several distinct Python modules, each with a clear responsibility.
+
+#### Core Components
 
 * `lafleur/orchestrator.py`: The "brain" of the fuzzer. Contains the `LafleurOrchestrator` class, which manages the main evolutionary loop. It now supports **Session Fuzzing**, coordinating the assembly of script bundles and implementing the **Differential Scoring** logic that rewards JIT instability (like high exit density).
 * `lafleur/corpus_manager.py`: Handles all interactions with the on-disk corpus and the persistent state file (`coverage_state.pkl`). It is responsible for selecting parents, adding new files, and generating initial seeds.
@@ -88,4 +91,11 @@ The `lafleur` project is organized into several distinct Python modules, each wi
 * `lafleur/mutators/`: The "hands" of the fuzzer. This package contains the `ASTMutator` engine (in `engine.py`) and a rich library of `NodeTransformer` subclasses. It includes advanced **Tier 2 Aware** mutators (e.g., `ZombieTraceMutator`, `GlobalOptimizationInvalidator`) designed to attack specific JIT optimizations.
 * `lafleur/learning.py`: Houses the `MutatorScoreTracker`, the adaptive learning engine that scores mutation strategies based on their historical success, allowing the fuzzer to dynamically focus on the most effective techniques.
 * `lafleur/utils.py`: A collection of generic, reusable helper components, such as the `TeeLogger` for simultaneous console and file logging, and functions for managing run statistics.
-* `lafleur/state_tool.py`: A standalone command-line utility for managing the binary state file.
+
+#### Standalone Tools & Scripts
+
+* `lafleur/minimize.py`: The **Session Minimizer**. An advanced reduction tool that takes a complex multi-script crash bundle and reduces it to a single Minimal Reproducible Example (MRE) using `ShrinkRay` and crash fingerprinting.
+* `lafleur/state_tool.py`: A utility for inspecting, migrating, and dumping the binary `coverage_state.pkl` file.
+* `lafleur-jit-tweak` (installed script): A helper that modifies CPython's internal JIT thresholds (e.g., `JIT_THRESHOLD`, `trace_stack_size`) to make the JIT more aggressive and easier to fuzz.
+* `tools/bump_version.py`: A maintenance script for updating the project version and changelogs.
+* `tools/generate_uop_names.py`: A script that parses CPython's `pycore_uop_ids.h` to generate the name mappings used by the coverage parser.

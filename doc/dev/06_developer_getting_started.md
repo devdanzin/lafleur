@@ -179,18 +179,49 @@ The fuzzer's main state file, `coverage/coverage_state.pkl`, is a binary file th
 
 -----
 
+### Minimizing Crashes
+
+When `lafleur` finds a crash in **Session Mode**, it saves a bundle of scripts (e.g., `00_polluter.py`, `01_warmup.py`, `02_attack.py`). Minimizing these manually is difficult because the crash often depends on the specific sequence of JIT operations triggered by the earlier scripts.
+
+`lafleur` provides a specialized minimization tool to automate this process. It uses **Crash Fingerprinting** (matching the exact assertion or ASan error) to ensure the bug is preserved, and leverages [**ShrinkRay**](https://github.com/DRMacIver/shrinkray) to reduce the code.
+
+**Prerequisites:**
+You must have `shrinkray` installed and available in your PATH:
+```bash
+pip install shrinkray
+
+```
+
+**Usage:**
+Run the minimizer on a crash directory:
+
+```bash
+python -m lafleur.minimize crashes/session_crash_20250106_120000_1234
+
+```
+
+**What it does:**
+
+1. **Script Reduction:** It determines which scripts in the session are strictly necessary. For example, if the polluter script isn't needed to trigger the crash, it is removed.
+2. **Consolidation:** It attempts to merge all necessary scripts into a single file (`combined_repro.py`), renaming harness functions to avoid collisions.
+3. **Code Reduction:** It runs `ShrinkRay` to delete unused lines and simplify the code.
+
+**Output:**
+
+* `reproduce_minimized.sh`: A shell script that runs the minimal set of files needed to reproduce the crash.
+* `combined_repro.py` (if successful): A single-file Minimal Reproducible Example (MRE).
+
+---
+
 ### Interpreting the results
 
 The main fuzzing results will be stored in four directories: `crashes/`, `timeouts/`, `divergences/`, and `regressions/`.
 
   * `crashes/` will contain scripts that terminated with an exit code other than 0, or which generated logs containing one of the interesting keywords such as `JITCorrectnessError` or `panic`. This is where we expect the valuable cases of abnormal termination due to JIT behavior will be recorded. The logs from executing such scripts are also stored here, allowing easy diagnostics of the cause of the crash. Since many crashes are of low value, the following command may be used to list logs that do not contain common strings for low value crashes and hence potentially contain high value crashes:
-
     ```bash
     grep -L -E "(statically|indentation|unsupported|formatting|invalid syntax)" crashes/*.log
     ```
 
   * `timeouts/` will contain scripts and their respective logs that caused a timeout (default: 10 seconds) while executing, which might indicate interesting JIT behavior. Most common causes are infinite loops (e.g. from unpacking an object with a `__getitem__` that unconditionally returns a value) and too deeply nested `for` loops.
-
   * `divergences/` will contain scripts where the JITted and non-JITted versions of the same code resulted in different `locals()` at the end of execution. It's only populated when the `--differential-testing` flag is passed, and will also contain the logs from executing such scripts. This is where we expect the valuable cases of incorrectness due to JIT behavior to be recorded.
-
   * `regressions/` will contain scripts where the JIT-enabled execution was significantly slower than the standard interpreter. This directory is only populated when the `--timing-fuzz` flag is passed.

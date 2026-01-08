@@ -63,6 +63,7 @@ class PyVMData(ctypes.Structure):
         ("pending_deletion", ctypes.c_uint8),
         ("index", ctypes.c_int32),
         ("bloom", _PyBloomFilter),
+        ("padding", ctypes.c_ubyte * 28),  # Align to 72 bytes
     ]
 
 
@@ -79,6 +80,61 @@ class PyExecutorObject(ctypes.Structure):
         ("jit_size", ctypes.c_size_t),
         ("jit_code", ctypes.c_void_p),
     ]
+
+
+def check_bloom(bloom_filter: _PyBloomFilter, obj_address: int) -> bool:
+    """Replicate CPython's bloom_filter_may_contain."""
+    uhash = BLOOM_SEED
+    addr = obj_address
+    for _ in range(8):  # SIZEOF_VOID_P
+        uhash ^= addr & 255
+        uhash = (uhash * PyHASH_MULTIPLIER) & 0xFFFFFFFFFFFFFFFF  # Keep 64-bit
+        addr >>= 8
+
+    # Check K bits
+    for _ in range(BLOOM_K):
+        bit_index = uhash & 255
+        word_idx = bit_index >> 5
+        bit_mask = 1 << (bit_index & 31)
+        if not (bloom_filter.bits[word_idx] & bit_mask):
+            return False
+        uhash >>= 8
+    return True
+
+
+def scan_watched_variables(executor_ptr: ctypes.POINTER(PyExecutorObject), namespace: dict) -> list[str]:
+    """Identify which globals/builtins are watched by this executor."""
+    watched = []
+    bloom = executor_ptr.contents.vm_data.bloom
+
+    def is_watched(obj) -> bool:
+        if check_bloom(bloom, id(obj)):
+            return True
+        # Also check code object for functions
+        if hasattr(obj, "__code__") and check_bloom(bloom, id(obj.__code__)):
+            return True
+        return False
+
+    try:
+        # Check globals
+        for name, obj in namespace.items():
+            if isinstance(name, str) and is_watched(obj):
+                watched.append(name)
+
+        # Check builtins from the namespace (can be dict or module)
+        builtins_val = namespace.get("__builtins__")
+        if builtins_val:
+            builtins_dict = builtins_val
+            if isinstance(builtins_val, ModuleType):
+                builtins_dict = vars(builtins_val)
+
+            if isinstance(builtins_dict, dict):
+                for name, obj in builtins_dict.items():
+                    if isinstance(name, str) and is_watched(obj):
+                        watched.append(name)
+    except Exception:
+        pass
+    return watched
 
 
 # Limit integer string conversion to prevent DOS attacks
@@ -121,59 +177,6 @@ def get_jit_stats(namespace: dict) -> dict:
             "max_exit_density": 0.0,
         }
 
-    def check_bloom(bloom_filter, obj_address) -> bool:
-        """Replicate CPython's bloom_filter_may_contain."""
-        uhash = BLOOM_SEED
-        addr = obj_address
-        for _ in range(8):  # SIZEOF_VOID_P
-            uhash ^= addr & 255
-            uhash = (uhash * PyHASH_MULTIPLIER) & 0xFFFFFFFFFFFFFFFF  # Keep 64-bit
-            addr >>= 8
-
-        # Check K bits
-        for _ in range(BLOOM_K):
-            bit_index = uhash & 255
-            word_idx = bit_index >> 5
-            bit_mask = 1 << (bit_index & 31)
-            if not (bloom_filter.bits[word_idx] & bit_mask):
-                return False
-            uhash >>= 8
-        return True
-
-    def scan_watched_variables(executor_ptr) -> list[str]:
-        """Identify which globals/builtins are watched by this executor."""
-        watched = []
-        bloom = executor_ptr.contents.vm_data.bloom
-
-        def is_watched(obj) -> bool:
-            if check_bloom(bloom, id(obj)):
-                return True
-            # Also check code object for functions
-            if hasattr(obj, "__code__") and check_bloom(bloom, id(obj.__code__)):
-                return True
-            return False
-
-        try:
-            # Check globals
-            for name, obj in namespace.items():
-                if isinstance(name, str) and is_watched(obj):
-                    watched.append(name)
-
-            # Check builtins from the namespace (can be dict or module)
-            builtins_val = namespace.get("__builtins__")
-            if builtins_val:
-                builtins_dict = builtins_val
-                if isinstance(builtins_val, ModuleType):
-                    builtins_dict = vars(builtins_val)
-
-                if isinstance(builtins_dict, dict):
-                    for name, obj in builtins_dict.items():
-                        if isinstance(name, str) and is_watched(obj):
-                            watched.append(name)
-        except Exception:
-            pass
-        return watched
-
     def inspect_executor(executor):
         nonlocal zombie_traces, valid_traces, warm_traces
         nonlocal max_exit_count, max_chain_depth, min_code_size, max_exit_density
@@ -203,7 +206,7 @@ def get_jit_stats(namespace: dict) -> dict:
 
                 # Scan for watched variables if this executor is unstable
                 if density > 10.0:
-                    watched = scan_watched_variables(executor_ptr)
+                    watched = scan_watched_variables(executor_ptr, namespace)
                     if watched:
                         print(f"[EKG] WATCHED: {', '.join(watched)}", flush=True)
 

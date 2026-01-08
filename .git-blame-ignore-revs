@@ -1,0 +1,14 @@
+# .git-blame-ignore-revs
+#
+# This file contains a list of commits that should be ignored by git blame.
+# These are typically automated formatting changes that don't affect functionality.
+#
+# To configure git to use this file automatically, run:
+#   git config blame.ignoreRevsFile .git-blame-ignore-revs
+#
+# Or configure it globally for all repositories:
+#   git config --global blame.ignoreRevsFile .git-blame-ignore-revs
+
+# chore: Run ruff format on entire codebase (28 files, 854 insertions, 905 deletions)
+# Applied consistent formatting across all Python files
+fb3f11e1960e80851fdb81500c44d85076f1c10b

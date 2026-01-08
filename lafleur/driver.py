@@ -52,6 +52,16 @@ class _PyBloomFilter(ctypes.Structure):
     _fields_ = [("bits", ctypes.c_uint32 * BLOOM_WORDS)]
 
 
+class _PyExecutorLinkListNode(ctypes.Structure):
+    # Forward declaration for linked list
+    pass
+
+_PyExecutorLinkListNode._fields_ = [
+    ("next", ctypes.c_void_p),      # _PyExecutorObject *next
+    ("previous", ctypes.c_void_p),  # _PyExecutorObject *previous
+]
+
+
 class PyVMData(ctypes.Structure):
     # Matches _PyVMData in pycore_optimizer.h
     _fields_ = [
@@ -63,7 +73,8 @@ class PyVMData(ctypes.Structure):
         ("pending_deletion", ctypes.c_uint8),
         ("index", ctypes.c_int32),
         ("bloom", _PyBloomFilter),
-        ("padding", ctypes.c_ubyte * 28),  # Align to 72 bytes
+        ("links", _PyExecutorLinkListNode),  # 16 bytes (2 pointers)
+        ("code", ctypes.c_void_p),           # 8 bytes (PyCodeObject *)
     ]
 
 
@@ -82,7 +93,7 @@ class PyExecutorObject(ctypes.Structure):
     ]
 
 
-def check_bloom(bloom_filter: _PyBloomFilter, obj_address: int) -> bool:
+def check_bloom(bloom_filter: _PyBloomFilter, obj_address: int, debug_name: str = "") -> bool:
     """Replicate CPython's bloom_filter_may_contain."""
     uhash = BLOOM_SEED
     addr = obj_address
@@ -92,13 +103,20 @@ def check_bloom(bloom_filter: _PyBloomFilter, obj_address: int) -> bool:
         addr >>= 8
 
     # Check K bits
+    bits_to_check = []
     for _ in range(BLOOM_K):
         bit_index = uhash & 255
         word_idx = bit_index >> 5
         bit_mask = 1 << (bit_index & 31)
+        bits_to_check.append((word_idx, bit_index, bit_mask))
         if not (bloom_filter.bits[word_idx] & bit_mask):
+            if debug_name:
+                print(f"[DEBUG] {debug_name}: bit {bit_index} (word {word_idx}) NOT SET", flush=True)
             return False
         uhash >>= 8
+
+    if debug_name:
+        print(f"[DEBUG] {debug_name}: ALL {BLOOM_K} bits matched! {bits_to_check}", flush=True)
     return True
 
 
@@ -108,25 +126,33 @@ def scan_watched_variables(executor_ptr: ctypes.POINTER(PyExecutorObject), names
     bloom = executor_ptr.contents.vm_data.bloom
     print(f"[DEBUG] Scanning watched vars. Bloom bits: {list(bloom.bits)[:4]}...", flush=True)
 
-    def is_watched(obj) -> bool:
-        if check_bloom(bloom, id(obj)):
+    def is_watched(obj, name: str = "") -> bool:
+        if check_bloom(bloom, id(obj), f"{name}_obj"):
             return True
         # Also check code object for functions
-        if hasattr(obj, "__code__") and check_bloom(bloom, id(obj.__code__)):
+        if hasattr(obj, "__code__") and check_bloom(bloom, id(obj.__code__), f"{name}_code"):
             return True
         return False
 
     try:
+        # First, check if the namespace dict itself is watched
+        if check_bloom(bloom, id(namespace), "namespace_dict"):
+            print(f"[DEBUG] The globals() dict itself is watched!", flush=True)
+
         # Check globals
         print(f"[DEBUG] Checking {len(namespace)} globals...", flush=True)
         for name, obj in namespace.items():
-            if isinstance(name, str) and is_watched(obj):
+            if isinstance(name, str) and is_watched(obj, f"global_{name}"):
                 print(f"[DEBUG] Global match: {name}", flush=True)
                 watched.append(name)
 
         # Check builtins from the namespace (can be dict or module)
         builtins_val = namespace.get("__builtins__")
         if builtins_val:
+            # Check if the builtins dict/module itself is watched
+            if check_bloom(bloom, id(builtins_val), "builtins_dict_or_module"):
+                print(f"[DEBUG] The __builtins__ dict/module itself is watched!", flush=True)
+
             builtins_dict = builtins_val
             if isinstance(builtins_val, ModuleType):
                 builtins_dict = vars(builtins_val)
@@ -134,7 +160,7 @@ def scan_watched_variables(executor_ptr: ctypes.POINTER(PyExecutorObject), names
             if isinstance(builtins_dict, dict):
                 print(f"[DEBUG] Checking {len(builtins_dict)} builtins...", flush=True)
                 for name, obj in builtins_dict.items():
-                    if isinstance(name, str) and is_watched(obj):
+                    if isinstance(name, str) and is_watched(obj, f"builtin_{name}"):
                         print(f"[DEBUG] Builtin match: {name}", flush=True)
                         watched.append(name)
     except Exception as e:

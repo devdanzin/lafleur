@@ -92,6 +92,8 @@ from lafleur.mutators.scenarios_types import (
     TypeIntrospectionMutator,
 )
 from lafleur.mutators.utils import RedundantStatementSanitizer
+from lafleur.mutators.helper_injection import HelperFunctionInjector
+from lafleur.mutators.sniper import SniperMutator
 
 
 class SlicingMutator(ast.NodeTransformer):
@@ -141,6 +143,7 @@ class ASTMutator:
 
     def __init__(self):
         self.transformers = [
+            HelperFunctionInjector,  # Injects helpers for Sniper to target
             OperatorSwapper,
             ComparisonSwapper,
             ComparisonChainerMutator,
@@ -207,6 +210,7 @@ class ASTMutator:
             ExceptionGroupMutator,
             AsyncConstructMutator,
             SysMonitoringMutator,
+            SniperMutator,  # Attacks helpers detected via Bloom filter
             RedundantStatementSanitizer,
         ]
 

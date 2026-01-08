@@ -4,12 +4,13 @@ from textwrap import dedent
 from unittest.mock import patch
 from lafleur.mutators.sniper import SniperMutator
 
+
 class TestSniperMutator(unittest.TestCase):
     def test_invalidation_logic_builtin(self):
         """Test that invalidation code for builtins is generated correctly."""
         mutator = SniperMutator(["len"])
         stmts = mutator._create_invalidation_stmt("len")
-        
+
         # Should return import builtins; builtins.len = ...
         code = ast.unparse(ast.Module(body=stmts, type_ignores=[]))
         self.assertIn("import builtins", code)
@@ -19,7 +20,7 @@ class TestSniperMutator(unittest.TestCase):
         """Test that invalidation code for globals is generated correctly."""
         mutator = SniperMutator(["MyGlobal"])
         stmts = mutator._create_invalidation_stmt("MyGlobal")
-        
+
         # Should return globals()['MyGlobal'] = None
         code = ast.unparse(ast.Module(body=stmts, type_ignores=[]))
         self.assertIn("globals()['MyGlobal'] = None", code)
@@ -32,12 +33,11 @@ class TestSniperMutator(unittest.TestCase):
                     pass
         """)
         tree = ast.parse(code)
-        
-        with patch("random.random", return_value=0.9), \
-             patch("random.sample", return_value=["len"]):
+
+        with patch("random.random", return_value=0.9), patch("random.sample", return_value=["len"]):
             mutator = SniperMutator(["len"])
             mutated = mutator.visit(tree)
-            
+
         generated = ast.unparse(mutated)
         self.assertIn("builtins.len =", generated)
         self.assertIn("for i in range(10):", generated)
@@ -50,12 +50,14 @@ class TestSniperMutator(unittest.TestCase):
                     pass
         """)
         tree = ast.parse(code)
-        
-        with patch("random.random", return_value=0.9), \
-             patch("random.sample", return_value=["MyGlobal"]):
+
+        with (
+            patch("random.random", return_value=0.9),
+            patch("random.sample", return_value=["MyGlobal"]),
+        ):
             mutator = SniperMutator(["MyGlobal"])
             mutated = mutator.visit(tree)
-            
+
         generated = ast.unparse(mutated)
         self.assertIn("globals()['MyGlobal'] = None", generated)
 
@@ -69,7 +71,7 @@ class TestSniperMutator(unittest.TestCase):
         tree = ast.parse(code)
         mutator = SniperMutator([])
         mutated = mutator.visit(tree)
-        
+
         generated = ast.unparse(mutated)
         # Should match original exactly (ignoring potential whitespace diffs, but structure same)
         self.assertEqual(ast.dump(tree), ast.dump(mutated))
@@ -82,16 +84,17 @@ class TestSniperMutator(unittest.TestCase):
                     x = 1
         """)
         tree = ast.parse(code)
-        
+
         with patch("random.random", return_value=0.9):
             mutator = SniperMutator(["len", "MyGlobal"])
             mutated = mutator.visit(tree)
-            
+
         generated = ast.unparse(mutated)
         try:
             ast.parse(generated)
         except SyntaxError:
             self.fail("Generated code has syntax error")
+
 
 if __name__ == "__main__":
     unittest.main()

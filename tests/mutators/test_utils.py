@@ -735,7 +735,9 @@ class TestRedundantStatementSanitizer(unittest.TestCase):
         """)
         tree = ast.parse(code)
 
-        with patch("lafleur.mutators.utils.random.random", side_effect=[0.05, 0.95, 0.05, 0.95, 0.05]):
+        with patch(
+            "lafleur.mutators.utils.random.random", side_effect=[0.05, 0.95, 0.05, 0.95, 0.05]
+        ):
             sanitizer = RedundantStatementSanitizer()
             mutated = sanitizer.visit(tree)
 

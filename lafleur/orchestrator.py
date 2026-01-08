@@ -766,7 +766,9 @@ class LafleurOrchestrator:
             print("  [!] No helpers available, falling back to havoc", file=sys.stderr)
             return self._run_havoc_stage(base_ast, seed=seed, **kwargs)
 
-        print(f"  [~] Detected {len(detected_helpers)} helper(s): {detected_helpers}", file=sys.stderr)
+        print(
+            f"  [~] Detected {len(detected_helpers)} helper(s): {detected_helpers}", file=sys.stderr
+        )
 
         # Stage 2: Attack the helpers with Sniper
         sniper = SniperMutator(watched_keys=detected_helpers)

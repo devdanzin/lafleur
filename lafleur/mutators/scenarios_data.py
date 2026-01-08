@@ -673,11 +673,12 @@ class ReentrantSideEffectMutator(ast.NodeTransformer):
                     # Handle direct calls like list(), dict(), set()
                     if isinstance(func_node, ast.Name):
                         type_name = func_node.id
-                        if (
-                            type_name in self.SEQUENCE_TYPES
-                            or type_name in self.MAPPING_TYPES
-                        ):
-                            target_name = stmt.targets[0].id if isinstance(stmt.targets[0], ast.Name) else None
+                        if type_name in self.SEQUENCE_TYPES or type_name in self.MAPPING_TYPES:
+                            target_name = (
+                                stmt.targets[0].id
+                                if isinstance(stmt.targets[0], ast.Name)
+                                else None
+                            )
                             if target_name:
                                 return (target_name, type_name)
 
@@ -685,13 +686,19 @@ class ReentrantSideEffectMutator(ast.NodeTransformer):
                     elif isinstance(func_node, ast.Attribute):
                         attr_name = func_node.attr
                         if attr_name in self.STDLIB_SEQUENCE_TYPES:
-                            target_name = stmt.targets[0].id if isinstance(stmt.targets[0], ast.Name) else None
+                            target_name = (
+                                stmt.targets[0].id
+                                if isinstance(stmt.targets[0], ast.Name)
+                                else None
+                            )
                             if target_name:
                                 return (target_name, attr_name)
 
                 # Check if RHS is a List, Dict, or Set literal
                 if isinstance(stmt.value, (ast.List, ast.Dict, ast.Set)):
-                    target_name = stmt.targets[0].id if isinstance(stmt.targets[0], ast.Name) else None
+                    target_name = (
+                        stmt.targets[0].id if isinstance(stmt.targets[0], ast.Name) else None
+                    )
                     if target_name:
                         if isinstance(stmt.value, ast.List):
                             return (target_name, "list")
@@ -702,9 +709,7 @@ class ReentrantSideEffectMutator(ast.NodeTransformer):
 
         return None
 
-    def _create_rug_puller_class(
-        self, var_name: str, type_name: str, prefix: str
-    ) -> ast.ClassDef:
+    def _create_rug_puller_class(self, var_name: str, type_name: str, prefix: str) -> ast.ClassDef:
         """Create the RugPuller class based on the target type."""
         class_name = f"RugPuller_{prefix}"
 
@@ -850,9 +855,7 @@ class LatticeSurfingMutator(ast.NodeTransformer):
 
         return node
 
-    def _find_constant_assignments(
-        self, node: ast.FunctionDef
-    ) -> list[tuple[str, int | bool]]:
+    def _find_constant_assignments(self, node: ast.FunctionDef) -> list[tuple[str, int | bool]]:
         """Find variables assigned constant integers or booleans."""
         targets = []
 
@@ -1091,7 +1094,12 @@ class StackCacheThrasher(ast.NodeTransformer):
 
             # Inject: initializations at the beginning, thrashing statement in the middle/end
             injection_point = len(node.body) // 2 if len(node.body) > 1 else len(node.body)
-            node.body = init_stmts + node.body[:injection_point] + [thrash_stmt] + node.body[injection_point:]
+            node.body = (
+                init_stmts
+                + node.body[:injection_point]
+                + [thrash_stmt]
+                + node.body[injection_point:]
+            )
 
             ast.fix_missing_locations(node)
 
@@ -1403,10 +1411,7 @@ class CodeObjectHotSwapper(ast.NodeTransformer):
             # Inject at the middle of the function body
             injection_point = len(node.body) // 2 if len(node.body) > 1 else len(node.body)
             node.body = (
-                generators
-                + node.body[:injection_point]
-                + swap_logic
-                + node.body[injection_point:]
+                generators + node.body[:injection_point] + swap_logic + node.body[injection_point:]
             )
 
             ast.fix_missing_locations(node)
@@ -1464,11 +1469,7 @@ class TypeShadowingMutator(ast.NodeTransformer):
 
             # Inject at the middle of the function body
             injection_point = len(node.body) // 2 if len(node.body) > 1 else len(node.body)
-            node.body = (
-                node.body[:injection_point]
-                + shadow_logic
-                + node.body[injection_point:]
-            )
+            node.body = node.body[:injection_point] + shadow_logic + node.body[injection_point:]
 
             ast.fix_missing_locations(node)
 

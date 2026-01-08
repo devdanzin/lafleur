@@ -221,9 +221,7 @@ class TestCorpusManager(unittest.TestCase):
         self.run_stats = {"corpus_file_counter": 0}
 
         # Create CorpusManager with mocked dependencies
-        with patch("lafleur.corpus_manager.CORPUS_DIR"), patch(
-            "lafleur.corpus_manager.TMP_DIR"
-        ):
+        with patch("lafleur.corpus_manager.CORPUS_DIR"), patch("lafleur.corpus_manager.TMP_DIR"):
             self.corpus_manager = CorpusManager(
                 coverage_state=self.coverage_manager,
                 run_stats=self.run_stats,
@@ -236,18 +234,14 @@ class TestCorpusManager(unittest.TestCase):
         """Test that file A is subsumed by B if B has superset coverage and is smaller."""
         # File A metadata
         file_a_meta = {
-            "lineage_coverage_profile": {
-                "f1": {"edges": {0, 1}, "uops": [], "rare_events": []}
-            },
+            "lineage_coverage_profile": {"f1": {"edges": {0, 1}, "uops": [], "rare_events": []}},
             "file_size_bytes": 1000,
             "execution_time_ms": 100,
         }
 
         # File B metadata - superset of edges and smaller
         file_b_meta = {
-            "lineage_coverage_profile": {
-                "f1": {"edges": {0, 1, 2}, "uops": [], "rare_events": []}
-            },
+            "lineage_coverage_profile": {"f1": {"edges": {0, 1, 2}, "uops": [], "rare_events": []}},
             "file_size_bytes": 500,  # Smaller
             "execution_time_ms": 50,  # Faster
         }
@@ -260,18 +254,14 @@ class TestCorpusManager(unittest.TestCase):
         """Test that file A is NOT subsumed by B if B is larger/slower despite superset."""
         # File A metadata
         file_a_meta = {
-            "lineage_coverage_profile": {
-                "f1": {"edges": {0, 1}, "uops": [], "rare_events": []}
-            },
+            "lineage_coverage_profile": {"f1": {"edges": {0, 1}, "uops": [], "rare_events": []}},
             "file_size_bytes": 500,
             "execution_time_ms": 50,
         }
 
         # File B metadata - superset but larger and slower
         file_b_meta = {
-            "lineage_coverage_profile": {
-                "f1": {"edges": {0, 1, 2}, "uops": [], "rare_events": []}
-            },
+            "lineage_coverage_profile": {"f1": {"edges": {0, 1, 2}, "uops": [], "rare_events": []}},
             "file_size_bytes": 2000,  # Larger
             "execution_time_ms": 200,  # Slower
         }
@@ -284,17 +274,13 @@ class TestCorpusManager(unittest.TestCase):
         """Test that files with equal or disjoint coverage are not subsumed."""
         # File A and B have same coverage
         file_a_meta = {
-            "lineage_coverage_profile": {
-                "f1": {"edges": {0, 1, 2}, "uops": [], "rare_events": []}
-            },
+            "lineage_coverage_profile": {"f1": {"edges": {0, 1, 2}, "uops": [], "rare_events": []}},
             "file_size_bytes": 500,
             "execution_time_ms": 50,
         }
 
         file_b_meta = {
-            "lineage_coverage_profile": {
-                "f1": {"edges": {0, 1, 2}, "uops": [], "rare_events": []}
-            },
+            "lineage_coverage_profile": {"f1": {"edges": {0, 1, 2}, "uops": [], "rare_events": []}},
             "file_size_bytes": 400,
             "execution_time_ms": 40,
         }
@@ -312,9 +298,7 @@ class TestCorpusManager(unittest.TestCase):
         }
 
         file_b_meta = {
-            "lineage_coverage_profile": {
-                "f1": {"edges": {0, 1, 2}, "uops": [], "rare_events": []}
-            },
+            "lineage_coverage_profile": {"f1": {"edges": {0, 1, 2}, "uops": [], "rare_events": []}},
             "file_size_bytes": 100,
             "execution_time_ms": 10,
         }
@@ -326,9 +310,7 @@ class TestCorpusManager(unittest.TestCase):
     def test_is_subsumed_by_partial_overlap(self):
         """Test that partial overlap (not subset) is not subsumption."""
         file_a_meta = {
-            "lineage_coverage_profile": {
-                "f1": {"edges": {0, 1, 5}, "uops": [], "rare_events": []}
-            },
+            "lineage_coverage_profile": {"f1": {"edges": {0, 1, 5}, "uops": [], "rare_events": []}},
             "file_size_bytes": 500,
             "execution_time_ms": 50,
         }

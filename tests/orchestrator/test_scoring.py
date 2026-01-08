@@ -52,10 +52,7 @@ class TestNewCoverageInfo(unittest.TestCase):
     def test_is_interesting_with_multiple_metrics(self):
         """Test that combined metrics work."""
         info = NewCoverageInfo(
-            global_uops=2,
-            relative_edges=3,
-            global_rare_events=1,
-            total_child_edges=100
+            global_uops=2, relative_edges=3, global_rare_events=1, total_child_edges=100
         )
         self.assertTrue(info.is_interesting())
 
@@ -255,10 +252,7 @@ class TestInterestingnessScorer(unittest.TestCase):
         # Child: 125 edges (25% increase), 110 bytes (10% increase)
         # Coverage: 2 global edges, 3 relative edges, 1 global uop
         info = NewCoverageInfo(
-            global_edges=2,
-            global_uops=1,
-            relative_edges=3,
-            total_child_edges=125
+            global_edges=2, global_uops=1, relative_edges=3, total_child_edges=125
         )
         scorer = InterestingnessScorer(
             coverage_info=info,

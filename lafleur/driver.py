@@ -56,8 +56,9 @@ class _PyExecutorLinkListNode(ctypes.Structure):
     # Forward declaration for linked list
     pass
 
+
 _PyExecutorLinkListNode._fields_ = [
-    ("next", ctypes.c_void_p),      # _PyExecutorObject *next
+    ("next", ctypes.c_void_p),  # _PyExecutorObject *next
     ("previous", ctypes.c_void_p),  # _PyExecutorObject *previous
 ]
 
@@ -74,7 +75,7 @@ class PyVMData(ctypes.Structure):
         ("index", ctypes.c_int32),
         ("bloom", _PyBloomFilter),
         ("links", _PyExecutorLinkListNode),  # 16 bytes (2 pointers)
-        ("code", ctypes.c_void_p),           # 8 bytes (PyCodeObject *)
+        ("code", ctypes.c_void_p),  # 8 bytes (PyCodeObject *)
     ]
 
 
@@ -120,7 +121,9 @@ def check_bloom(bloom_filter: _PyBloomFilter, obj_address: int, debug_name: str 
     return True
 
 
-def scan_watched_variables(executor_ptr: ctypes.POINTER(PyExecutorObject), namespace: dict) -> list[str]:
+def scan_watched_variables(
+    executor_ptr: ctypes.POINTER(PyExecutorObject), namespace: dict
+) -> list[str]:
     """Identify which globals/builtins are watched by this executor."""
     watched = []
     bloom = executor_ptr.contents.vm_data.bloom
@@ -236,7 +239,10 @@ def get_jit_stats(namespace: dict) -> dict:
                 density = exit_count / code_size
                 max_exit_density = max(max_exit_density, density)
 
-                print(f"[DEBUG] Executor: exit={exit_count} size={code_size} density={density:.2f}", flush=True)
+                print(
+                    f"[DEBUG] Executor: exit={exit_count} size={code_size} density={density:.2f}",
+                    flush=True,
+                )
 
                 # Scan for watched variables if this executor is unstable
                 if density >= 0.0:  # DEBUG: Forced scan for testing

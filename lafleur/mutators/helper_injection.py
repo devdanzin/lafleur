@@ -28,14 +28,12 @@ class HelperFunctionInjector(ast.NodeTransformer):
             '''Type-specialized addition helper.'''
             return x + y
         """),
-
         # Multiplication (may be inlined)
         dedent("""
         def _jit_helper_mul(x, y):
             '''Type-specialized multiplication helper.'''
             return x * y
         """),
-
         # Conditional (branch prediction target)
         dedent("""
         def _jit_helper_clamp(x, minimum=0, maximum=100):
@@ -46,14 +44,12 @@ class HelperFunctionInjector(ast.NodeTransformer):
                 return maximum
             return x
         """),
-
         # List operation (allocation tracking)
         dedent("""
         def _jit_helper_collect(x):
             '''Helper that allocates - tests allocation tracking.'''
             return [x, x * 2, x * 3]
         """),
-
         # Type check (type guard target)
         dedent("""
         def _jit_helper_check_int(x):
@@ -82,7 +78,8 @@ class HelperFunctionInjector(ast.NodeTransformer):
 
         # Find harness functions
         harness_funcs = [
-            n for n in node.body
+            n
+            for n in node.body
             if isinstance(n, ast.FunctionDef) and n.name.startswith("uop_harness")
         ]
 
@@ -91,7 +88,8 @@ class HelperFunctionInjector(ast.NodeTransformer):
 
         # Check for existing helpers to avoid duplicates
         existing_helpers = {
-            n.name for n in node.body
+            n.name
+            for n in node.body
             if isinstance(n, ast.FunctionDef) and n.name.startswith("_jit_helper_")
         }
 
@@ -122,11 +120,7 @@ class HelperFunctionInjector(ast.NodeTransformer):
 
         # Insert helpers before the first harness function
         first_harness_idx = node.body.index(harness_funcs[0])
-        node.body = (
-            node.body[:first_harness_idx] +
-            helper_nodes +
-            node.body[first_harness_idx:]
-        )
+        node.body = node.body[:first_harness_idx] + helper_nodes + node.body[first_harness_idx:]
 
         # Visit harness functions to inject calls
         self.generic_visit(node)
@@ -181,7 +175,7 @@ class HelperFunctionInjector(ast.NodeTransformer):
             iter=ast.Call(
                 func=ast.Name(id="range", ctx=ast.Load()),
                 args=[ast.Constant(value=100)],
-                keywords=[]
+                keywords=[],
             ),
             body=[
                 ast.Assign(
@@ -192,11 +186,11 @@ class HelperFunctionInjector(ast.NodeTransformer):
                             ast.Name(id="_jit_warmup_i", ctx=ast.Load()),
                             ast.Constant(value=10),
                         ],
-                        keywords=[]
-                    )
+                        keywords=[],
+                    ),
                 )
             ],
-            orelse=[]
+            orelse=[],
         )
 
         return loop
@@ -224,8 +218,8 @@ class HelperFunctionInjector(ast.NodeTransformer):
                     ast.Name(id=loop_var, ctx=ast.Load()),
                     ast.Constant(value=10),
                 ],
-                keywords=[]
-            )
+                keywords=[],
+            ),
         )
 
         # Insert the call at the start of the loop body
@@ -255,8 +249,8 @@ class HelperFunctionInjector(ast.NodeTransformer):
                     ast.Constant(value=42),
                     ast.Constant(value=10),
                 ],
-                keywords=[]
-            )
+                keywords=[],
+            ),
         )
 
         # Insert the call at the start of the loop body

@@ -27,7 +27,7 @@ class TestHelperFunctionInjector(unittest.TestCase):
                     # Select specific helpers
                     mock_sample.return_value = [
                         HelperFunctionInjector.HELPER_TEMPLATES[0],
-                        HelperFunctionInjector.HELPER_TEMPLATES[1]
+                        HelperFunctionInjector.HELPER_TEMPLATES[1],
                     ]
 
                     mutator = HelperFunctionInjector()
@@ -113,7 +113,8 @@ class TestHelperFunctionInjector(unittest.TestCase):
                 # Check if loop body has an assignment to _helper_result
                 assignments = [n for n in node.body if isinstance(n, ast.Assign)]
                 helper_assigns = [
-                    a for a in assignments
+                    a
+                    for a in assignments
                     if any(t.id == "_helper_result" for t in a.targets if isinstance(t, ast.Name))
                 ]
                 if helper_assigns:
@@ -208,7 +209,8 @@ class TestHelperFunctionInjector(unittest.TestCase):
         # Helpers should be inserted before the first harness
         funcs = mutated.body
         harness_indices = [
-            i for i, n in enumerate(funcs)
+            i
+            for i, n in enumerate(funcs)
             if isinstance(n, ast.FunctionDef) and n.name.startswith("uop_harness")
         ]
 
@@ -216,7 +218,8 @@ class TestHelperFunctionInjector(unittest.TestCase):
             first_harness_idx = harness_indices[0]
             # Helpers should come before first harness
             helpers_before = [
-                f for f in funcs[:first_harness_idx]
+                f
+                for f in funcs[:first_harness_idx]
                 if isinstance(f, ast.FunctionDef) and f.name.startswith("_jit_helper_")
             ]
             # Might have helpers (probabilistic)

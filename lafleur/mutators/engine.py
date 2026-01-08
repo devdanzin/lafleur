@@ -92,6 +92,9 @@ from lafleur.mutators.scenarios_types import (
     TypeIntrospectionMutator,
 )
 from lafleur.mutators.utils import RedundantStatementSanitizer
+from lafleur.mutators.helper_injection import HelperFunctionInjector
+# Note: SniperMutator is NOT imported here - it's only used in orchestrator._run_sniper_stage
+# because it requires watched_keys parameter from Bloom introspection
 
 
 class SlicingMutator(ast.NodeTransformer):
@@ -141,6 +144,7 @@ class ASTMutator:
 
     def __init__(self):
         self.transformers = [
+            HelperFunctionInjector,  # Injects helpers for Sniper to target
             OperatorSwapper,
             ComparisonSwapper,
             ComparisonChainerMutator,
@@ -209,6 +213,8 @@ class ASTMutator:
             SysMonitoringMutator,
             RedundantStatementSanitizer,
         ]
+        # Note: SniperMutator is NOT in this list - it's applied separately
+        # via orchestrator._run_sniper_stage() with Bloom-detected watched_keys
 
     def mutate_ast(
         self, tree: ast.AST, seed: int = None, mutations: int | None = None

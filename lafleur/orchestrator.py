@@ -51,6 +51,7 @@ from lafleur.mutators import (
     VariableRenamer,
 )
 from lafleur.mutators.sniper import SniperMutator
+from lafleur.mutators.helper_injection import HelperFunctionInjector
 from lafleur.utils import ExecutionResult, TeeLogger, load_run_stats, save_run_stats
 
 SERIALIZATION_SNIPPET = dedent("""
@@ -738,6 +739,47 @@ class LafleurOrchestrator:
         }
         return tree, mutation_info
 
+    def _run_helper_sniper_stage(
+        self, base_ast: ast.AST, seed: int, **kwargs
+    ) -> tuple[ast.AST, dict[str, Any]]:
+        """
+        Combined strategy: Inject helpers, then attack them with Sniper.
+
+        This strategy ensures HelperFunctionInjector and SniperMutator work together:
+        1. HelperFunctionInjector creates/detects _jit_helper_* functions
+        2. SniperMutator targets those helpers for invalidation attacks
+
+        This solves the feedback problem: the combined strategy gets credit
+        for any interesting behavior, allowing both mutators to evolve together.
+        """
+        print("  [~] Running HELPER+SNIPER stage...", file=sys.stderr)
+        tree = copy.deepcopy(base_ast)
+
+        # Stage 1: Inject helpers (or detect existing ones)
+        helper_injector = HelperFunctionInjector(probability=1.0)  # Always apply in this strategy
+        tree = helper_injector.visit(tree)
+        ast.fix_missing_locations(tree)
+
+        detected_helpers = helper_injector.helpers_injected
+        if not detected_helpers:
+            # No helpers available, fall back to havoc
+            print("  [!] No helpers available, falling back to havoc", file=sys.stderr)
+            return self._run_havoc_stage(base_ast, seed=seed, **kwargs)
+
+        print(f"  [~] Detected {len(detected_helpers)} helper(s): {detected_helpers}", file=sys.stderr)
+
+        # Stage 2: Attack the helpers with Sniper
+        sniper = SniperMutator(watched_keys=detected_helpers)
+        tree = sniper.visit(tree)
+        ast.fix_missing_locations(tree)
+
+        mutation_info = {
+            "strategy": "helper_sniper",
+            "transformers": ["HelperFunctionInjector", "SniperMutator"],
+            "targets": detected_helpers,
+        }
+        return tree, mutation_info
+
     def apply_mutation_strategy(
         self, base_ast: ast.AST, seed: int, watched_keys: list[str] | None = None
     ) -> tuple[ast.AST, dict[str, Any]]:
@@ -763,10 +805,11 @@ class LafleurOrchestrator:
             self._run_deterministic_stage,
             self._run_havoc_stage,
             self._run_spam_stage,
+            self._run_helper_sniper_stage,  # Always available - generates own targets
         ]
 
         if watched_keys:
-            # Add sniper strategy if we have targets
+            # Add sniper strategy if we have Bloom-detected targets
             strategy_candidates.append(self._run_sniper_stage)
 
         strategy_names = [

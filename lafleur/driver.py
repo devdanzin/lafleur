@@ -110,8 +110,8 @@ def check_bloom(bloom_filter: _PyBloomFilter, obj_address: int, debug_name: str 
         bit_mask = 1 << (bit_index & 31)
         bits_to_check.append((word_idx, bit_index, bit_mask))
         if not (bloom_filter.bits[word_idx] & bit_mask):
-            if debug_name:
-                print(f"[DEBUG] {debug_name}: bit {bit_index} (word {word_idx}) NOT SET", flush=True)
+            # if debug_name:
+            #     print(f"[DEBUG] {debug_name}: bit {bit_index} (word {word_idx}) NOT SET", flush=True)
             return False
         uhash >>= 8
 

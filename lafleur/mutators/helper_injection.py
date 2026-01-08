@@ -89,6 +89,19 @@ class HelperFunctionInjector(ast.NodeTransformer):
         if not harness_funcs:
             return node
 
+        # Check for existing helpers to avoid duplicates
+        existing_helpers = {
+            n.name for n in node.body
+            if isinstance(n, ast.FunctionDef) and n.name.startswith("_jit_helper_")
+        }
+
+        if existing_helpers:
+            # Helpers already exist - reuse them instead of injecting new ones
+            self.helpers_injected = list(existing_helpers)
+            # Still visit harness functions to potentially inject calls
+            self.generic_visit(node)
+            return node
+
         # Select 1-3 helper templates to inject
         num_helpers = random.randint(1, min(3, len(self.HELPER_TEMPLATES)))
         selected_templates = random.sample(self.HELPER_TEMPLATES, num_helpers)

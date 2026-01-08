@@ -121,9 +121,9 @@ MIXER_PROBABILITY = 0.3  # 30% chance to prepend polluter scripts
 
 CRASH_KEYWORDS = [
     "Segmentation fault",
-    "Traceback (most recent call last):",
+    # "Traceback (most recent call last):",
     "JITCorrectnessError",
-    "Assertion",
+    "Assertion ",
     "Abort",
     "Fatal Python error",
     "panic",

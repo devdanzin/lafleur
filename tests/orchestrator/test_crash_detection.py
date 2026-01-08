@@ -40,7 +40,7 @@ class TestCheckForCrash(unittest.TestCase):
         log_path = Path("/tmp/child_test.log")
         log_content = "IndentationError: too many levels of indentation"
 
-        with patch('sys.stderr', new_callable=io.StringIO) as mock_stderr:
+        with patch("sys.stderr", new_callable=io.StringIO) as mock_stderr:
             result = self.orchestrator._check_for_crash(1, log_content, source_path, log_path)
 
             self.assertFalse(result)
@@ -52,7 +52,7 @@ class TestCheckForCrash(unittest.TestCase):
         log_path = Path("/tmp/child_test.log")
         log_content = "SyntaxError: too many statically nested blocks"
 
-        with patch('sys.stderr', new_callable=io.StringIO) as mock_stderr:
+        with patch("sys.stderr", new_callable=io.StringIO) as mock_stderr:
             result = self.orchestrator._check_for_crash(1, log_content, source_path, log_path)
 
             self.assertFalse(result)
@@ -65,9 +65,9 @@ class TestCheckForCrash(unittest.TestCase):
         log_content = "Some output"
 
         # Mock the _process_log_file to return the same path
-        with patch.object(self.orchestrator, '_process_log_file', return_value=log_path):
-            with patch('shutil.copy'):
-                with patch('sys.stderr', new_callable=io.StringIO) as mock_stderr:
+        with patch.object(self.orchestrator, "_process_log_file", return_value=log_path):
+            with patch("shutil.copy"):
+                with patch("sys.stderr", new_callable=io.StringIO) as mock_stderr:
                     # SIGSEGV = -11
                     result = self.orchestrator._check_for_crash(
                         -signal.SIGSEGV, log_content, source_path, log_path
@@ -84,9 +84,9 @@ class TestCheckForCrash(unittest.TestCase):
         log_path = Path("/tmp/child_test.log")
         log_content = "Some error occurred"
 
-        with patch.object(self.orchestrator, '_process_log_file', return_value=log_path):
-            with patch('shutil.copy'):
-                with patch('sys.stderr', new_callable=io.StringIO) as mock_stderr:
+        with patch.object(self.orchestrator, "_process_log_file", return_value=log_path):
+            with patch("shutil.copy"):
+                with patch("sys.stderr", new_callable=io.StringIO) as mock_stderr:
                     result = self.orchestrator._check_for_crash(
                         42, log_content, source_path, log_path
                     )
@@ -102,9 +102,9 @@ class TestCheckForCrash(unittest.TestCase):
         log_path = Path("/tmp/child_test.log")
         log_content = "Program crashed with Segmentation fault (core dumped)"
 
-        with patch.object(self.orchestrator, '_process_log_file', return_value=log_path):
-            with patch('shutil.copy'):
-                with patch('sys.stderr', new_callable=io.StringIO) as mock_stderr:
+        with patch.object(self.orchestrator, "_process_log_file", return_value=log_path):
+            with patch("shutil.copy"):
+                with patch("sys.stderr", new_callable=io.StringIO) as mock_stderr:
                     result = self.orchestrator._check_for_crash(
                         0, log_content, source_path, log_path
                     )
@@ -120,9 +120,9 @@ class TestCheckForCrash(unittest.TestCase):
         log_path = Path("/tmp/child_test.log")
         log_content = "Traceback (most recent call last):\n  File 'test.py', line 1"
 
-        with patch.object(self.orchestrator, '_process_log_file', return_value=log_path):
-            with patch('shutil.copy'):
-                with patch('sys.stderr', new_callable=io.StringIO):
+        with patch.object(self.orchestrator, "_process_log_file", return_value=log_path):
+            with patch("shutil.copy"):
+                with patch("sys.stderr", new_callable=io.StringIO):
                     result = self.orchestrator._check_for_crash(
                         0, log_content, source_path, log_path
                     )
@@ -137,10 +137,10 @@ class TestCheckForCrash(unittest.TestCase):
 
         mock_processed_log = Path("/tmp/child_test_truncated.log")
         with patch.object(
-            self.orchestrator, '_process_log_file', return_value=mock_processed_log
+            self.orchestrator, "_process_log_file", return_value=mock_processed_log
         ) as mock_process:
-            with patch('shutil.copy'):
-                with patch('sys.stderr', new_callable=io.StringIO):
+            with patch("shutil.copy"):
+                with patch("sys.stderr", new_callable=io.StringIO):
                     self.orchestrator._check_for_crash(0, log_content, source_path, log_path)
 
                     mock_process.assert_called_once_with(
@@ -153,9 +153,9 @@ class TestCheckForCrash(unittest.TestCase):
         log_path = Path("/tmp/child_abc123.log")
         log_content = "Abort trap!"
 
-        with patch.object(self.orchestrator, '_process_log_file', return_value=log_path):
-            with patch('shutil.copy') as mock_copy:
-                with patch('sys.stderr', new_callable=io.StringIO):
+        with patch.object(self.orchestrator, "_process_log_file", return_value=log_path):
+            with patch("shutil.copy") as mock_copy:
+                with patch("sys.stderr", new_callable=io.StringIO):
                     result = self.orchestrator._check_for_crash(
                         0, log_content, source_path, log_path
                     )
@@ -171,17 +171,17 @@ class TestCheckForCrash(unittest.TestCase):
         log_content = "Assertion error"
 
         truncated_log = Path("/tmp/child_abc123_truncated.log")
-        with patch.object(self.orchestrator, '_process_log_file', return_value=truncated_log):
-            with patch('shutil.copy') as mock_copy:
-                with patch('pathlib.Path.unlink'):
-                    with patch('sys.stderr', new_callable=io.StringIO):
+        with patch.object(self.orchestrator, "_process_log_file", return_value=truncated_log):
+            with patch("shutil.copy") as mock_copy:
+                with patch("pathlib.Path.unlink"):
+                    with patch("sys.stderr", new_callable=io.StringIO):
                         self.orchestrator._check_for_crash(0, log_content, source_path, log_path)
 
                         # Check that the log was copied with _truncated.log extension
                         calls = [str(call[0][1]) for call in mock_copy.call_args_list]
                         self.assertTrue(
                             any("_truncated.log" in call for call in calls),
-                            f"Expected _truncated.log in calls: {calls}"
+                            f"Expected _truncated.log in calls: {calls}",
                         )
 
     def test_preserves_compressed_log_extension(self):
@@ -191,17 +191,17 @@ class TestCheckForCrash(unittest.TestCase):
         log_content = "JITCorrectnessError: Bad trace"
 
         compressed_log = Path("/tmp/child_abc123.log.zst")
-        with patch.object(self.orchestrator, '_process_log_file', return_value=compressed_log):
-            with patch('shutil.copy') as mock_copy:
-                with patch('pathlib.Path.unlink'):
-                    with patch('sys.stderr', new_callable=io.StringIO):
+        with patch.object(self.orchestrator, "_process_log_file", return_value=compressed_log):
+            with patch("shutil.copy") as mock_copy:
+                with patch("pathlib.Path.unlink"):
+                    with patch("sys.stderr", new_callable=io.StringIO):
                         self.orchestrator._check_for_crash(0, log_content, source_path, log_path)
 
                         # Check that the log was copied with .log.zst extension
                         calls = [str(call[0][1]) for call in mock_copy.call_args_list]
                         self.assertTrue(
                             any(".log.zst" in call for call in calls),
-                            f"Expected .log.zst in calls: {calls}"
+                            f"Expected .log.zst in calls: {calls}",
                         )
 
     def test_handles_io_error_gracefully(self):
@@ -210,9 +210,9 @@ class TestCheckForCrash(unittest.TestCase):
         log_path = Path("/tmp/child_test.log")
         log_content = "Abort!"
 
-        with patch.object(self.orchestrator, '_process_log_file', return_value=log_path):
-            with patch('shutil.copy', side_effect=IOError("Permission denied")):
-                with patch('sys.stderr', new_callable=io.StringIO) as mock_stderr:
+        with patch.object(self.orchestrator, "_process_log_file", return_value=log_path):
+            with patch("shutil.copy", side_effect=IOError("Permission denied")):
+                with patch("sys.stderr", new_callable=io.StringIO) as mock_stderr:
                     result = self.orchestrator._check_for_crash(
                         0, log_content, source_path, log_path
                     )
@@ -279,10 +279,10 @@ class TestSaveDivergence(unittest.TestCase):
         """Test that divergences_found counter is incremented."""
         source_path = Path("/tmp/child_test.py")
 
-        with patch('pathlib.Path.mkdir'):
-            with patch('shutil.copy'):
-                with patch('pathlib.Path.write_text'):
-                    with patch('sys.stderr', new_callable=io.StringIO):
+        with patch("pathlib.Path.mkdir"):
+            with patch("shutil.copy"):
+                with patch("pathlib.Path.write_text"):
+                    with patch("sys.stderr", new_callable=io.StringIO):
                         self.orchestrator._save_divergence(
                             source_path, "jit out", "nojit out", "exit_code_mismatch"
                         )
@@ -293,10 +293,10 @@ class TestSaveDivergence(unittest.TestCase):
         """Test that divergence subdirectory is created for the reason."""
         source_path = Path("/tmp/child_test.py")
 
-        with patch('pathlib.Path.mkdir') as mock_mkdir:
-            with patch('shutil.copy'):
-                with patch('pathlib.Path.write_text'):
-                    with patch('sys.stderr', new_callable=io.StringIO):
+        with patch("pathlib.Path.mkdir") as mock_mkdir:
+            with patch("shutil.copy"):
+                with patch("pathlib.Path.write_text"):
+                    with patch("sys.stderr", new_callable=io.StringIO):
                         self.orchestrator._save_divergence(
                             source_path, "jit", "nojit", "stderr_mismatch"
                         )
@@ -304,17 +304,17 @@ class TestSaveDivergence(unittest.TestCase):
                         # Should create divergences/stderr_mismatch/
                         mock_mkdir.assert_called_once()
                         args = mock_mkdir.call_args
-                        self.assertTrue(args[1].get('parents'))
-                        self.assertTrue(args[1].get('exist_ok'))
+                        self.assertTrue(args[1].get("parents"))
+                        self.assertTrue(args[1].get("exist_ok"))
 
     def test_saves_source_file(self):
         """Test that source file is copied to divergence directory."""
         source_path = Path("/tmp/child_abc123.py")
 
-        with patch('pathlib.Path.mkdir'):
-            with patch('shutil.copy') as mock_copy:
-                with patch('pathlib.Path.write_text'):
-                    with patch('sys.stderr', new_callable=io.StringIO):
+        with patch("pathlib.Path.mkdir"):
+            with patch("shutil.copy") as mock_copy:
+                with patch("pathlib.Path.write_text"):
+                    with patch("sys.stderr", new_callable=io.StringIO):
                         self.orchestrator._save_divergence(
                             source_path, "jit", "nojit", "stdout_mismatch"
                         )
@@ -329,10 +329,10 @@ class TestSaveDivergence(unittest.TestCase):
         jit_output = "Result: 42"
         nojit_output = "Result: 43"
 
-        with patch('pathlib.Path.mkdir'):
-            with patch('shutil.copy'):
-                with patch('pathlib.Path.write_text') as mock_write:
-                    with patch('sys.stderr', new_callable=io.StringIO):
+        with patch("pathlib.Path.mkdir"):
+            with patch("shutil.copy"):
+                with patch("pathlib.Path.write_text") as mock_write:
+                    with patch("sys.stderr", new_callable=io.StringIO):
                         self.orchestrator._save_divergence(
                             source_path, jit_output, nojit_output, "stdout_mismatch"
                         )
@@ -348,9 +348,9 @@ class TestSaveDivergence(unittest.TestCase):
         """Test that IOError is handled gracefully."""
         source_path = Path("/tmp/child_test.py")
 
-        with patch('pathlib.Path.mkdir'):
-            with patch('shutil.copy', side_effect=IOError("Disk full")):
-                with patch('sys.stderr', new_callable=io.StringIO) as mock_stderr:
+        with patch("pathlib.Path.mkdir"):
+            with patch("shutil.copy", side_effect=IOError("Disk full")):
+                with patch("sys.stderr", new_callable=io.StringIO) as mock_stderr:
                     self.orchestrator._save_divergence(
                         source_path, "jit", "nojit", "exit_code_mismatch"
                     )
@@ -369,9 +369,9 @@ class TestSaveRegression(unittest.TestCase):
         """Test that regressions_found counter is incremented."""
         source_path = Path("/tmp/child_test.py")
 
-        with patch('pathlib.Path.mkdir'):
-            with patch('shutil.copy'):
-                with patch('sys.stderr', new_callable=io.StringIO):
+        with patch("pathlib.Path.mkdir"):
+            with patch("shutil.copy"):
+                with patch("sys.stderr", new_callable=io.StringIO):
                     self.orchestrator._save_regression(source_path, 100.5, 10.2)
 
                     self.assertEqual(self.orchestrator.run_stats["regressions_found"], 1)
@@ -380,9 +380,9 @@ class TestSaveRegression(unittest.TestCase):
         """Test that filename includes JIT and non-JIT timings."""
         source_path = Path("/tmp/child_abc123.py")
 
-        with patch('pathlib.Path.mkdir'):
-            with patch('shutil.copy') as mock_copy:
-                with patch('sys.stderr', new_callable=io.StringIO):
+        with patch("pathlib.Path.mkdir"):
+            with patch("shutil.copy") as mock_copy:
+                with patch("sys.stderr", new_callable=io.StringIO):
                     self.orchestrator._save_regression(source_path, 150.7, 25.3)
 
                     # Check filename includes timing data
@@ -394,23 +394,23 @@ class TestSaveRegression(unittest.TestCase):
         """Test that regressions/ directory is created."""
         source_path = Path("/tmp/child_test.py")
 
-        with patch('pathlib.Path.mkdir') as mock_mkdir:
-            with patch('shutil.copy'):
-                with patch('sys.stderr', new_callable=io.StringIO):
+        with patch("pathlib.Path.mkdir") as mock_mkdir:
+            with patch("shutil.copy"):
+                with patch("sys.stderr", new_callable=io.StringIO):
                     self.orchestrator._save_regression(source_path, 100.0, 10.0)
 
                     mock_mkdir.assert_called_once()
                     args = mock_mkdir.call_args
-                    self.assertTrue(args[1].get('parents'))
-                    self.assertTrue(args[1].get('exist_ok'))
+                    self.assertTrue(args[1].get("parents"))
+                    self.assertTrue(args[1].get("exist_ok"))
 
     def test_handles_io_error(self):
         """Test that IOError during copy is handled."""
         source_path = Path("/tmp/child_test.py")
 
-        with patch('pathlib.Path.mkdir'):
-            with patch('shutil.copy', side_effect=IOError("No space")):
-                with patch('sys.stderr', new_callable=io.StringIO) as mock_stderr:
+        with patch("pathlib.Path.mkdir"):
+            with patch("shutil.copy", side_effect=IOError("No space")):
+                with patch("sys.stderr", new_callable=io.StringIO) as mock_stderr:
                     self.orchestrator._save_regression(source_path, 50.0, 5.0)
 
                     self.assertIn("CRITICAL: Could not save regression", mock_stderr.getvalue())
@@ -428,9 +428,9 @@ class TestSaveJitHang(unittest.TestCase):
         source_path = Path("/tmp/child_test.py")
         parent_path = Path("/corpus/parent.py")
 
-        with patch('pathlib.Path.mkdir'):
-            with patch('shutil.copy'):
-                with patch('sys.stderr', new_callable=io.StringIO):
+        with patch("pathlib.Path.mkdir"):
+            with patch("shutil.copy"):
+                with patch("sys.stderr", new_callable=io.StringIO):
                     self.orchestrator._save_jit_hang(source_path, parent_path)
 
                     self.assertEqual(self.orchestrator.run_stats["jit_hangs_found"], 1)
@@ -440,24 +440,24 @@ class TestSaveJitHang(unittest.TestCase):
         source_path = Path("/tmp/child_test.py")
         parent_path = Path("/corpus/parent.py")
 
-        with patch('pathlib.Path.mkdir') as mock_mkdir:
-            with patch('shutil.copy'):
-                with patch('sys.stderr', new_callable=io.StringIO):
+        with patch("pathlib.Path.mkdir") as mock_mkdir:
+            with patch("shutil.copy"):
+                with patch("sys.stderr", new_callable=io.StringIO):
                     self.orchestrator._save_jit_hang(source_path, parent_path)
 
                     mock_mkdir.assert_called_once()
                     args = mock_mkdir.call_args
-                    self.assertTrue(args[1].get('parents'))
-                    self.assertTrue(args[1].get('exist_ok'))
+                    self.assertTrue(args[1].get("parents"))
+                    self.assertTrue(args[1].get("exist_ok"))
 
     def test_saves_source_with_parent_name(self):
         """Test that source is saved with parent name in filename."""
         source_path = Path("/tmp/child_abc123.py")
         parent_path = Path("/corpus/parent_def456.py")
 
-        with patch('pathlib.Path.mkdir'):
-            with patch('shutil.copy') as mock_copy:
-                with patch('sys.stderr', new_callable=io.StringIO):
+        with patch("pathlib.Path.mkdir"):
+            with patch("shutil.copy") as mock_copy:
+                with patch("sys.stderr", new_callable=io.StringIO):
                     self.orchestrator._save_jit_hang(source_path, parent_path)
 
                     dest_path = str(mock_copy.call_args[0][1])
@@ -468,9 +468,9 @@ class TestSaveJitHang(unittest.TestCase):
         source_path = Path("/tmp/child_test.py")
         parent_path = Path("/corpus/parent.py")
 
-        with patch('pathlib.Path.mkdir'):
-            with patch('shutil.copy', side_effect=IOError("Permission denied")):
-                with patch('sys.stderr', new_callable=io.StringIO) as mock_stderr:
+        with patch("pathlib.Path.mkdir"):
+            with patch("shutil.copy", side_effect=IOError("Permission denied")):
+                with patch("sys.stderr", new_callable=io.StringIO) as mock_stderr:
                     self.orchestrator._save_jit_hang(source_path, parent_path)
 
                     self.assertIn("CRITICAL: Could not save JIT hang", mock_stderr.getvalue())
@@ -488,38 +488,36 @@ class TestSaveRegressionTimeout(unittest.TestCase):
         source_path = Path("/tmp/child_test.py")
         parent_path = Path("/corpus/parent.py")
 
-        with patch('pathlib.Path.mkdir'):
-            with patch('shutil.copy'):
-                with patch('sys.stderr', new_callable=io.StringIO):
+        with patch("pathlib.Path.mkdir"):
+            with patch("shutil.copy"):
+                with patch("sys.stderr", new_callable=io.StringIO):
                     self.orchestrator._save_regression_timeout(source_path, parent_path)
 
-                    self.assertEqual(
-                        self.orchestrator.run_stats["regression_timeouts_found"], 1
-                    )
+                    self.assertEqual(self.orchestrator.run_stats["regression_timeouts_found"], 1)
 
     def test_creates_timeouts_subdirectory(self):
         """Test that regressions/timeouts/ subdirectory is created."""
         source_path = Path("/tmp/child_test.py")
         parent_path = Path("/corpus/parent.py")
 
-        with patch('pathlib.Path.mkdir') as mock_mkdir:
-            with patch('shutil.copy'):
-                with patch('sys.stderr', new_callable=io.StringIO):
+        with patch("pathlib.Path.mkdir") as mock_mkdir:
+            with patch("shutil.copy"):
+                with patch("sys.stderr", new_callable=io.StringIO):
                     self.orchestrator._save_regression_timeout(source_path, parent_path)
 
                     mock_mkdir.assert_called_once()
                     args = mock_mkdir.call_args
-                    self.assertTrue(args[1].get('parents'))
-                    self.assertTrue(args[1].get('exist_ok'))
+                    self.assertTrue(args[1].get("parents"))
+                    self.assertTrue(args[1].get("exist_ok"))
 
     def test_saves_source_with_parent_name(self):
         """Test that filename includes parent name."""
         source_path = Path("/tmp/child_xyz789.py")
         parent_path = Path("/corpus/parent_abc123.py")
 
-        with patch('pathlib.Path.mkdir'):
-            with patch('shutil.copy') as mock_copy:
-                with patch('sys.stderr', new_callable=io.StringIO):
+        with patch("pathlib.Path.mkdir"):
+            with patch("shutil.copy") as mock_copy:
+                with patch("sys.stderr", new_callable=io.StringIO):
                     self.orchestrator._save_regression_timeout(source_path, parent_path)
 
                     dest_path = str(mock_copy.call_args[0][1])
@@ -530,9 +528,9 @@ class TestSaveRegressionTimeout(unittest.TestCase):
         source_path = Path("/tmp/child_test.py")
         parent_path = Path("/corpus/parent.py")
 
-        with patch('pathlib.Path.mkdir'):
-            with patch('shutil.copy', side_effect=IOError("Disk error")):
-                with patch('sys.stderr', new_callable=io.StringIO) as mock_stderr:
+        with patch("pathlib.Path.mkdir"):
+            with patch("shutil.copy", side_effect=IOError("Disk error")):
+                with patch("sys.stderr", new_callable=io.StringIO) as mock_stderr:
                     self.orchestrator._save_regression_timeout(source_path, parent_path)
 
                     self.assertIn(

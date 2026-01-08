@@ -26,25 +26,15 @@ class TestFindNewCoverage(unittest.TestCase):
         # Mock coverage manager with state
         self.orchestrator.coverage_manager = MagicMock()
         self.orchestrator.coverage_manager.state = {
-            "global_coverage": {
-                "uops": {},
-                "edges": {},
-                "rare_events": {}
-            }
+            "global_coverage": {"uops": {}, "edges": {}, "rare_events": {}}
         }
 
         # Mock reverse maps for coverage ID lookups
-        self.orchestrator.coverage_manager.reverse_uop_map = {
-            100: "_BINARY_OP",
-            101: "_LOAD_FAST"
-        }
-        self.orchestrator.coverage_manager.reverse_edge_map = {
-            200: "edge_1->2",
-            201: "edge_2->3"
-        }
+        self.orchestrator.coverage_manager.reverse_uop_map = {100: "_BINARY_OP", 101: "_LOAD_FAST"}
+        self.orchestrator.coverage_manager.reverse_edge_map = {200: "edge_1->2", 201: "edge_2->3"}
         self.orchestrator.coverage_manager.reverse_rare_event_map = {
             300: "_DEOPT",
-            301: "_GUARD_FAIL"
+            301: "_GUARD_FAIL",
         }
 
     def test_find_new_coverage_empty_child(self):
@@ -52,7 +42,7 @@ class TestFindNewCoverage(unittest.TestCase):
         child_coverage = {}
         parent_lineage_profile = {}
 
-        with patch('sys.stderr', new_callable=io.StringIO):
+        with patch("sys.stderr", new_callable=io.StringIO):
             info = self.orchestrator._find_new_coverage(
                 child_coverage, parent_lineage_profile, parent_id="parent1"
             )
@@ -62,16 +52,10 @@ class TestFindNewCoverage(unittest.TestCase):
 
     def test_find_new_coverage_global_discovery(self):
         """Test that new global coverage is detected."""
-        child_coverage = {
-            "harness1": {
-                "uops": {100: 5},
-                "edges": {200: 3},
-                "rare_events": {}
-            }
-        }
+        child_coverage = {"harness1": {"uops": {100: 5}, "edges": {200: 3}, "rare_events": {}}}
         parent_lineage_profile = {}
 
-        with patch('sys.stderr', new_callable=io.StringIO) as mock_stderr:
+        with patch("sys.stderr", new_callable=io.StringIO) as mock_stderr:
             info = self.orchestrator._find_new_coverage(
                 child_coverage, parent_lineage_profile, parent_id="parent1"
             )
@@ -87,22 +71,16 @@ class TestFindNewCoverage(unittest.TestCase):
         # Item 100 exists globally but not in parent lineage
         self.orchestrator.coverage_manager.state["global_coverage"]["uops"][100] = 10
 
-        child_coverage = {
-            "harness1": {
-                "uops": {100: 5},
-                "edges": {},
-                "rare_events": {}
-            }
-        }
+        child_coverage = {"harness1": {"uops": {100: 5}, "edges": {}, "rare_events": {}}}
         parent_lineage_profile = {
             "harness1": {
                 "uops": set(),  # Empty lineage
                 "edges": set(),
-                "rare_events": set()
+                "rare_events": set(),
             }
         }
 
-        with patch('sys.stderr', new_callable=io.StringIO) as mock_stderr:
+        with patch("sys.stderr", new_callable=io.StringIO) as mock_stderr:
             info = self.orchestrator._find_new_coverage(
                 child_coverage, parent_lineage_profile, parent_id="parent1"
             )
@@ -113,16 +91,10 @@ class TestFindNewCoverage(unittest.TestCase):
 
     def test_find_new_coverage_rare_events(self):
         """Test rare event discovery."""
-        child_coverage = {
-            "harness1": {
-                "uops": {},
-                "edges": {},
-                "rare_events": {300: 2, 301: 1}
-            }
-        }
+        child_coverage = {"harness1": {"uops": {}, "edges": {}, "rare_events": {300: 2, 301: 1}}}
         parent_lineage_profile = {}
 
-        with patch('sys.stderr', new_callable=io.StringIO):
+        with patch("sys.stderr", new_callable=io.StringIO):
             info = self.orchestrator._find_new_coverage(
                 child_coverage, parent_lineage_profile, parent_id="parent1"
             )
@@ -132,20 +104,12 @@ class TestFindNewCoverage(unittest.TestCase):
     def test_find_new_coverage_multiple_harnesses(self):
         """Test coverage across multiple harnesses."""
         child_coverage = {
-            "harness1": {
-                "uops": {100: 3},
-                "edges": {200: 2},
-                "rare_events": {}
-            },
-            "harness2": {
-                "uops": {101: 5},
-                "edges": {201: 1},
-                "rare_events": {300: 1}
-            }
+            "harness1": {"uops": {100: 3}, "edges": {200: 2}, "rare_events": {}},
+            "harness2": {"uops": {101: 5}, "edges": {201: 1}, "rare_events": {300: 1}},
         }
         parent_lineage_profile = {}
 
-        with patch('sys.stderr', new_callable=io.StringIO):
+        with patch("sys.stderr", new_callable=io.StringIO):
             info = self.orchestrator._find_new_coverage(
                 child_coverage, parent_lineage_profile, parent_id="parent1"
             )
@@ -157,20 +121,12 @@ class TestFindNewCoverage(unittest.TestCase):
     def test_find_new_coverage_total_edges_counting(self):
         """Test correct total edge count."""
         child_coverage = {
-            "harness1": {
-                "uops": {},
-                "edges": {200: 1, 201: 1, 202: 1},
-                "rare_events": {}
-            },
-            "harness2": {
-                "uops": {},
-                "edges": {203: 1, 204: 1},
-                "rare_events": {}
-            }
+            "harness1": {"uops": {}, "edges": {200: 1, 201: 1, 202: 1}, "rare_events": {}},
+            "harness2": {"uops": {}, "edges": {203: 1, 204: 1}, "rare_events": {}},
         }
         parent_lineage_profile = {}
 
-        with patch('sys.stderr', new_callable=io.StringIO):
+        with patch("sys.stderr", new_callable=io.StringIO):
             info = self.orchestrator._find_new_coverage(
                 child_coverage, parent_lineage_profile, parent_id="parent1"
             )
@@ -179,16 +135,10 @@ class TestFindNewCoverage(unittest.TestCase):
 
     def test_find_new_coverage_seed_parent(self):
         """Test seed file (parent_id=None)."""
-        child_coverage = {
-            "harness1": {
-                "uops": {100: 5},
-                "edges": {},
-                "rare_events": {}
-            }
-        }
+        child_coverage = {"harness1": {"uops": {100: 5}, "edges": {}, "rare_events": {}}}
         parent_lineage_profile = {}
 
-        with patch('sys.stderr', new_callable=io.StringIO):
+        with patch("sys.stderr", new_callable=io.StringIO):
             info = self.orchestrator._find_new_coverage(
                 child_coverage, parent_lineage_profile, parent_id=None
             )
@@ -203,12 +153,12 @@ class TestFindNewCoverage(unittest.TestCase):
             "harness1": {
                 "uops": {999: 1},  # Unknown ID
                 "edges": {},
-                "rare_events": {}
+                "rare_events": {},
             }
         }
         parent_lineage_profile = {}
 
-        with patch('sys.stderr', new_callable=io.StringIO) as mock_stderr:
+        with patch("sys.stderr", new_callable=io.StringIO) as mock_stderr:
             info = self.orchestrator._find_new_coverage(
                 child_coverage, parent_lineage_profile, parent_id="parent1"
             )
@@ -220,22 +170,16 @@ class TestFindNewCoverage(unittest.TestCase):
         """Test that items in lineage are not counted as relative."""
         self.orchestrator.coverage_manager.state["global_coverage"]["uops"][100] = 10
 
-        child_coverage = {
-            "harness1": {
-                "uops": {100: 5},
-                "edges": {},
-                "rare_events": {}
-            }
-        }
+        child_coverage = {"harness1": {"uops": {100: 5}, "edges": {}, "rare_events": {}}}
         parent_lineage_profile = {
             "harness1": {
                 "uops": {100},  # Already in lineage
                 "edges": set(),
-                "rare_events": set()
+                "rare_events": set(),
             }
         }
 
-        with patch('sys.stderr', new_callable=io.StringIO):
+        with patch("sys.stderr", new_callable=io.StringIO):
             info = self.orchestrator._find_new_coverage(
                 child_coverage, parent_lineage_profile, parent_id="parent1"
             )
@@ -252,21 +196,13 @@ class TestUpdateGlobalCoverage(unittest.TestCase):
         self.orchestrator = LafleurOrchestrator.__new__(LafleurOrchestrator)
         self.orchestrator.coverage_manager = MagicMock()
         self.orchestrator.coverage_manager.state = {
-            "global_coverage": {
-                "uops": {},
-                "edges": {},
-                "rare_events": {}
-            }
+            "global_coverage": {"uops": {}, "edges": {}, "rare_events": {}}
         }
 
     def test_update_global_coverage_new_items(self):
         """Test adding new coverage items."""
         child_coverage = {
-            "harness1": {
-                "uops": {100: 5},
-                "edges": {200: 3},
-                "rare_events": {300: 1}
-            }
+            "harness1": {"uops": {100: 5}, "edges": {200: 3}, "rare_events": {300: 1}}
         }
 
         self.orchestrator._update_global_coverage(child_coverage)
@@ -283,13 +219,7 @@ class TestUpdateGlobalCoverage(unittest.TestCase):
         global_cov["uops"][100] = 10
         global_cov["edges"][200] = 5
 
-        child_coverage = {
-            "harness1": {
-                "uops": {100: 5},
-                "edges": {200: 3},
-                "rare_events": {}
-            }
-        }
+        child_coverage = {"harness1": {"uops": {100: 5}, "edges": {200: 3}, "rare_events": {}}}
 
         self.orchestrator._update_global_coverage(child_coverage)
 
@@ -299,16 +229,8 @@ class TestUpdateGlobalCoverage(unittest.TestCase):
     def test_update_global_coverage_multiple_harnesses(self):
         """Test update from multiple harnesses."""
         child_coverage = {
-            "harness1": {
-                "uops": {100: 3},
-                "edges": {},
-                "rare_events": {}
-            },
-            "harness2": {
-                "uops": {101: 5},
-                "edges": {201: 2},
-                "rare_events": {}
-            }
+            "harness1": {"uops": {100: 3}, "edges": {}, "rare_events": {}},
+            "harness2": {"uops": {101: 5}, "edges": {201: 2}, "rare_events": {}},
         }
 
         self.orchestrator._update_global_coverage(child_coverage)
@@ -338,11 +260,7 @@ class TestCalculateCoverageHash(unittest.TestCase):
 
     def test_coverage_hash_deterministic(self):
         """Test that same coverage produces same hash."""
-        coverage_profile = {
-            "harness1": {
-                "edges": {100: 1, 101: 2}
-            }
-        }
+        coverage_profile = {"harness1": {"edges": {100: 1, 101: 2}}}
 
         hash1 = self.orchestrator._calculate_coverage_hash(coverage_profile)
         hash2 = self.orchestrator._calculate_coverage_hash(coverage_profile)
@@ -351,16 +269,8 @@ class TestCalculateCoverageHash(unittest.TestCase):
 
     def test_coverage_hash_order_independent(self):
         """Test that edge order doesn't affect hash."""
-        coverage1 = {
-            "harness1": {
-                "edges": {100: 1, 101: 2, 102: 3}
-            }
-        }
-        coverage2 = {
-            "harness1": {
-                "edges": {102: 3, 100: 1, 101: 2}
-            }
-        }
+        coverage1 = {"harness1": {"edges": {100: 1, 101: 2, 102: 3}}}
+        coverage2 = {"harness1": {"edges": {102: 3, 100: 1, 101: 2}}}
 
         hash1 = self.orchestrator._calculate_coverage_hash(coverage1)
         hash2 = self.orchestrator._calculate_coverage_hash(coverage2)
@@ -369,16 +279,8 @@ class TestCalculateCoverageHash(unittest.TestCase):
 
     def test_coverage_hash_different_coverage(self):
         """Test that different coverage produces different hash."""
-        coverage1 = {
-            "harness1": {
-                "edges": {100: 1}
-            }
-        }
-        coverage2 = {
-            "harness1": {
-                "edges": {101: 1}
-            }
-        }
+        coverage1 = {"harness1": {"edges": {100: 1}}}
+        coverage2 = {"harness1": {"edges": {101: 1}}}
 
         hash1 = self.orchestrator._calculate_coverage_hash(coverage1)
         hash2 = self.orchestrator._calculate_coverage_hash(coverage2)
@@ -397,16 +299,12 @@ class TestCalculateCoverageHash(unittest.TestCase):
 
     def test_coverage_hash_ignores_non_edge_data(self):
         """Test that only edges are included in hash."""
-        coverage1 = {
-            "harness1": {
-                "edges": {100: 1}
-            }
-        }
+        coverage1 = {"harness1": {"edges": {100: 1}}}
         coverage2 = {
             "harness1": {
                 "edges": {100: 1},
                 "uops": {200: 5},  # Should be ignored
-                "rare_events": {300: 1}  # Should be ignored
+                "rare_events": {300: 1},  # Should be ignored
             }
         }
 
@@ -429,7 +327,7 @@ class TestScoreAndDecideInterestingness(unittest.TestCase):
         coverage_info = NewCoverageInfo(global_uops=1)
         mutation_info = {"strategy": "seed_strategy"}
 
-        with patch('sys.stderr', new_callable=io.StringIO):
+        with patch("sys.stderr", new_callable=io.StringIO):
             result = self.orchestrator._score_and_decide_interestingness(
                 coverage_info,
                 parent_id=None,  # Seed
@@ -449,7 +347,7 @@ class TestScoreAndDecideInterestingness(unittest.TestCase):
         coverage_info = NewCoverageInfo()
         mutation_info = {"strategy": "other_strategy"}
 
-        with patch('sys.stderr', new_callable=io.StringIO) as mock_stderr:
+        with patch("sys.stderr", new_callable=io.StringIO) as mock_stderr:
             result = self.orchestrator._score_and_decide_interestingness(
                 coverage_info,
                 parent_id=None,  # Seed
@@ -471,7 +369,7 @@ class TestScoreAndDecideInterestingness(unittest.TestCase):
         coverage_info = NewCoverageInfo(global_edges=2)
         mutation_info = {"strategy": "havoc"}
 
-        with patch('sys.stderr', new_callable=io.StringIO) as mock_stderr:
+        with patch("sys.stderr", new_callable=io.StringIO) as mock_stderr:
             result = self.orchestrator._score_and_decide_interestingness(
                 coverage_info,
                 parent_id="parent1",
@@ -493,7 +391,7 @@ class TestScoreAndDecideInterestingness(unittest.TestCase):
         coverage_info = NewCoverageInfo(relative_edges=1)
         mutation_info = {"strategy": "havoc"}
 
-        with patch('sys.stderr', new_callable=io.StringIO) as mock_stderr:
+        with patch("sys.stderr", new_callable=io.StringIO) as mock_stderr:
             result = self.orchestrator._score_and_decide_interestingness(
                 coverage_info,
                 parent_id="parent1",
@@ -515,7 +413,7 @@ class TestScoreAndDecideInterestingness(unittest.TestCase):
         coverage_info = NewCoverageInfo()
         mutation_info = {"strategy": "havoc"}
 
-        with patch('sys.stderr', new_callable=io.StringIO) as mock_stderr:
+        with patch("sys.stderr", new_callable=io.StringIO) as mock_stderr:
             result = self.orchestrator._score_and_decide_interestingness(
                 coverage_info,
                 parent_id="parent1",
@@ -537,7 +435,7 @@ class TestScoreAndDecideInterestingness(unittest.TestCase):
         coverage_info = NewCoverageInfo(global_edges=1)
         mutation_info = {"strategy": "havoc"}
 
-        with patch('sys.stderr', new_callable=io.StringIO):
+        with patch("sys.stderr", new_callable=io.StringIO):
             result = self.orchestrator._score_and_decide_interestingness(
                 coverage_info,
                 parent_id="parent1",
@@ -557,7 +455,7 @@ class TestScoreAndDecideInterestingness(unittest.TestCase):
         coverage_info = NewCoverageInfo(global_edges=1)
         mutation_info = {"strategy": "havoc"}
 
-        with patch('sys.stderr', new_callable=io.StringIO) as mock_stderr:
+        with patch("sys.stderr", new_callable=io.StringIO) as mock_stderr:
             self.orchestrator._score_and_decide_interestingness(
                 coverage_info,
                 parent_id="parent1",
@@ -579,7 +477,7 @@ class TestScoreAndDecideInterestingness(unittest.TestCase):
         coverage_info = NewCoverageInfo()
         mutation_info = {"strategy": "havoc"}
 
-        with patch('sys.stderr', new_callable=io.StringIO):
+        with patch("sys.stderr", new_callable=io.StringIO):
             result = self.orchestrator._score_and_decide_interestingness(
                 coverage_info,
                 parent_id="parent1",
@@ -607,11 +505,7 @@ class TestCoverageWorkflow(unittest.TestCase):
         # Mock coverage manager
         self.orchestrator.coverage_manager = MagicMock()
         self.orchestrator.coverage_manager.state = {
-            "global_coverage": {
-                "uops": {},
-                "edges": {},
-                "rare_events": {}
-            }
+            "global_coverage": {"uops": {}, "edges": {}, "rare_events": {}}
         }
         self.orchestrator.coverage_manager.reverse_uop_map = {100: "_BINARY_OP"}
         self.orchestrator.coverage_manager.reverse_edge_map = {200: "edge_1->2"}
@@ -619,16 +513,10 @@ class TestCoverageWorkflow(unittest.TestCase):
 
     def test_workflow_new_global_coverage(self):
         """Test complete workflow with new global coverage."""
-        child_coverage = {
-            "harness1": {
-                "uops": {100: 5},
-                "edges": {200: 3},
-                "rare_events": {}
-            }
-        }
+        child_coverage = {"harness1": {"uops": {100: 5}, "edges": {200: 3}, "rare_events": {}}}
         parent_lineage_profile = {}
 
-        with patch('sys.stderr', new_callable=io.StringIO):
+        with patch("sys.stderr", new_callable=io.StringIO):
             # Find coverage
             info = self.orchestrator._find_new_coverage(
                 child_coverage, parent_lineage_profile, parent_id="parent1"
@@ -668,22 +556,16 @@ class TestCoverageWorkflow(unittest.TestCase):
         # Pre-populate global coverage
         self.orchestrator.coverage_manager.state["global_coverage"]["edges"][200] = 10
 
-        child_coverage = {
-            "harness1": {
-                "uops": {},
-                "edges": {200: 3},
-                "rare_events": {}
-            }
-        }
+        child_coverage = {"harness1": {"uops": {}, "edges": {200: 3}, "rare_events": {}}}
         parent_lineage_profile = {
             "harness1": {
                 "uops": set(),
                 "edges": set(),  # Not in lineage
-                "rare_events": set()
+                "rare_events": set(),
             }
         }
 
-        with patch('sys.stderr', new_callable=io.StringIO):
+        with patch("sys.stderr", new_callable=io.StringIO):
             info = self.orchestrator._find_new_coverage(
                 child_coverage, parent_lineage_profile, parent_id="parent1"
             )
@@ -709,20 +591,12 @@ class TestCoverageWorkflow(unittest.TestCase):
     def test_workflow_handles_multiple_harnesses(self):
         """Test workflow with multiple harnesses."""
         child_coverage = {
-            "harness1": {
-                "uops": {100: 3},
-                "edges": {200: 2},
-                "rare_events": {}
-            },
-            "harness2": {
-                "uops": {},
-                "edges": {},
-                "rare_events": {300: 1}
-            }
+            "harness1": {"uops": {100: 3}, "edges": {200: 2}, "rare_events": {}},
+            "harness2": {"uops": {}, "edges": {}, "rare_events": {300: 1}},
         }
         parent_lineage_profile = {}
 
-        with patch('sys.stderr', new_callable=io.StringIO):
+        with patch("sys.stderr", new_callable=io.StringIO):
             info = self.orchestrator._find_new_coverage(
                 child_coverage, parent_lineage_profile, parent_id="parent1"
             )

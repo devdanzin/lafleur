@@ -466,10 +466,10 @@ class TestImportChaosMutator(unittest.TestCase):
                     mutated = mutator.visit(tree)
 
         result = ast.unparse(mutated)
-        lines = result.split('\n')
+        lines = result.split("\n")
         # Try/import should be at the beginning before function definitions
-        try_idx = next(i for i, line in enumerate(lines) if 'try:' in line)
-        def_idx = next(i for i, line in enumerate(lines) if 'def test():' in line)
+        try_idx = next(i for i, line in enumerate(lines) if "try:" in line)
+        def_idx = next(i for i, line in enumerate(lines) if "def test():" in line)
         self.assertLess(try_idx, def_idx)
 
     def test_caches_safe_imports(self):

@@ -57,8 +57,8 @@ class TestApplyMutationStrategy(unittest.TestCase):
         self.orchestrator._run_havoc_stage = self.mock_havoc
         self.orchestrator._run_spam_stage = self.mock_spam
 
-        with patch('lafleur.orchestrator.RANDOM.seed') as mock_random_seed:
-            with patch('lafleur.orchestrator.random.seed') as mock_rand_seed:
+        with patch("lafleur.orchestrator.RANDOM.seed") as mock_random_seed:
+            with patch("lafleur.orchestrator.random.seed") as mock_rand_seed:
                 self.orchestrator.apply_mutation_strategy(tree, seed=12345)
 
                 mock_random_seed.assert_called_with(12345)
@@ -76,7 +76,7 @@ class TestApplyMutationStrategy(unittest.TestCase):
         self.orchestrator._run_havoc_stage = self.mock_havoc
         self.orchestrator._run_spam_stage = self.mock_spam
 
-        with patch('lafleur.orchestrator.FuzzerSetupNormalizer') as mock_normalizer:
+        with patch("lafleur.orchestrator.FuzzerSetupNormalizer") as mock_normalizer:
             mock_instance = MagicMock()
             mock_normalizer.return_value = mock_instance
             mock_instance.visit.return_value = tree
@@ -99,7 +99,7 @@ class TestApplyMutationStrategy(unittest.TestCase):
         self.orchestrator._run_spam_stage = self.mock_spam
         self.orchestrator.score_tracker.get_weights.return_value = [10.0, 1.0, 1.0]
 
-        with patch('lafleur.orchestrator.random.choices') as mock_choices:
+        with patch("lafleur.orchestrator.random.choices") as mock_choices:
             mock_choices.return_value = [self.mock_det]
 
             self.orchestrator.apply_mutation_strategy(tree, seed=42)
@@ -107,7 +107,7 @@ class TestApplyMutationStrategy(unittest.TestCase):
             # Verify weights were requested and used
             self.orchestrator.score_tracker.get_weights.assert_called()
             call_args = mock_choices.call_args
-            self.assertEqual(call_args[1]['weights'], [10.0, 1.0, 1.0])
+            self.assertEqual(call_args[1]["weights"], [10.0, 1.0, 1.0])
 
     def test_records_strategy_attempts(self):
         """Test that strategy attempts are recorded."""
@@ -141,7 +141,7 @@ class TestApplyMutationStrategy(unittest.TestCase):
         self.orchestrator._run_havoc_stage = self.mock_havoc
         self.orchestrator._run_spam_stage = self.mock_spam
 
-        with patch('lafleur.orchestrator.EmptyBodySanitizer') as mock_sanitizer:
+        with patch("lafleur.orchestrator.EmptyBodySanitizer") as mock_sanitizer:
             mock_instance = MagicMock()
             mock_sanitizer.return_value = mock_instance
             mock_instance.visit.return_value = tree
@@ -205,7 +205,7 @@ class TestRunDeterministicStage(unittest.TestCase):
 
         self.orchestrator.ast_mutator.mutate_ast.return_value = (tree, [MagicMock])
 
-        with patch('sys.stderr', new_callable=io.StringIO):
+        with patch("sys.stderr", new_callable=io.StringIO):
             result_ast, mutation_info = self.orchestrator._run_deterministic_stage(tree, seed=42)
 
         self.orchestrator.ast_mutator.mutate_ast.assert_called_once_with(tree, seed=42)
@@ -214,15 +214,19 @@ class TestRunDeterministicStage(unittest.TestCase):
     def test_large_ast_uses_slicing(self):
         """Test that large ASTs (>100 statements) use slicing."""
         # Create AST with >100 statements
-        statements = [ast.Assign(targets=[ast.Name(id=f'x{i}')], value=ast.Constant(value=i))
-                      for i in range(101)]
+        statements = [
+            ast.Assign(targets=[ast.Name(id=f"x{i}")], value=ast.Constant(value=i))
+            for i in range(101)
+        ]
         tree = ast.Module(body=statements, type_ignores=[])
 
-        with patch.object(self.orchestrator, '_run_slicing') as mock_slice:
+        with patch.object(self.orchestrator, "_run_slicing") as mock_slice:
             mock_slice.return_value = (tree, {"strategy": "slicing_deterministic"})
 
-            with patch('sys.stderr', new_callable=io.StringIO):
-                result_ast, mutation_info = self.orchestrator._run_deterministic_stage(tree, seed=42)
+            with patch("sys.stderr", new_callable=io.StringIO):
+                result_ast, mutation_info = self.orchestrator._run_deterministic_stage(
+                    tree, seed=42
+                )
 
             mock_slice.assert_called_once()
             call_args = mock_slice.call_args[0]
@@ -241,7 +245,7 @@ class TestRunDeterministicStage(unittest.TestCase):
         mock_transformer.__name__ = "TestTransformer"
         self.orchestrator.ast_mutator.mutate_ast.return_value = (tree, [mock_transformer])
 
-        with patch('sys.stderr', new_callable=io.StringIO):
+        with patch("sys.stderr", new_callable=io.StringIO):
             _, mutation_info = self.orchestrator._run_deterministic_stage(tree, seed=42)
 
         self.assertEqual(mutation_info["transformers"], ["TestTransformer"])
@@ -256,7 +260,7 @@ class TestRunDeterministicStage(unittest.TestCase):
 
         self.orchestrator.ast_mutator.mutate_ast.return_value = (tree, [MagicMock])
 
-        with patch('sys.stderr', new_callable=io.StringIO) as mock_stderr:
+        with patch("sys.stderr", new_callable=io.StringIO) as mock_stderr:
             self.orchestrator._run_deterministic_stage(tree, seed=42)
 
             self.assertIn("DETERMINISTIC", mock_stderr.getvalue())
@@ -289,9 +293,9 @@ class TestRunHavocStage(unittest.TestCase):
         """)
         tree = ast.parse(code)
 
-        with patch('lafleur.orchestrator.RANDOM.randint', return_value=20):
-            with patch('lafleur.orchestrator.random.choices', return_value=[self.mock_transformer]):
-                with patch('sys.stderr', new_callable=io.StringIO):
+        with patch("lafleur.orchestrator.RANDOM.randint", return_value=20):
+            with patch("lafleur.orchestrator.random.choices", return_value=[self.mock_transformer]):
+                with patch("sys.stderr", new_callable=io.StringIO):
                     _, mutation_info = self.orchestrator._run_havoc_stage(tree)
 
         # Should have applied 20 transformations
@@ -299,14 +303,16 @@ class TestRunHavocStage(unittest.TestCase):
 
     def test_large_ast_uses_slicing(self):
         """Test that large ASTs use slicing."""
-        statements = [ast.Assign(targets=[ast.Name(id=f'x{i}')], value=ast.Constant(value=i))
-                      for i in range(101)]
+        statements = [
+            ast.Assign(targets=[ast.Name(id=f"x{i}")], value=ast.Constant(value=i))
+            for i in range(101)
+        ]
         tree = ast.Module(body=statements, type_ignores=[])
 
-        with patch.object(self.orchestrator, '_run_slicing') as mock_slice:
+        with patch.object(self.orchestrator, "_run_slicing") as mock_slice:
             mock_slice.return_value = (tree, {"strategy": "slicing_havoc"})
 
-            with patch('sys.stderr', new_callable=io.StringIO):
+            with patch("sys.stderr", new_callable=io.StringIO):
                 result_ast, mutation_info = self.orchestrator._run_havoc_stage(tree)
 
             mock_slice.assert_called_once()
@@ -322,16 +328,16 @@ class TestRunHavocStage(unittest.TestCase):
 
         self.orchestrator.score_tracker.get_weights.return_value = [5.0]
 
-        with patch('lafleur.orchestrator.RANDOM.randint', return_value=1):
-            with patch('lafleur.orchestrator.random.choices') as mock_choices:
+        with patch("lafleur.orchestrator.RANDOM.randint", return_value=1):
+            with patch("lafleur.orchestrator.random.choices") as mock_choices:
                 mock_choices.return_value = [self.mock_transformer]
 
-                with patch('sys.stderr', new_callable=io.StringIO):
+                with patch("sys.stderr", new_callable=io.StringIO):
                     self.orchestrator._run_havoc_stage(tree)
 
                 # Verify weights were used
                 call_args = mock_choices.call_args
-                self.assertEqual(call_args[1]['weights'], [5.0])
+                self.assertEqual(call_args[1]["weights"], [5.0])
 
     def test_records_transformer_attempts(self):
         """Test that transformer attempts are recorded."""
@@ -341,9 +347,9 @@ class TestRunHavocStage(unittest.TestCase):
         """)
         tree = ast.parse(code)
 
-        with patch('lafleur.orchestrator.RANDOM.randint', return_value=3):
-            with patch('lafleur.orchestrator.random.choices', return_value=[self.mock_transformer]):
-                with patch('sys.stderr', new_callable=io.StringIO):
+        with patch("lafleur.orchestrator.RANDOM.randint", return_value=3):
+            with patch("lafleur.orchestrator.random.choices", return_value=[self.mock_transformer]):
+                with patch("sys.stderr", new_callable=io.StringIO):
                     self.orchestrator._run_havoc_stage(tree)
 
         # Should have 3 attempts recorded
@@ -357,9 +363,9 @@ class TestRunHavocStage(unittest.TestCase):
         """)
         tree = ast.parse(code)
 
-        with patch('lafleur.orchestrator.RANDOM.randint', return_value=1):
-            with patch('lafleur.orchestrator.random.choices', return_value=[self.mock_transformer]):
-                with patch('sys.stderr', new_callable=io.StringIO):
+        with patch("lafleur.orchestrator.RANDOM.randint", return_value=1):
+            with patch("lafleur.orchestrator.random.choices", return_value=[self.mock_transformer]):
+                with patch("sys.stderr", new_callable=io.StringIO):
                     _, mutation_info = self.orchestrator._run_havoc_stage(tree)
 
         self.assertEqual(mutation_info["strategy"], "havoc")
@@ -372,9 +378,9 @@ class TestRunHavocStage(unittest.TestCase):
         """)
         tree = ast.parse(code)
 
-        with patch('lafleur.orchestrator.RANDOM.randint', return_value=1):
-            with patch('lafleur.orchestrator.random.choices', return_value=[self.mock_transformer]):
-                with patch('sys.stderr', new_callable=io.StringIO) as mock_stderr:
+        with patch("lafleur.orchestrator.RANDOM.randint", return_value=1):
+            with patch("lafleur.orchestrator.random.choices", return_value=[self.mock_transformer]):
+                with patch("sys.stderr", new_callable=io.StringIO) as mock_stderr:
                     self.orchestrator._run_havoc_stage(tree)
 
                     self.assertIn("HAVOC", mock_stderr.getvalue())
@@ -406,9 +412,9 @@ class TestRunSpamStage(unittest.TestCase):
         """)
         tree = ast.parse(code)
 
-        with patch('lafleur.orchestrator.RANDOM.randint', return_value=25):
-            with patch('lafleur.orchestrator.random.choices', return_value=[self.mock_transformer]):
-                with patch('sys.stderr', new_callable=io.StringIO):
+        with patch("lafleur.orchestrator.RANDOM.randint", return_value=25):
+            with patch("lafleur.orchestrator.random.choices", return_value=[self.mock_transformer]):
+                with patch("sys.stderr", new_callable=io.StringIO):
                     _, mutation_info = self.orchestrator._run_spam_stage(tree)
 
         # Should have 25 of the same transformer
@@ -417,14 +423,16 @@ class TestRunSpamStage(unittest.TestCase):
 
     def test_large_ast_uses_slicing(self):
         """Test that large ASTs use slicing."""
-        statements = [ast.Assign(targets=[ast.Name(id=f'x{i}')], value=ast.Constant(value=i))
-                      for i in range(101)]
+        statements = [
+            ast.Assign(targets=[ast.Name(id=f"x{i}")], value=ast.Constant(value=i))
+            for i in range(101)
+        ]
         tree = ast.Module(body=statements, type_ignores=[])
 
-        with patch.object(self.orchestrator, '_run_slicing') as mock_slice:
+        with patch.object(self.orchestrator, "_run_slicing") as mock_slice:
             mock_slice.return_value = (tree, {"strategy": "slicing_spam"})
 
-            with patch('sys.stderr', new_callable=io.StringIO):
+            with patch("sys.stderr", new_callable=io.StringIO):
                 result_ast, mutation_info = self.orchestrator._run_spam_stage(tree)
 
             mock_slice.assert_called_once()
@@ -440,17 +448,17 @@ class TestRunSpamStage(unittest.TestCase):
 
         self.orchestrator.score_tracker.get_weights.return_value = [10.0]
 
-        with patch('lafleur.orchestrator.RANDOM.randint', return_value=1):
-            with patch('lafleur.orchestrator.random.choices') as mock_choices:
+        with patch("lafleur.orchestrator.RANDOM.randint", return_value=1):
+            with patch("lafleur.orchestrator.random.choices") as mock_choices:
                 mock_choices.return_value = [self.mock_transformer]
 
-                with patch('sys.stderr', new_callable=io.StringIO):
+                with patch("sys.stderr", new_callable=io.StringIO):
                     self.orchestrator._run_spam_stage(tree)
 
                 # Should be called once to choose the transformer
                 mock_choices.assert_called_once()
-                self.assertEqual(mock_choices.call_args[1]['weights'], [10.0])
-                self.assertEqual(mock_choices.call_args[1]['k'], 1)
+                self.assertEqual(mock_choices.call_args[1]["weights"], [10.0])
+                self.assertEqual(mock_choices.call_args[1]["k"], 1)
 
     def test_logs_chosen_transformer(self):
         """Test that spam logs the chosen transformer."""
@@ -460,9 +468,9 @@ class TestRunSpamStage(unittest.TestCase):
         """)
         tree = ast.parse(code)
 
-        with patch('lafleur.orchestrator.RANDOM.randint', return_value=1):
-            with patch('lafleur.orchestrator.random.choices', return_value=[self.mock_transformer]):
-                with patch('sys.stderr', new_callable=io.StringIO) as mock_stderr:
+        with patch("lafleur.orchestrator.RANDOM.randint", return_value=1):
+            with patch("lafleur.orchestrator.random.choices", return_value=[self.mock_transformer]):
+                with patch("sys.stderr", new_callable=io.StringIO) as mock_stderr:
                     self.orchestrator._run_spam_stage(tree)
 
                     output = mock_stderr.getvalue()
@@ -477,9 +485,9 @@ class TestRunSpamStage(unittest.TestCase):
         """)
         tree = ast.parse(code)
 
-        with patch('lafleur.orchestrator.RANDOM.randint', return_value=1):
-            with patch('lafleur.orchestrator.random.choices', return_value=[self.mock_transformer]):
-                with patch('sys.stderr', new_callable=io.StringIO):
+        with patch("lafleur.orchestrator.RANDOM.randint", return_value=1):
+            with patch("lafleur.orchestrator.random.choices", return_value=[self.mock_transformer]):
+                with patch("sys.stderr", new_callable=io.StringIO):
                     _, mutation_info = self.orchestrator._run_spam_stage(tree)
 
         self.assertEqual(mutation_info["strategy"], "spam")
@@ -506,13 +514,15 @@ class TestRunSlicing(unittest.TestCase):
         """)
         tree = ast.parse(code)
 
-        with patch('lafleur.orchestrator.random.seed') as mock_seed:
-            with patch('lafleur.orchestrator.random.randint', return_value=2):
-                with patch('lafleur.orchestrator.random.choices', return_value=[self.mock_transformer]):
-                    with patch('lafleur.orchestrator.SlicingMutator') as mock_slicer:
+        with patch("lafleur.orchestrator.random.seed") as mock_seed:
+            with patch("lafleur.orchestrator.random.randint", return_value=2):
+                with patch(
+                    "lafleur.orchestrator.random.choices", return_value=[self.mock_transformer]
+                ):
+                    with patch("lafleur.orchestrator.SlicingMutator") as mock_slicer:
                         mock_slicer.return_value.visit.return_value = tree
 
-                        with patch('sys.stderr', new_callable=io.StringIO):
+                        with patch("sys.stderr", new_callable=io.StringIO):
                             self.orchestrator._run_slicing(tree, "deterministic", 101, seed=12345)
 
                         mock_seed.assert_called_with(12345)
@@ -525,13 +535,18 @@ class TestRunSlicing(unittest.TestCase):
         """)
         tree = ast.parse(code)
 
-        with patch('lafleur.orchestrator.random.randint', return_value=2) as mock_randint:
-            with patch('lafleur.orchestrator.random.choices', return_value=[self.mock_transformer, self.mock_transformer]):
-                with patch('lafleur.orchestrator.SlicingMutator') as mock_slicer:
+        with patch("lafleur.orchestrator.random.randint", return_value=2) as mock_randint:
+            with patch(
+                "lafleur.orchestrator.random.choices",
+                return_value=[self.mock_transformer, self.mock_transformer],
+            ):
+                with patch("lafleur.orchestrator.SlicingMutator") as mock_slicer:
                     mock_slicer.return_value.visit.return_value = tree
 
-                    with patch('sys.stderr', new_callable=io.StringIO):
-                        _, mutation_info = self.orchestrator._run_slicing(tree, "deterministic", 101, seed=42)
+                    with patch("sys.stderr", new_callable=io.StringIO):
+                        _, mutation_info = self.orchestrator._run_slicing(
+                            tree, "deterministic", 101, seed=42
+                        )
 
                     # Verify randint was called with (1, 3)
                     mock_randint.assert_called_with(1, 3)
@@ -544,14 +559,14 @@ class TestRunSlicing(unittest.TestCase):
         """)
         tree = ast.parse(code)
 
-        with patch('lafleur.orchestrator.random.randint', return_value=30):
-            with patch('lafleur.orchestrator.random.choices', return_value=[self.mock_transformer]):
-                with patch('lafleur.orchestrator.SlicingMutator') as mock_slicer:
+        with patch("lafleur.orchestrator.random.randint", return_value=30):
+            with patch("lafleur.orchestrator.random.choices", return_value=[self.mock_transformer]):
+                with patch("lafleur.orchestrator.SlicingMutator") as mock_slicer:
                     mock_instance = MagicMock()
                     mock_slicer.return_value = mock_instance
                     mock_instance.visit.return_value = tree
 
-                    with patch('sys.stderr', new_callable=io.StringIO):
+                    with patch("sys.stderr", new_callable=io.StringIO):
                         _, mutation_info = self.orchestrator._run_slicing(tree, "spam", 101)
 
                     # Verify SlicingMutator was created with a pipeline of 30 instances
@@ -566,20 +581,20 @@ class TestRunSlicing(unittest.TestCase):
         """)
         tree = ast.parse(code)
 
-        with patch('lafleur.orchestrator.random.randint', return_value=25):
-            with patch('lafleur.orchestrator.random.choices') as mock_choices:
+        with patch("lafleur.orchestrator.random.randint", return_value=25):
+            with patch("lafleur.orchestrator.random.choices") as mock_choices:
                 mock_choices.return_value = [self.mock_transformer] * 25
 
-                with patch('lafleur.orchestrator.SlicingMutator') as mock_slicer:
+                with patch("lafleur.orchestrator.SlicingMutator") as mock_slicer:
                     mock_instance = MagicMock()
                     mock_slicer.return_value = mock_instance
                     mock_instance.visit.return_value = tree
 
-                    with patch('sys.stderr', new_callable=io.StringIO):
+                    with patch("sys.stderr", new_callable=io.StringIO):
                         _, mutation_info = self.orchestrator._run_slicing(tree, "havoc", 101)
 
                     # Verify choices was called with k=25
-                    self.assertEqual(mock_choices.call_args[1]['k'], 25)
+                    self.assertEqual(mock_choices.call_args[1]["k"], 25)
 
     def test_returns_slicing_mutator_result(self):
         """Test that slicing returns SlicingMutator result."""
@@ -589,13 +604,15 @@ class TestRunSlicing(unittest.TestCase):
         """)
         tree = ast.parse(code)
 
-        with patch('lafleur.orchestrator.random.randint', return_value=1):
-            with patch('lafleur.orchestrator.random.choices', return_value=[self.mock_transformer]):
-                with patch('lafleur.orchestrator.SlicingMutator') as mock_slicer:
+        with patch("lafleur.orchestrator.random.randint", return_value=1):
+            with patch("lafleur.orchestrator.random.choices", return_value=[self.mock_transformer]):
+                with patch("lafleur.orchestrator.SlicingMutator") as mock_slicer:
                     mock_slicer.return_value.visit.return_value = tree
 
-                    with patch('sys.stderr', new_callable=io.StringIO):
-                        result_ast, mutation_info = self.orchestrator._run_slicing(tree, "havoc", 101)
+                    with patch("sys.stderr", new_callable=io.StringIO):
+                        result_ast, mutation_info = self.orchestrator._run_slicing(
+                            tree, "havoc", 101
+                        )
 
                     self.assertEqual(mutation_info["strategy"], "slicing_havoc")
                     self.assertEqual(mutation_info["transformers"], ["SlicingMutator"])
@@ -608,12 +625,12 @@ class TestRunSlicing(unittest.TestCase):
         """)
         tree = ast.parse(code)
 
-        with patch('lafleur.orchestrator.random.randint', return_value=1):
-            with patch('lafleur.orchestrator.random.choices', return_value=[self.mock_transformer]):
-                with patch('lafleur.orchestrator.SlicingMutator') as mock_slicer:
+        with patch("lafleur.orchestrator.random.randint", return_value=1):
+            with patch("lafleur.orchestrator.random.choices", return_value=[self.mock_transformer]):
+                with patch("lafleur.orchestrator.SlicingMutator") as mock_slicer:
                     mock_slicer.return_value.visit.return_value = tree
 
-                    with patch('sys.stderr', new_callable=io.StringIO) as mock_stderr:
+                    with patch("sys.stderr", new_callable=io.StringIO) as mock_stderr:
                         self.orchestrator._run_slicing(tree, "havoc", 150)
 
                         output = mock_stderr.getvalue()
@@ -641,7 +658,7 @@ class TestRunSplicingStage(unittest.TestCase):
 
         self.orchestrator.corpus_manager.select_parent.return_value = None
 
-        with patch('sys.stderr', new_callable=io.StringIO):
+        with patch("sys.stderr", new_callable=io.StringIO):
             result = self.orchestrator._run_splicing_stage(tree.body)
 
         self.assertEqual(result, tree.body)
@@ -658,7 +675,7 @@ class TestRunSplicingStage(unittest.TestCase):
         mock_path.read_text.side_effect = IOError("File not found")
         self.orchestrator.corpus_manager.select_parent.return_value = (mock_path, "id")
 
-        with patch('sys.stderr', new_callable=io.StringIO):
+        with patch("sys.stderr", new_callable=io.StringIO):
             result = self.orchestrator._run_splicing_stage(tree.body)
 
         self.assertEqual(result, tree.body)
@@ -676,8 +693,8 @@ class TestRunSplicingStage(unittest.TestCase):
         mock_path.read_text.return_value = "invalid python syntax @#$"
         self.orchestrator.corpus_manager.select_parent.return_value = (mock_path, "id")
 
-        with patch.object(self.orchestrator, '_get_core_code', return_value="invalid"):
-            with patch('sys.stderr', new_callable=io.StringIO):
+        with patch.object(self.orchestrator, "_get_core_code", return_value="invalid"):
+            with patch("sys.stderr", new_callable=io.StringIO):
                 result = self.orchestrator._run_splicing_stage(tree.body)
 
         self.assertEqual(result, tree.body)
@@ -699,8 +716,8 @@ class TestRunSplicingStage(unittest.TestCase):
         mock_path.read_text.return_value = code_b
         self.orchestrator.corpus_manager.select_parent.return_value = (mock_path, "id")
 
-        with patch.object(self.orchestrator, '_get_core_code', return_value=code_b):
-            with patch('sys.stderr', new_callable=io.StringIO):
+        with patch.object(self.orchestrator, "_get_core_code", return_value=code_b):
+            with patch("sys.stderr", new_callable=io.StringIO):
                 result = self.orchestrator._run_splicing_stage(tree_a.body)
 
         self.assertEqual(result, tree_a.body)
@@ -724,8 +741,8 @@ class TestRunSplicingStage(unittest.TestCase):
         mock_path.read_text.return_value = code_b
         self.orchestrator.corpus_manager.select_parent.return_value = (mock_path, "id")
 
-        with patch.object(self.orchestrator, '_get_core_code', return_value=code_b):
-            with patch('sys.stderr', new_callable=io.StringIO) as mock_stderr:
+        with patch.object(self.orchestrator, "_get_core_code", return_value=code_b):
+            with patch("sys.stderr", new_callable=io.StringIO) as mock_stderr:
                 result = self.orchestrator._run_splicing_stage(tree_a.body)
 
                 self.assertIn("Splice failed", mock_stderr.getvalue())
@@ -752,8 +769,8 @@ class TestRunSplicingStage(unittest.TestCase):
         mock_path.read_text.return_value = code_b
         self.orchestrator.corpus_manager.select_parent.return_value = (mock_path, "id")
 
-        with patch.object(self.orchestrator, '_get_core_code', return_value=code_b):
-            with patch('lafleur.orchestrator.RANDOM.choice', return_value='int_v1'):
+        with patch.object(self.orchestrator, "_get_core_code", return_value=code_b):
+            with patch("lafleur.orchestrator.RANDOM.choice", return_value="int_v1"):
                 result = self.orchestrator._run_splicing_stage(tree_a.body)
 
         # Result should be an ast.Module (successful splice returns a new Module)
@@ -771,7 +788,7 @@ class TestRunSplicingStage(unittest.TestCase):
 
         self.orchestrator.corpus_manager.select_parent.return_value = None
 
-        with patch('sys.stderr', new_callable=io.StringIO) as mock_stderr:
+        with patch("sys.stderr", new_callable=io.StringIO) as mock_stderr:
             self.orchestrator._run_splicing_stage(tree.body)
 
             self.assertIn("SPLICING", mock_stderr.getvalue())

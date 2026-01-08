@@ -296,7 +296,9 @@ class TestExceptionHandlerMaze(unittest.TestCase):
         result = ast.unparse(mutated)
         # Should have metaclass and exception
         self.assertIn("class MetaException_exc_1000(type)", result)
-        self.assertIn("class EvilException_exc_1000(Exception, metaclass=MetaException_exc_1000)", result)
+        self.assertIn(
+            "class EvilException_exc_1000(Exception, metaclass=MetaException_exc_1000)", result
+        )
 
     def test_metaclass_has_instancecheck(self):
         """Test that metaclass has __instancecheck__ method."""
@@ -792,9 +794,7 @@ class TestStressPatternMutators(unittest.TestCase):
         tree = ast.parse(code)
 
         with patch("random.random", return_value=0.05):
-            with patch(
-                "random.randint", side_effect=[4567, 7]
-            ):  # prefix and num_branches
+            with patch("random.randint", side_effect=[4567, 7]):  # prefix and num_branches
                 mutator = ExitStresser()
                 mutated = mutator.visit(tree)
 
@@ -889,9 +889,7 @@ class TestMutatorOutput(unittest.TestCase):
         tree = ast.parse(code)
 
         with patch("random.random", return_value=0.05):
-            with patch(
-                "random.randint", side_effect=[9999, 3]
-            ):  # prefix and 3 branches
+            with patch("random.randint", side_effect=[9999, 3]):  # prefix and 3 branches
                 mutator = ExitStresser()
                 mutated = mutator.visit(tree)
 
@@ -922,7 +920,9 @@ class TestContextManagerInjector(unittest.TestCase):
 
         with patch("random.random", return_value=0.1):  # Below 0.15 threshold
             with patch("random.choice", return_value="simple"):  # strategy
-                with patch("random.randint", side_effect=[2, 0, 3000]):  # slice_size, start_idx, uid
+                with patch(
+                    "random.randint", side_effect=[2, 0, 3000]
+                ):  # slice_size, start_idx, uid
                     mutator = ContextManagerInjector()
                     mutated = mutator.visit(tree)
 
@@ -944,7 +944,9 @@ class TestContextManagerInjector(unittest.TestCase):
 
         with patch("random.random", return_value=0.1):
             with patch("random.choice", return_value="resource"):
-                with patch("random.randint", side_effect=[2, 0, 4000]):  # slice_size, start_idx, uid
+                with patch(
+                    "random.randint", side_effect=[2, 0, 4000]
+                ):  # slice_size, start_idx, uid
                     mutator = ContextManagerInjector()
                     mutated = mutator.visit(tree)
 
@@ -967,7 +969,9 @@ class TestContextManagerInjector(unittest.TestCase):
 
         with patch("random.random", return_value=0.1):
             with patch("random.choice", return_value="evil"):
-                with patch("random.randint", side_effect=[2, 0, 5000]):  # slice_size, start_idx, uid
+                with patch(
+                    "random.randint", side_effect=[2, 0, 5000]
+                ):  # slice_size, start_idx, uid
                     mutator = ContextManagerInjector()
                     mutated = mutator.visit(tree)
 
@@ -991,7 +995,9 @@ class TestContextManagerInjector(unittest.TestCase):
 
         with patch("random.random", return_value=0.1):
             with patch("random.choice", return_value="evil"):
-                with patch("random.randint", side_effect=[2, 0, 6000]):  # slice_size, start_idx, uid
+                with patch(
+                    "random.randint", side_effect=[2, 0, 6000]
+                ):  # slice_size, start_idx, uid
                     mutator = ContextManagerInjector()
                     mutated = mutator.visit(tree)
 
@@ -1010,7 +1016,9 @@ class TestContextManagerInjector(unittest.TestCase):
 
         with patch("random.random", return_value=0.1):
             with patch("random.choice", return_value="evil"):
-                with patch("random.randint", side_effect=[2, 0, 7000]):  # slice_size, start_idx, uid
+                with patch(
+                    "random.randint", side_effect=[2, 0, 7000]
+                ):  # slice_size, start_idx, uid
                     mutator = ContextManagerInjector()
                     mutated = mutator.visit(tree)
 
@@ -1034,7 +1042,9 @@ class TestContextManagerInjector(unittest.TestCase):
         with patch("random.random", return_value=0.1):
             with patch("random.choice", return_value="simple"):
                 # Wrap statements 1-3 (b, c, d)
-                with patch("random.randint", side_effect=[3, 1, 8000]):  # slice_size, start_idx, uid
+                with patch(
+                    "random.randint", side_effect=[3, 1, 8000]
+                ):  # slice_size, start_idx, uid
                     mutator = ContextManagerInjector()
                     mutated = mutator.visit(tree)
 
@@ -1109,7 +1119,9 @@ class TestContextManagerInjector(unittest.TestCase):
 
         with patch("random.random", return_value=0.1):
             with patch("random.choice", return_value="simple"):
-                with patch("random.randint", side_effect=[2, 0, 9000]):  # slice_size, start_idx, uid
+                with patch(
+                    "random.randint", side_effect=[2, 0, 9000]
+                ):  # slice_size, start_idx, uid
                     mutator = ContextManagerInjector()
                     mutated = mutator.visit(tree)
 
@@ -1196,16 +1208,18 @@ class TestYieldFromInjector(unittest.TestCase):
                 mutated = mutator.visit(tree)
 
         result = ast.unparse(mutated)
-        lines = [l.strip() for l in result.split('\n') if l.strip()]
+        lines = [l.strip() for l in result.split("\n") if l.strip()]
 
         # Generator definition should come before original code
-        gen_def_idx = next(i for i, line in enumerate(lines) if 'def _yield_from_gen_7000' in line)
-        x_assign_idx = next(i for i, line in enumerate(lines) if 'x = 1' in line)
+        gen_def_idx = next(i for i, line in enumerate(lines) if "def _yield_from_gen_7000" in line)
+        x_assign_idx = next(i for i, line in enumerate(lines) if "x = 1" in line)
         self.assertLess(gen_def_idx, x_assign_idx)
 
         # Driver call should come after original code
-        driver_idx = next(i for i, line in enumerate(lines) if 'list(_yield_from_gen_7000())' in line)
-        z_assign_idx = next(i for i, line in enumerate(lines) if 'z = 3' in line)
+        driver_idx = next(
+            i for i, line in enumerate(lines) if "list(_yield_from_gen_7000())" in line
+        )
+        z_assign_idx = next(i for i, line in enumerate(lines) if "z = 3" in line)
         self.assertGreater(driver_idx, z_assign_idx)
 
     def test_respects_probability(self):

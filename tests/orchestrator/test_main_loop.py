@@ -24,7 +24,7 @@ class TestCalculateMutations(unittest.TestCase):
 
     def test_base_mutations_with_score_100(self):
         """Test that score of 100 gives base mutations."""
-        with patch('sys.stdout', new_callable=io.StringIO):
+        with patch("sys.stdout", new_callable=io.StringIO):
             mutations = self.orchestrator._calculate_mutations(100.0)
 
             # Score of 100 should give close to base (100)
@@ -35,7 +35,7 @@ class TestCalculateMutations(unittest.TestCase):
 
     def test_low_score_clamped_to_minimum(self):
         """Test that very low scores result in minimum multiplier."""
-        with patch('sys.stdout', new_callable=io.StringIO):
+        with patch("sys.stdout", new_callable=io.StringIO):
             mutations = self.orchestrator._calculate_mutations(1.0)
 
             # Score of 1.0:
@@ -47,7 +47,7 @@ class TestCalculateMutations(unittest.TestCase):
 
     def test_high_score_clamped_to_maximum(self):
         """Test that very high scores are clamped to 3.0x multiplier."""
-        with patch('sys.stdout', new_callable=io.StringIO):
+        with patch("sys.stdout", new_callable=io.StringIO):
             mutations = self.orchestrator._calculate_mutations(10000.0)
 
             # Very high score should clamp to 3.0x, so 100 * 3.0 = 300
@@ -55,7 +55,7 @@ class TestCalculateMutations(unittest.TestCase):
 
     def test_medium_score_calculates_dynamic_multiplier(self):
         """Test that medium scores use logarithmic scaling."""
-        with patch('sys.stdout', new_callable=io.StringIO):
+        with patch("sys.stdout", new_callable=io.StringIO):
             mutations = self.orchestrator._calculate_mutations(50.0)
 
             # Score of 50:
@@ -67,7 +67,7 @@ class TestCalculateMutations(unittest.TestCase):
 
     def test_prints_dynamic_adjustment_message(self):
         """Test that dynamic adjustment is logged."""
-        with patch('sys.stdout', new_callable=io.StringIO) as mock_stdout:
+        with patch("sys.stdout", new_callable=io.StringIO) as mock_stdout:
             self.orchestrator._calculate_mutations(75.0)
 
             stdout_output = mock_stdout.getvalue()
@@ -100,7 +100,7 @@ class TestUpdateAndSaveRunStats(unittest.TestCase):
 
     def test_updates_timestamp(self):
         """Test that last_update_time is set to current time."""
-        with patch('lafleur.orchestrator.save_run_stats'):
+        with patch("lafleur.orchestrator.save_run_stats"):
             before = datetime.now(timezone.utc)
             self.orchestrator.update_and_save_run_stats()
             after = datetime.now(timezone.utc)
@@ -111,14 +111,14 @@ class TestUpdateAndSaveRunStats(unittest.TestCase):
 
     def test_updates_corpus_size(self):
         """Test that corpus_size reflects per_file_coverage count."""
-        with patch('lafleur.orchestrator.save_run_stats'):
+        with patch("lafleur.orchestrator.save_run_stats"):
             self.orchestrator.update_and_save_run_stats()
 
             self.assertEqual(self.orchestrator.run_stats["corpus_size"], 3)
 
     def test_updates_global_coverage_counts(self):
         """Test that global coverage metrics are counted."""
-        with patch('lafleur.orchestrator.save_run_stats'):
+        with patch("lafleur.orchestrator.save_run_stats"):
             self.orchestrator.update_and_save_run_stats()
 
             self.assertEqual(self.orchestrator.run_stats["global_uops"], 2)
@@ -127,7 +127,7 @@ class TestUpdateAndSaveRunStats(unittest.TestCase):
 
     def test_updates_seed_counters(self):
         """Test that global_seed_counter and corpus_file_counter are updated."""
-        with patch('lafleur.orchestrator.save_run_stats'):
+        with patch("lafleur.orchestrator.save_run_stats"):
             self.orchestrator.update_and_save_run_stats()
 
             self.assertEqual(self.orchestrator.run_stats["global_seed_counter"], 42)
@@ -138,25 +138,23 @@ class TestUpdateAndSaveRunStats(unittest.TestCase):
         self.orchestrator.run_stats["new_coverage_finds"] = 10
         self.orchestrator.run_stats["sum_of_mutations_per_find"] = 250
 
-        with patch('lafleur.orchestrator.save_run_stats'):
+        with patch("lafleur.orchestrator.save_run_stats"):
             self.orchestrator.update_and_save_run_stats()
 
-            self.assertEqual(
-                self.orchestrator.run_stats["average_mutations_per_find"], 25.0
-            )
+            self.assertEqual(self.orchestrator.run_stats["average_mutations_per_find"], 25.0)
 
     def test_no_average_when_no_finds(self):
         """Test that average_mutations_per_find is not set when no finds."""
         self.orchestrator.run_stats["new_coverage_finds"] = 0
 
-        with patch('lafleur.orchestrator.save_run_stats'):
+        with patch("lafleur.orchestrator.save_run_stats"):
             self.orchestrator.update_and_save_run_stats()
 
             self.assertNotIn("average_mutations_per_find", self.orchestrator.run_stats)
 
     def test_calls_save_run_stats(self):
         """Test that save_run_stats is called with updated stats."""
-        with patch('lafleur.orchestrator.save_run_stats') as mock_save:
+        with patch("lafleur.orchestrator.save_run_stats") as mock_save:
             self.orchestrator.update_and_save_run_stats()
 
             mock_save.assert_called_once_with(self.orchestrator.run_stats)
@@ -191,11 +189,11 @@ class TestRunEvolutionaryLoop(unittest.TestCase):
         self.orchestrator.corpus_manager.generate_new_seed = MagicMock()
 
         # Mock to break the infinite loop after bootstrap
-        with patch.object(self.orchestrator, 'execute_mutation_and_analysis_cycle'):
-            with patch('sys.stderr', new_callable=io.StringIO):
-                with patch('lafleur.orchestrator.save_run_stats'):
+        with patch.object(self.orchestrator, "execute_mutation_and_analysis_cycle"):
+            with patch("sys.stderr", new_callable=io.StringIO):
+                with patch("lafleur.orchestrator.save_run_stats"):
                     with patch.object(
-                        self.orchestrator.corpus_manager, 'select_parent', return_value=None
+                        self.orchestrator.corpus_manager, "select_parent", return_value=None
                     ):
                         self.orchestrator.run_evolutionary_loop()
 
@@ -211,9 +209,9 @@ class TestRunEvolutionaryLoop(unittest.TestCase):
         self.orchestrator.fusil_path = "/invalid/path/to/fusil"
         self.orchestrator.corpus_manager.select_parent = MagicMock(return_value=None)
 
-        with patch('sys.stderr', new_callable=io.StringIO) as mock_stderr:
-            with patch('lafleur.orchestrator.save_run_stats'):
-                with patch('sys.exit') as mock_exit:
+        with patch("sys.stderr", new_callable=io.StringIO) as mock_stderr:
+            with patch("lafleur.orchestrator.save_run_stats"):
+                with patch("sys.exit") as mock_exit:
                     self.orchestrator.run_evolutionary_loop()
 
                     stderr_output = mock_stderr.getvalue()
@@ -227,9 +225,9 @@ class TestRunEvolutionaryLoop(unittest.TestCase):
         self.orchestrator.corpus_manager.fusil_path_is_valid = False
         self.orchestrator.corpus_manager.select_parent = MagicMock(return_value=None)
 
-        with patch('sys.stderr', new_callable=io.StringIO) as mock_stderr:
-            with patch('lafleur.orchestrator.save_run_stats'):
-                with patch('sys.exit') as mock_exit:
+        with patch("sys.stderr", new_callable=io.StringIO) as mock_stderr:
+            with patch("lafleur.orchestrator.save_run_stats"):
+                with patch("sys.exit") as mock_exit:
                     self.orchestrator.run_evolutionary_loop()
 
                     stderr_output = mock_stderr.getvalue()
@@ -287,10 +285,8 @@ class TestRunEvolutionaryLoop(unittest.TestCase):
             "per_file_coverage": {f"file{i}.py": {} for i in range(10)}
         }
 
-        with patch.object(
-            self.orchestrator.corpus_manager, 'select_parent', return_value=None
-        ):
-            with patch('sys.stdout', new_callable=io.StringIO) as mock_stdout:
+        with patch.object(self.orchestrator.corpus_manager, "select_parent", return_value=None):
+            with patch("sys.stdout", new_callable=io.StringIO) as mock_stdout:
                 self.orchestrator.run_evolutionary_loop()
 
                 stdout_output = mock_stdout.getvalue()
@@ -323,13 +319,11 @@ class TestExecuteMutationAndAnalysisCycle(unittest.TestCase):
         parent_path = Path("/corpus/parent_test.py")
         parent_score = 150.0
 
-        with patch.object(
-            self.orchestrator, '_calculate_mutations', return_value=200
-        ) as mock_calc:
+        with patch.object(self.orchestrator, "_calculate_mutations", return_value=200) as mock_calc:
             with patch.object(
-                self.orchestrator, '_get_nodes_from_parent', return_value=(None, None, [])
+                self.orchestrator, "_get_nodes_from_parent", return_value=(None, None, [])
             ):
-                with patch('sys.stderr', new_callable=io.StringIO):
+                with patch("sys.stderr", new_callable=io.StringIO):
                     self.orchestrator.execute_mutation_and_analysis_cycle(
                         parent_path, parent_score, 1, False
                     )
@@ -340,11 +334,11 @@ class TestExecuteMutationAndAnalysisCycle(unittest.TestCase):
         """Test that cycle returns when _get_nodes_from_parent fails."""
         parent_path = Path("/corpus/parent_test.py")
 
-        with patch.object(self.orchestrator, '_calculate_mutations', return_value=100):
+        with patch.object(self.orchestrator, "_calculate_mutations", return_value=100):
             with patch.object(
-                self.orchestrator, '_get_nodes_from_parent', return_value=(None, None, [])
+                self.orchestrator, "_get_nodes_from_parent", return_value=(None, None, [])
             ):
-                with patch('sys.stderr', new_callable=io.StringIO):
+                with patch("sys.stderr", new_callable=io.StringIO):
                     result = self.orchestrator.execute_mutation_and_analysis_cycle(
                         parent_path, 100.0, 1, False
                     )
@@ -359,15 +353,16 @@ class TestExecuteMutationAndAnalysisCycle(unittest.TestCase):
         mock_harness.name = "uop_harness_test"
         mock_tree = MagicMock()
 
-        with patch.object(self.orchestrator, '_calculate_mutations', return_value=2):
+        with patch.object(self.orchestrator, "_calculate_mutations", return_value=2):
             with patch.object(
-                self.orchestrator, '_get_nodes_from_parent',
-                return_value=(mock_harness, mock_tree, [])
+                self.orchestrator,
+                "_get_nodes_from_parent",
+                return_value=(mock_harness, mock_tree, []),
             ):
                 with patch.object(
-                    self.orchestrator, '_get_mutated_harness', return_value=(None, {})
+                    self.orchestrator, "_get_mutated_harness", return_value=(None, {})
                 ):
-                    with patch('sys.stderr', new_callable=io.StringIO):
+                    with patch("sys.stderr", new_callable=io.StringIO):
                         self.orchestrator.execute_mutation_and_analysis_cycle(
                             parent_path, 100.0, 1, False
                         )
@@ -383,15 +378,16 @@ class TestExecuteMutationAndAnalysisCycle(unittest.TestCase):
         mock_harness.name = "uop_harness_test"
         mock_tree = MagicMock()
 
-        with patch.object(self.orchestrator, '_calculate_mutations', return_value=100):
+        with patch.object(self.orchestrator, "_calculate_mutations", return_value=100):
             with patch.object(
-                self.orchestrator, '_get_nodes_from_parent',
-                return_value=(mock_harness, mock_tree, [])
+                self.orchestrator,
+                "_get_nodes_from_parent",
+                return_value=(mock_harness, mock_tree, []),
             ):
                 with patch.object(
-                    self.orchestrator, '_get_mutated_harness', return_value=(None, {})
+                    self.orchestrator, "_get_mutated_harness", return_value=(None, {})
                 ):
-                    with patch('sys.stdout', new_callable=io.StringIO) as mock_stdout:
+                    with patch("sys.stdout", new_callable=io.StringIO) as mock_stdout:
                         self.orchestrator.execute_mutation_and_analysis_cycle(
                             parent_path, 100.0, 1, is_deepening_session=True
                         )
@@ -399,9 +395,7 @@ class TestExecuteMutationAndAnalysisCycle(unittest.TestCase):
                         stdout_output = mock_stdout.getvalue()
                         self.assertIn("Deepening session became sterile", stdout_output)
                         # Should stop after 31 mutations (30 sterile + 1 triggers the check)
-                        self.assertLessEqual(
-                            self.orchestrator.run_stats["total_mutations"], 31
-                        )
+                        self.assertLessEqual(self.orchestrator.run_stats["total_mutations"], 31)
 
     def test_uses_dynamic_runs_when_enabled(self):
         """Test that run count is calculated dynamically when use_dynamic_runs=True."""
@@ -412,18 +406,19 @@ class TestExecuteMutationAndAnalysisCycle(unittest.TestCase):
         mock_harness.name = "uop_harness_test"
         mock_tree = MagicMock()
 
-        with patch.object(self.orchestrator, '_calculate_mutations', return_value=1):
+        with patch.object(self.orchestrator, "_calculate_mutations", return_value=1):
             with patch.object(
-                self.orchestrator, '_get_nodes_from_parent',
-                return_value=(mock_harness, mock_tree, [])
+                self.orchestrator,
+                "_get_nodes_from_parent",
+                return_value=(mock_harness, mock_tree, []),
             ):
                 with patch.object(
-                    self.orchestrator, '_get_mutated_harness', return_value=(mock_harness, {})
+                    self.orchestrator, "_get_mutated_harness", return_value=(mock_harness, {})
                 ):
                     with patch.object(
-                        self.orchestrator, '_prepare_child_script', return_value=None
+                        self.orchestrator, "_prepare_child_script", return_value=None
                     ):
-                        with patch('sys.stdout', new_callable=io.StringIO) as mock_stdout:
+                        with patch("sys.stdout", new_callable=io.StringIO) as mock_stdout:
                             self.orchestrator.execute_mutation_and_analysis_cycle(
                                 parent_path, parent_score, 1, False
                             )
@@ -439,21 +434,22 @@ class TestExecuteMutationAndAnalysisCycle(unittest.TestCase):
         mock_harness = MagicMock()
         mock_harness.name = "uop_harness_test"
 
-        with patch.object(self.orchestrator, '_calculate_mutations', return_value=1):
+        with patch.object(self.orchestrator, "_calculate_mutations", return_value=1):
             with patch.object(
-                self.orchestrator, '_get_nodes_from_parent',
-                return_value=(mock_harness, MagicMock(), [])
+                self.orchestrator,
+                "_get_nodes_from_parent",
+                return_value=(mock_harness, MagicMock(), []),
             ):
                 with patch.object(
-                    self.orchestrator, '_get_mutated_harness', return_value=(mock_harness, {})
+                    self.orchestrator, "_get_mutated_harness", return_value=(mock_harness, {})
                 ):
                     with patch.object(
-                        self.orchestrator, '_prepare_child_script', return_value="code"
+                        self.orchestrator, "_prepare_child_script", return_value="code"
                     ):
                         with patch.object(
-                            self.orchestrator, '_execute_child', return_value=None
+                            self.orchestrator, "_execute_child", return_value=None
                         ) as mock_exec:
-                            with patch('sys.stderr', new_callable=io.StringIO):
+                            with patch("sys.stderr", new_callable=io.StringIO):
                                 self.orchestrator.execute_mutation_and_analysis_cycle(
                                     parent_path, 100.0, 1, False
                                 )

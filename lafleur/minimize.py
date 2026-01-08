@@ -23,16 +23,19 @@ from typing import Optional
 
 # Environment variables for reproduction
 REPRO_ENV = os.environ.copy()
-REPRO_ENV.update({
-    "PYTHON_JIT": "1",
-    "PYTHON_LLTRACE": "0",  # Disable verbose logging for speed
-    "ASAN_OPTIONS": "detect_leaks=0",
-})
+REPRO_ENV.update(
+    {
+        "PYTHON_JIT": "1",
+        "PYTHON_LLTRACE": "0",  # Disable verbose logging for speed
+        "ASAN_OPTIONS": "detect_leaks=0",
+    }
+)
+
 
 def extract_grep_pattern(metadata: dict) -> str:
     """Extract a grep pattern from the crash fingerprint metadata."""
     fingerprint = metadata.get("fingerprint", "")
-    
+
     if fingerprint.startswith("ASAN:"):
         return "AddressSanitizer"
     elif fingerprint.startswith("ASSERT:"):
@@ -44,26 +47,23 @@ def extract_grep_pattern(metadata: dict) -> str:
     elif fingerprint.startswith("PANIC:"):
         # "PANIC:Fatal Python error: message" -> "Fatal Python error"
         return "Fatal Python error"
-    
+
     # Fallback to simple keywords if fingerprint is generic
     if "SIGSEGV" in fingerprint or "SIGNAL:SIG_11" in fingerprint:
         return "Segmentation fault"
-    
-    return "" # No grep pattern, rely on exit code
+
+    return ""  # No grep pattern, rely on exit code
+
 
 def measure_execution_time(cmd: list[str], timeout: int) -> float:
     """Run a command and return its execution time in seconds."""
     start_time = time.monotonic()
     try:
-        subprocess.run(
-            cmd,
-            capture_output=True,
-            timeout=timeout,
-            env=REPRO_ENV
-        )
+        subprocess.run(cmd, capture_output=True, timeout=timeout, env=REPRO_ENV)
     except subprocess.TimeoutExpired:
         pass
     return time.monotonic() - start_time
+
 
 def rename_harnesses(source: str, suffix: str) -> str:
     """
@@ -71,33 +71,21 @@ def rename_harnesses(source: str, suffix: str) -> str:
     when concatenating multiple scripts.
     """
     # Rename definitions
-    source = re.sub(
-        r"def\s+uop_harness_f1\(\):",
-        f"def uop_harness_f1_{suffix}():",
-        source
-    )
+    source = re.sub(r"def\s+uop_harness_f1\(\):", f"def uop_harness_f1_{suffix}():", source)
     # Rename calls
-    source = re.sub(
-        r"uop_harness_f1\(\)",
-        f"uop_harness_f1_{suffix}()",
-        source
-    )
+    source = re.sub(r"uop_harness_f1\(\)", f"uop_harness_f1_{suffix}()", source)
     return source
+
 
 def run_session(scripts: list[Path], target_python: str, timeout: int = 10) -> tuple[int, str, str]:
     """Run a session using lafleur.driver and return (returncode, stdout, stderr)."""
     cmd = [target_python, "-m", "lafleur.driver"] + [str(s) for s in scripts]
     try:
-        result = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-            env=REPRO_ENV
-        )
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, env=REPRO_ENV)
         return result.returncode, result.stdout, result.stderr
     except subprocess.TimeoutExpired:
         return 124, "", "Timeout"
+
 
 def check_reproduction(
     scripts: list[Path], metadata: dict, grep_pattern: str, target_python: str
@@ -129,31 +117,32 @@ def check_reproduction(
 
     return code_match and grep_match
 
+
 def minimize_session(crash_dir: Path, target_python: str, force_overwrite: bool):
     """Main logic to minimize a session crash."""
     print(f"[*] Minimizing crash bundle: {crash_dir}")
-    
+
     # Step 0: Preparation
     metadata_path = crash_dir / "metadata.json"
     if not metadata_path.exists():
         print("[!] Error: metadata.json not found. Cannot minimize.")
         sys.exit(1)
-        
+
     try:
         metadata = json.loads(metadata_path.read_text())
     except json.JSONDecodeError:
         print("[!] Error: Invalid metadata.json.")
         sys.exit(1)
-        
+
     grep_pattern = extract_grep_pattern(metadata)
     print(f"[*] Target Fingerprint: {metadata.get('fingerprint')}")
     print(f"[*] Grep Pattern: '{grep_pattern}'")
-    
+
     script_files = sorted([f for f in crash_dir.glob("*.py") if f.name != "combined_repro.py"])
     if not script_files:
         print("[!] No script files found in bundle.")
         sys.exit(1)
-        
+
     # Backup original scripts
     for script in script_files:
         shutil.copy(script, script.with_suffix(".py.backup"))
@@ -161,9 +150,7 @@ def minimize_session(crash_dir: Path, target_python: str, force_overwrite: bool)
     # Initial Reproduction Check
     print("[*] Verifying initial crash reproduction...")
     if not check_reproduction(script_files, metadata, grep_pattern, target_python):
-        print(
-            f"[!] Error: Crash does NOT reproduce with the provided python ({target_python})."
-        )
+        print(f"[!] Error: Crash does NOT reproduce with the provided python ({target_python}).")
         print("    Check that you are using the correct JIT-enabled build.")
         sys.exit(1)
 
@@ -291,9 +278,9 @@ export ASAN_OPTIONS=detect_leaks=0
 OUTPUT=$({driver_cmd} 2>&1)
 EXIT_CODE=$?
 
-# Verify Exit Code matches {metadata.get('returncode')}
+# Verify Exit Code matches {metadata.get("returncode")}
 # (Logic simplified for bash: check for non-zero if ASan/Signal)
-if [ {metadata.get('returncode')} -ne 0 ] && [ $EXIT_CODE -eq 0 ]; then
+if [ {metadata.get("returncode")} -ne 0 ] && [ $EXIT_CODE -eq 0 ]; then
     exit 1
 fi
 
@@ -367,6 +354,7 @@ def main():
         sys.exit(1)
 
     minimize_session(args.crash_dir, args.target_python, args.force_overwrite)
+
 
 if __name__ == "__main__":
     main()

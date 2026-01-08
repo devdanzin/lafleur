@@ -1737,7 +1737,10 @@ class ImportChaosMutator(ast.NodeTransformer):
                 handlers=[
                     ast.ExceptHandler(
                         type=ast.Tuple(
-                            elts=[ast.Name(id="ImportError", ctx=ast.Load()), ast.Name(id="Exception", ctx=ast.Load())],
+                            elts=[
+                                ast.Name(id="ImportError", ctx=ast.Load()),
+                                ast.Name(id="Exception", ctx=ast.Load()),
+                            ],
                             ctx=ast.Load(),
                         ),
                         name=None,

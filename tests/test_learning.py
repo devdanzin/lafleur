@@ -17,6 +17,7 @@ class TestMutatorScoreTracker(unittest.TestCase):
 
     def setUp(self):
         """Create a fresh tracker for each test."""
+
         # Create mock transformer classes
         class MockTransformer1:
             pass
@@ -60,9 +61,7 @@ class TestMutatorScoreTracker(unittest.TestCase):
 
         # Check that:
         # 1. The successful items got incremented THEN decayed
-        self.assertEqual(
-            self.tracker.scores["deterministic"], 0.995
-        )  # (0 + 1.0) * 0.995 = 0.995
+        self.assertEqual(self.tracker.scores["deterministic"], 0.995)  # (0 + 1.0) * 0.995 = 0.995
         self.assertEqual(self.tracker.scores["MockTransformer2"], 0.995)
 
         # 2. ALL other scores got decayed

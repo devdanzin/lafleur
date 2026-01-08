@@ -2,6 +2,7 @@ import ast
 import random
 from textwrap import dedent
 
+
 class SniperMutator(ast.NodeTransformer):
     """
     A mutator that targets helper functions detected in the JIT's Bloom filter.
@@ -17,11 +18,48 @@ class SniperMutator(ast.NodeTransformer):
     """
 
     KNOWN_BUILTINS = {
-        "len", "range", "isinstance", "print", "list", "dict", "set", "tuple",
-        "int", "str", "float", "bool", "type", "object", "id", "hash", "iter",
-        "next", "min", "max", "sum", "any", "all", "sorted", "reversed", "enumerate",
-        "zip", "map", "filter", "open", "getattr", "setattr", "delattr", "hasattr",
-        "isinstance", "issubclass", "callable", "chr", "ord", "hex", "oct", "bin"
+        "len",
+        "range",
+        "isinstance",
+        "print",
+        "list",
+        "dict",
+        "set",
+        "tuple",
+        "int",
+        "str",
+        "float",
+        "bool",
+        "type",
+        "object",
+        "id",
+        "hash",
+        "iter",
+        "next",
+        "min",
+        "max",
+        "sum",
+        "any",
+        "all",
+        "sorted",
+        "reversed",
+        "enumerate",
+        "zip",
+        "map",
+        "filter",
+        "open",
+        "getattr",
+        "setattr",
+        "delattr",
+        "hasattr",
+        "isinstance",
+        "issubclass",
+        "callable",
+        "chr",
+        "ord",
+        "hex",
+        "oct",
+        "bin",
     }
 
     def __init__(self, watched_keys: list[str] | None = None):
@@ -34,10 +72,7 @@ class SniperMutator(ast.NodeTransformer):
         """
         self.watched_keys = watched_keys or []
         # Filter to only target helper functions (start with _jit_helper_)
-        self.helper_targets = [
-            k for k in self.watched_keys
-            if k.startswith("_jit_helper_")
-        ]
+        self.helper_targets = [k for k in self.watched_keys if k.startswith("_jit_helper_")]
 
     def _create_invalidation_stmt(self, key: str) -> list[ast.stmt]:
         """

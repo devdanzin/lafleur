@@ -684,7 +684,7 @@ class ContextManagerInjector(ast.NodeTransformer):
                 actual_start_idx += 1  # Account for import
             elif strategy == "evil":
                 # Account for class definition
-                for i, stmt in enumerate(node.body[:start_idx + 1]):
+                for i, stmt in enumerate(node.body[: start_idx + 1]):
                     if isinstance(stmt, ast.ClassDef):
                         actual_start_idx += 1
 
@@ -773,15 +773,11 @@ class YieldFromInjector(ast.NodeTransformer):
 
         finally_body = [ast.Pass()]
 
-        try_finally = ast.Try(
-            body=try_body, handlers=[], orelse=[], finalbody=finally_body
-        )
+        try_finally = ast.Try(body=try_body, handlers=[], orelse=[], finalbody=finally_body)
 
         return ast.FunctionDef(
             name=gen_name,
-            args=ast.arguments(
-                args=[], posonlyargs=[], kwonlyargs=[], kw_defaults=[], defaults=[]
-            ),
+            args=ast.arguments(args=[], posonlyargs=[], kwonlyargs=[], kw_defaults=[], defaults=[]),
             body=[try_finally],
             decorator_list=[],
         )

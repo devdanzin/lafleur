@@ -42,16 +42,18 @@ class TestRunEvolutionaryLoopIntegration(unittest.TestCase):
 
         # Create a seed file
         seed_file = Path("corpus/seed_0.py")
-        seed_file.write_text(dedent('''
+        seed_file.write_text(
+            dedent("""
             def uop_harness_test():
                 x = 1 + 2
                 return x
-        ''').strip())
+        """).strip()
+        )
 
         # Mock verify_target_capabilities to skip JIT checks
-        with patch.object(LafleurOrchestrator, 'verify_target_capabilities'):
+        with patch.object(LafleurOrchestrator, "verify_target_capabilities"):
             # Create orchestrator with real components (no corpus sync)
-            with patch.object(CorpusManager, 'synchronize'):
+            with patch.object(CorpusManager, "synchronize"):
                 self.orchestrator = LafleurOrchestrator(
                     fusil_path=None,
                     min_corpus_files=0,
@@ -79,8 +81,8 @@ class TestRunEvolutionaryLoopIntegration(unittest.TestCase):
         # Mock _calculate_mutations to return small number for faster tests
         self.mutations_patcher = patch.object(
             LafleurOrchestrator,
-            '_calculate_mutations',
-            return_value=1  # Only do 1 mutation per cycle instead of 100
+            "_calculate_mutations",
+            return_value=1,  # Only do 1 mutation per cycle instead of 100
         )
         self.mutations_patcher.start()
 
@@ -102,23 +104,19 @@ class TestRunEvolutionaryLoopIntegration(unittest.TestCase):
 
         with patch.object(
             self.orchestrator,
-            'execute_mutation_and_analysis_cycle',
-            side_effect=mock_execute_with_counter
+            "execute_mutation_and_analysis_cycle",
+            side_effect=mock_execute_with_counter,
         ):
-            with patch('subprocess.run') as mock_run:
+            with patch("subprocess.run") as mock_run:
                 # Mock successful child execution
-                mock_run.return_value = MagicMock(
-                    returncode=0,
-                    stdout="",
-                    stderr=""
-                )
+                mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
                 try:
                     self.orchestrator.run_evolutionary_loop()
                 except KeyboardInterrupt:
                     pass
 
         self.assertEqual(self.session_count, self.max_sessions)
-        self.assertGreaterEqual(self.orchestrator.run_stats.get('total_sessions', 0), 1)
+        self.assertGreaterEqual(self.orchestrator.run_stats.get("total_sessions", 0), 1)
 
     def test_calls_execute_mutation_cycle_each_iteration(self):
         """run_evolutionary_loop calls execute_mutation_and_analysis_cycle each iteration."""
@@ -134,10 +132,10 @@ class TestRunEvolutionaryLoopIntegration(unittest.TestCase):
 
         with patch.object(
             self.orchestrator,
-            'execute_mutation_and_analysis_cycle',
-            side_effect=mock_execute_with_counter
+            "execute_mutation_and_analysis_cycle",
+            side_effect=mock_execute_with_counter,
         ):
-            with patch('subprocess.run') as mock_run:
+            with patch("subprocess.run") as mock_run:
                 mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
                 try:
                     self.orchestrator.run_evolutionary_loop()
@@ -158,15 +156,25 @@ class TestRunEvolutionaryLoopIntegration(unittest.TestCase):
 
         # Mock random.random() to return predictable values
         # First 5 calls < 0.2 (deepening), next 5 calls >= 0.2 (breadth)
-        random_values = [0.1, 0.15, 0.05, 0.19, 0.18,  # Deepening
-                         0.5, 0.8, 0.3, 0.9, 0.6]       # Breadth
+        random_values = [
+            0.1,
+            0.15,
+            0.05,
+            0.19,
+            0.18,  # Deepening
+            0.5,
+            0.8,
+            0.3,
+            0.9,
+            0.6,
+        ]  # Breadth
 
         with patch.object(
             self.orchestrator,
-            'execute_mutation_and_analysis_cycle',
-            side_effect=capture_session_type
+            "execute_mutation_and_analysis_cycle",
+            side_effect=capture_session_type,
         ):
-            with patch('random.random', side_effect=random_values):
+            with patch("random.random", side_effect=random_values):
                 try:
                     self.orchestrator.run_evolutionary_loop()
                 except KeyboardInterrupt:
@@ -194,10 +202,10 @@ class TestRunEvolutionaryLoopIntegration(unittest.TestCase):
 
         with patch.object(
             self.orchestrator,
-            'execute_mutation_and_analysis_cycle',
-            side_effect=mock_execute_with_counter
+            "execute_mutation_and_analysis_cycle",
+            side_effect=mock_execute_with_counter,
         ):
-            with patch('subprocess.run') as mock_run:
+            with patch("subprocess.run") as mock_run:
                 mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
                 try:
                     self.orchestrator.run_evolutionary_loop()
@@ -205,8 +213,8 @@ class TestRunEvolutionaryLoopIntegration(unittest.TestCase):
                     pass
 
         # Verify run_stats was updated
-        self.assertIn('total_sessions', self.orchestrator.run_stats)
-        self.assertGreater(self.orchestrator.run_stats['total_sessions'], 0)
+        self.assertIn("total_sessions", self.orchestrator.run_stats)
+        self.assertGreater(self.orchestrator.run_stats["total_sessions"], 0)
 
     def test_logs_timeseries_every_n_sessions(self):
         """run_evolutionary_loop logs timeseries data periodically."""
@@ -226,10 +234,10 @@ class TestRunEvolutionaryLoopIntegration(unittest.TestCase):
 
         with patch.object(
             self.orchestrator,
-            'execute_mutation_and_analysis_cycle',
-            side_effect=mock_execute_with_counter
+            "execute_mutation_and_analysis_cycle",
+            side_effect=mock_execute_with_counter,
         ):
-            with patch('subprocess.run') as mock_run:
+            with patch("subprocess.run") as mock_run:
                 mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
                 try:
                     self.orchestrator.run_evolutionary_loop()
@@ -253,8 +261,8 @@ class TestRunEvolutionaryLoopIntegration(unittest.TestCase):
 
         with patch.object(
             self.orchestrator,
-            'execute_mutation_and_analysis_cycle',
-            side_effect=mock_execute_raises_interrupt
+            "execute_mutation_and_analysis_cycle",
+            side_effect=mock_execute_raises_interrupt,
         ):
             try:
                 self.orchestrator.run_evolutionary_loop()
@@ -263,10 +271,7 @@ class TestRunEvolutionaryLoopIntegration(unittest.TestCase):
 
         # Verify mutator scores were saved (score_tracker.save_state() called in finally block)
         # Note: Coverage state is only saved by corpus_manager when adding files
-        self.assertTrue(
-            mutator_scores_file.exists(),
-            "Mutator scores should be saved on interrupt"
-        )
+        self.assertTrue(mutator_scores_file.exists(), "Mutator scores should be saved on interrupt")
 
     def test_corpus_bootstrap_with_min_files(self):
         """run_evolutionary_loop bootstraps corpus when below minimum."""
@@ -292,14 +297,12 @@ class TestRunEvolutionaryLoopIntegration(unittest.TestCase):
 
         # Mock generate_new_seed to track calls
         with patch.object(
-            self.orchestrator.corpus_manager,
-            'generate_new_seed',
-            return_value=None
+            self.orchestrator.corpus_manager, "generate_new_seed", return_value=None
         ) as mock_generate:
             with patch.object(
                 self.orchestrator,
-                'execute_mutation_and_analysis_cycle',
-                side_effect=mock_execute_with_counter
+                "execute_mutation_and_analysis_cycle",
+                side_effect=mock_execute_with_counter,
             ):
                 try:
                     self.orchestrator.run_evolutionary_loop()
@@ -328,8 +331,8 @@ class TestCorpusBootstrappingIntegration(unittest.TestCase):
         Path("crashes").mkdir()
 
         # Mock verify_target_capabilities to skip JIT checks
-        with patch.object(LafleurOrchestrator, 'verify_target_capabilities'):
-            with patch.object(CorpusManager, 'synchronize'):
+        with patch.object(LafleurOrchestrator, "verify_target_capabilities"):
+            with patch.object(CorpusManager, "synchronize"):
                 self.orchestrator = LafleurOrchestrator(
                     fusil_path=None,
                     min_corpus_files=5,
@@ -364,14 +367,12 @@ class TestCorpusBootstrappingIntegration(unittest.TestCase):
 
         # Mock generate_new_seed to track calls
         with patch.object(
-            self.orchestrator.corpus_manager,
-            'generate_new_seed',
-            return_value=None
+            self.orchestrator.corpus_manager, "generate_new_seed", return_value=None
         ) as mock_generate:
             with patch.object(
                 self.orchestrator,
-                'execute_mutation_and_analysis_cycle',
-                side_effect=limited_execute
+                "execute_mutation_and_analysis_cycle",
+                side_effect=limited_execute,
             ):
                 try:
                     self.orchestrator.run_evolutionary_loop()
@@ -387,12 +388,10 @@ class TestCorpusBootstrappingIntegration(unittest.TestCase):
         for f in Path("corpus").glob("*.py"):
             f.unlink()
 
-        with patch('sys.stdout') as mock_stdout:
-            with patch('sys.exit') as mock_exit:
+        with patch("sys.stdout") as mock_stdout:
+            with patch("sys.exit") as mock_exit:
                 # Set select_parent to return None to trigger empty corpus path
-                self.orchestrator.corpus_manager.select_parent = MagicMock(
-                    return_value=None
-                )
+                self.orchestrator.corpus_manager.select_parent = MagicMock(return_value=None)
                 try:
                     self.orchestrator.run_evolutionary_loop()
                 except SystemExit:
@@ -420,16 +419,18 @@ class TestMutationCycleIntegration(unittest.TestCase):
 
         # Create seed file
         seed_file = Path("corpus/seed_0.py")
-        seed_file.write_text(dedent('''
+        seed_file.write_text(
+            dedent("""
             def uop_harness_test():
                 x = 10
                 y = 20
                 return x + y
-        ''').strip())
+        """).strip()
+        )
 
         # Mock verify_target_capabilities to skip JIT checks
-        with patch.object(LafleurOrchestrator, 'verify_target_capabilities'):
-            with patch.object(CorpusManager, 'synchronize'):
+        with patch.object(LafleurOrchestrator, "verify_target_capabilities"):
+            with patch.object(CorpusManager, "synchronize"):
                 self.orchestrator = LafleurOrchestrator(
                     fusil_path=None,
                     min_corpus_files=0,
@@ -453,8 +454,8 @@ class TestMutationCycleIntegration(unittest.TestCase):
         # Mock _calculate_mutations to return small number for faster tests
         self.mutations_patcher = patch.object(
             LafleurOrchestrator,
-            '_calculate_mutations',
-            return_value=1  # Only do 1 mutation per cycle instead of 100
+            "_calculate_mutations",
+            return_value=1,  # Only do 1 mutation per cycle instead of 100
         )
         self.mutations_patcher.start()
 
@@ -475,41 +476,41 @@ class TestMutationCycleIntegration(unittest.TestCase):
         def mock_score_interesting(*args, **kwargs):
             # Call original to get NewCoverageInfo, but force it to be interesting
             from lafleur.orchestrator import NewCoverageInfo
+
             # Return interesting coverage: 2 global edges = score of 20 > 10
             return True, NewCoverageInfo(global_edges=2)
 
-        with patch('subprocess.run') as mock_run:
+        with patch("subprocess.run") as mock_run:
             mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
             with patch.object(
                 self.orchestrator,
-                '_score_and_decide_interestingness',
-                side_effect=mock_score_interesting
+                "_score_and_decide_interestingness",
+                side_effect=mock_score_interesting,
             ):
                 # Run one mutation cycle
                 self.orchestrator.execute_mutation_and_analysis_cycle(
                     initial_parent_path=seed_file.resolve(),
                     initial_parent_score=0,
                     session_id=10,
-                    is_deepening_session=False
+                    is_deepening_session=False,
                 )
 
         # Verify a child was created (files are added to corpus/jit_interesting_tests/)
         corpus_files = list(Path("corpus/jit_interesting_tests").glob("*.py"))
         self.assertGreater(
-            len(corpus_files), 0,
-            "Child file should be created after successful mutation"
+            len(corpus_files), 0, "Child file should be created after successful mutation"
         )
 
     def test_mutation_cycle_with_crash_saves_artifact(self):
         """Mutation cycle detecting crash saves crash artifact."""
         seed_file = list(Path("corpus").glob("*.py"))[0]
 
-        with patch('subprocess.run') as mock_run:
+        with patch("subprocess.run") as mock_run:
             # Mock crash with segfault
             mock_run.return_value = MagicMock(
                 returncode=-11,  # SIGSEGV
                 stdout="",
-                stderr="Segmentation fault\n"
+                stderr="Segmentation fault\n",
             )
 
             # Run mutation cycle
@@ -517,7 +518,7 @@ class TestMutationCycleIntegration(unittest.TestCase):
                 initial_parent_path=seed_file.resolve(),
                 initial_parent_score=0,
                 session_id=10,
-                is_deepening_session=False
+                is_deepening_session=False,
             )
 
         # Verify crash was saved
@@ -526,7 +527,7 @@ class TestMutationCycleIntegration(unittest.TestCase):
 
         # Verify log file exists
         if crash_files:
-            log_file = crash_files[0].with_suffix('.log')
+            log_file = crash_files[0].with_suffix(".log")
             self.assertTrue(log_file.exists(), "Crash log should be saved")
 
     def test_mutation_cycle_with_timeout_saves_artifact(self):
@@ -535,8 +536,9 @@ class TestMutationCycleIntegration(unittest.TestCase):
 
         # Mock subprocess.run to raise TimeoutExpired
         # This will be caught by _execute_child and handled properly
-        with patch('subprocess.run') as mock_run:
+        with patch("subprocess.run") as mock_run:
             from subprocess import TimeoutExpired
+
             mock_run.side_effect = TimeoutExpired(cmd=["python"], timeout=5)
 
             # Run mutation cycle
@@ -544,7 +546,7 @@ class TestMutationCycleIntegration(unittest.TestCase):
                 initial_parent_path=seed_file.resolve(),
                 initial_parent_score=0,
                 session_id=10,
-                is_deepening_session=False
+                is_deepening_session=False,
             )
 
         # Verify timeout directory exists and has files (timeouts/ not crashes/timeouts/)
@@ -583,8 +585,8 @@ class TestStatePersistenceIntegration(unittest.TestCase):
     def test_saves_and_loads_coverage_state(self):
         """Orchestrator saves coverage state that can be reloaded."""
         # Mock verify_target_capabilities to skip JIT checks
-        with patch.object(LafleurOrchestrator, 'verify_target_capabilities'):
-            with patch.object(CorpusManager, 'synchronize'):
+        with patch.object(LafleurOrchestrator, "verify_target_capabilities"):
+            with patch.object(CorpusManager, "synchronize"):
                 # Create first orchestrator and add coverage
                 orch1 = LafleurOrchestrator(
                     fusil_path=None,
@@ -600,8 +602,8 @@ class TestStatePersistenceIntegration(unittest.TestCase):
         save_coverage_state(orch1.coverage_manager.state)
 
         # Mock verify_target_capabilities to skip JIT checks
-        with patch.object(LafleurOrchestrator, 'verify_target_capabilities'):
-            with patch.object(CorpusManager, 'synchronize'):
+        with patch.object(LafleurOrchestrator, "verify_target_capabilities"):
+            with patch.object(CorpusManager, "synchronize"):
                 # Create second orchestrator and verify it loads the state
                 orch2 = LafleurOrchestrator(
                     fusil_path=None,
@@ -611,20 +613,14 @@ class TestStatePersistenceIntegration(unittest.TestCase):
                     target_python=sys.executable,
                 )
 
-        self.assertEqual(
-            orch2.coverage_manager.state["global_coverage"]["edges"],
-            {100: 5, 200: 3}
-        )
-        self.assertEqual(
-            orch2.coverage_manager.state["global_coverage"]["uops"],
-            {300: 10}
-        )
+        self.assertEqual(orch2.coverage_manager.state["global_coverage"]["edges"], {100: 5, 200: 3})
+        self.assertEqual(orch2.coverage_manager.state["global_coverage"]["uops"], {300: 10})
 
     def test_persists_mutator_scores_across_sessions(self):
         """Mutator scores are persisted and loaded across sessions."""
         # Mock verify_target_capabilities to skip JIT checks
-        with patch.object(LafleurOrchestrator, 'verify_target_capabilities'):
-            with patch.object(CorpusManager, 'synchronize'):
+        with patch.object(LafleurOrchestrator, "verify_target_capabilities"):
+            with patch.object(CorpusManager, "synchronize"):
                 # Create first orchestrator
                 orch1 = LafleurOrchestrator(
                     fusil_path=None,
@@ -641,8 +637,8 @@ class TestStatePersistenceIntegration(unittest.TestCase):
         save_coverage_state(orch1.coverage_manager.state)
 
         # Mock verify_target_capabilities to skip JIT checks
-        with patch.object(LafleurOrchestrator, 'verify_target_capabilities'):
-            with patch.object(CorpusManager, 'synchronize'):
+        with patch.object(LafleurOrchestrator, "verify_target_capabilities"):
+            with patch.object(CorpusManager, "synchronize"):
                 # Create second orchestrator
                 orch2 = LafleurOrchestrator(
                     fusil_path=None,
@@ -661,8 +657,8 @@ class TestStatePersistenceIntegration(unittest.TestCase):
         seed_file = list(Path("corpus").glob("*.py"))[0]
 
         # Mock verify_target_capabilities to skip JIT checks
-        with patch.object(LafleurOrchestrator, 'verify_target_capabilities'):
-            with patch.object(CorpusManager, 'synchronize'):
+        with patch.object(LafleurOrchestrator, "verify_target_capabilities"):
+            with patch.object(CorpusManager, "synchronize"):
                 # Create orchestrator and add metadata
                 orch1 = LafleurOrchestrator(
                     fusil_path=None,
@@ -681,15 +677,13 @@ class TestStatePersistenceIntegration(unittest.TestCase):
                 "mutators_applied": [],
                 "depth": 0,
             },
-            "harness_profiles": {
-                "f1": {"edges": {100: 1}, "uops": {200: 1}, "rare_events": {}}
-            }
+            "harness_profiles": {"f1": {"edges": {100: 1}, "uops": {200: 1}, "rare_events": {}}},
         }
         save_coverage_state(orch1.coverage_manager.state)
 
         # Mock verify_target_capabilities to skip JIT checks
-        with patch.object(LafleurOrchestrator, 'verify_target_capabilities'):
-            with patch.object(CorpusManager, 'synchronize'):
+        with patch.object(LafleurOrchestrator, "verify_target_capabilities"):
+            with patch.object(CorpusManager, "synchronize"):
                 # Create new orchestrator and verify metadata loaded
                 orch2 = LafleurOrchestrator(
                     fusil_path=None,
@@ -704,5 +698,5 @@ class TestStatePersistenceIntegration(unittest.TestCase):
         self.assertEqual(metadata["depth"], 0)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     unittest.main()

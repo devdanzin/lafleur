@@ -71,9 +71,9 @@ class TestPrepareChildScript(unittest.TestCase):
         mutated_harness = parent_tree.body[0]
 
         # Test with random returning value that triggers GC (< 0.25)
-        with patch('lafleur.orchestrator.random.random', return_value=0.1):
-            with patch('lafleur.orchestrator.random.choices', return_value=[10]):
-                with patch('sys.stderr', new_callable=io.StringIO) as mock_stderr:
+        with patch("lafleur.orchestrator.random.random", return_value=0.1):
+            with patch("lafleur.orchestrator.random.choices", return_value=[10]):
+                with patch("sys.stderr", new_callable=io.StringIO) as mock_stderr:
                     result = self.orchestrator._prepare_child_script(
                         parent_tree, mutated_harness, runtime_seed=42
                     )
@@ -87,7 +87,7 @@ class TestPrepareChildScript(unittest.TestCase):
         parent_tree = ast.parse("def uop_harness_test():\n    pass")
         mutated_harness = parent_tree.body[0]
 
-        with patch('lafleur.orchestrator.random.random', return_value=0.9):
+        with patch("lafleur.orchestrator.random.random", return_value=0.9):
             result = self.orchestrator._prepare_child_script(
                 parent_tree, mutated_harness, runtime_seed=42
             )
@@ -101,7 +101,7 @@ class TestPrepareChildScript(unittest.TestCase):
         parent_tree = ast.parse("def uop_harness_f1():\n    x = 1")
         mutated_harness = parent_tree.body[0]
 
-        with patch('lafleur.orchestrator.HarnessInstrumentor') as mock_instr:
+        with patch("lafleur.orchestrator.HarnessInstrumentor") as mock_instr:
             mock_instance = MagicMock()
             mock_instr.return_value = mock_instance
             mock_instance.visit.return_value = parent_tree
@@ -118,8 +118,8 @@ class TestPrepareChildScript(unittest.TestCase):
         parent_tree = ast.parse("def uop_harness_test():\n    pass")
         mutated_harness = parent_tree.body[0]
 
-        with patch('ast.unparse', side_effect=RecursionError("Stack overflow")):
-            with patch('sys.stderr', new_callable=io.StringIO) as mock_stderr:
+        with patch("ast.unparse", side_effect=RecursionError("Stack overflow")):
+            with patch("sys.stderr", new_callable=io.StringIO) as mock_stderr:
                 result = self.orchestrator._prepare_child_script(
                     parent_tree, mutated_harness, runtime_seed=42
                 )
@@ -171,15 +171,23 @@ class TestRunTimedTrial(unittest.TestCase):
         mock_path = Path("/tmp/test.py")
 
         # Simulate 5 runs (num_runs=3 means 5 total to discard outliers)
-        with patch('subprocess.run') as mock_run:
-            with patch('time.monotonic', side_effect=[
-                0.0, 0.1,  # Run 1: 100ms
-                0.2, 0.3,  # Run 2: 100ms
-                0.4, 0.5,  # Run 3: 100ms
-                0.6, 0.7,  # Run 4: 100ms
-                0.8, 0.9,  # Run 5: 100ms
-            ]):
-                with patch('sys.stderr', new_callable=io.StringIO):
+        with patch("subprocess.run") as mock_run:
+            with patch(
+                "time.monotonic",
+                side_effect=[
+                    0.0,
+                    0.1,  # Run 1: 100ms
+                    0.2,
+                    0.3,  # Run 2: 100ms
+                    0.4,
+                    0.5,  # Run 3: 100ms
+                    0.6,
+                    0.7,  # Run 4: 100ms
+                    0.8,
+                    0.9,  # Run 5: 100ms
+                ],
+            ):
+                with patch("sys.stderr", new_callable=io.StringIO):
                     avg_ms, did_timeout, cv = self.orchestrator._run_timed_trial(
                         mock_path, num_runs=3, jit_enabled=True
                     )
@@ -192,8 +200,8 @@ class TestRunTimedTrial(unittest.TestCase):
         """Test that timeout returns (None, True, None)."""
         mock_path = Path("/tmp/test.py")
 
-        with patch('subprocess.run', side_effect=subprocess.TimeoutExpired("cmd", 10)):
-            with patch('sys.stderr', new_callable=io.StringIO):
+        with patch("subprocess.run", side_effect=subprocess.TimeoutExpired("cmd", 10)):
+            with patch("sys.stderr", new_callable=io.StringIO):
                 avg_ms, did_timeout, cv = self.orchestrator._run_timed_trial(
                     mock_path, num_runs=3, jit_enabled=True
                 )
@@ -206,8 +214,8 @@ class TestRunTimedTrial(unittest.TestCase):
         """Test that crash during timing returns (None, False, None)."""
         mock_path = Path("/tmp/test.py")
 
-        with patch('subprocess.run', side_effect=subprocess.CalledProcessError(1, "cmd")):
-            with patch('sys.stderr', new_callable=io.StringIO) as mock_stderr:
+        with patch("subprocess.run", side_effect=subprocess.CalledProcessError(1, "cmd")):
+            with patch("sys.stderr", new_callable=io.StringIO) as mock_stderr:
                 avg_ms, did_timeout, cv = self.orchestrator._run_timed_trial(
                     mock_path, num_runs=3, jit_enabled=True
                 )
@@ -227,15 +235,23 @@ class TestRunTimedTrial(unittest.TestCase):
         # Mean=60ms, stdev≈10ms, CV≈16.7% - still need higher variation
         # Let's use: [10ms, 30ms, 60ms, 90ms, 120ms] -> discard 10, 120 -> [30, 60, 90]
         # Mean=60ms, stdev≈30ms, CV=50% > 20%
-        with patch('subprocess.run'):
-            with patch('time.monotonic', side_effect=[
-                0.0, 0.01,    # Run 1: 10ms (will be discarded as min)
-                0.1, 0.13,    # Run 2: 30ms
-                0.2, 0.26,    # Run 3: 60ms
-                0.3, 0.39,    # Run 4: 90ms
-                0.4, 0.52,    # Run 5: 120ms (will be discarded as max)
-            ]):
-                with patch('sys.stderr', new_callable=io.StringIO) as mock_stderr:
+        with patch("subprocess.run"):
+            with patch(
+                "time.monotonic",
+                side_effect=[
+                    0.0,
+                    0.01,  # Run 1: 10ms (will be discarded as min)
+                    0.1,
+                    0.13,  # Run 2: 30ms
+                    0.2,
+                    0.26,  # Run 3: 60ms
+                    0.3,
+                    0.39,  # Run 4: 90ms
+                    0.4,
+                    0.52,  # Run 5: 120ms (will be discarded as max)
+                ],
+            ):
+                with patch("sys.stderr", new_callable=io.StringIO) as mock_stderr:
                     avg_ms, did_timeout, cv = self.orchestrator._run_timed_trial(
                         mock_path, num_runs=3, jit_enabled=True
                     )
@@ -250,53 +266,47 @@ class TestRunTimedTrial(unittest.TestCase):
         """Test that JIT environment variable is set correctly."""
         mock_path = Path("/tmp/test.py")
 
-        with patch('subprocess.run') as mock_run:
-            with patch('time.monotonic', side_effect=[i * 0.1 for i in range(10)]):
-                with patch('sys.stderr', new_callable=io.StringIO):
-                    self.orchestrator._run_timed_trial(
-                        mock_path, num_runs=3, jit_enabled=True
-                    )
+        with patch("subprocess.run") as mock_run:
+            with patch("time.monotonic", side_effect=[i * 0.1 for i in range(10)]):
+                with patch("sys.stderr", new_callable=io.StringIO):
+                    self.orchestrator._run_timed_trial(mock_path, num_runs=3, jit_enabled=True)
 
                     # Check that env has PYTHON_JIT=1
-                    env_arg = mock_run.call_args[1]['env']
-                    self.assertEqual(env_arg['PYTHON_JIT'], '1')
+                    env_arg = mock_run.call_args[1]["env"]
+                    self.assertEqual(env_arg["PYTHON_JIT"], "1")
 
     def test_jit_disabled_sets_environment(self):
         """Test that JIT is disabled when jit_enabled=False."""
         mock_path = Path("/tmp/test.py")
 
-        with patch('subprocess.run') as mock_run:
-            with patch('time.monotonic', side_effect=[i * 0.1 for i in range(10)]):
-                with patch('sys.stderr', new_callable=io.StringIO):
-                    self.orchestrator._run_timed_trial(
-                        mock_path, num_runs=3, jit_enabled=False
-                    )
+        with patch("subprocess.run") as mock_run:
+            with patch("time.monotonic", side_effect=[i * 0.1 for i in range(10)]):
+                with patch("sys.stderr", new_callable=io.StringIO):
+                    self.orchestrator._run_timed_trial(mock_path, num_runs=3, jit_enabled=False)
 
-                    env_arg = mock_run.call_args[1]['env']
-                    self.assertEqual(env_arg['PYTHON_JIT'], '0')
+                    env_arg = mock_run.call_args[1]["env"]
+                    self.assertEqual(env_arg["PYTHON_JIT"], "0")
 
     def test_disables_debug_logs_for_timing(self):
         """Test that debug logs are disabled during timing."""
         mock_path = Path("/tmp/test.py")
 
-        with patch('subprocess.run') as mock_run:
-            with patch('time.monotonic', side_effect=[i * 0.1 for i in range(10)]):
-                with patch('sys.stderr', new_callable=io.StringIO):
-                    self.orchestrator._run_timed_trial(
-                        mock_path, num_runs=3, jit_enabled=True
-                    )
+        with patch("subprocess.run") as mock_run:
+            with patch("time.monotonic", side_effect=[i * 0.1 for i in range(10)]):
+                with patch("sys.stderr", new_callable=io.StringIO):
+                    self.orchestrator._run_timed_trial(mock_path, num_runs=3, jit_enabled=True)
 
-                    env_arg = mock_run.call_args[1]['env']
-                    self.assertEqual(env_arg['PYTHON_LLTRACE'], '0')
-                    self.assertEqual(env_arg['PYTHON_OPT_DEBUG'], '0')
+                    env_arg = mock_run.call_args[1]["env"]
+                    self.assertEqual(env_arg["PYTHON_LLTRACE"], "0")
+                    self.assertEqual(env_arg["PYTHON_OPT_DEBUG"], "0")
 
     def test_zero_mean_returns_zero(self):
         """Test that zero mean time returns (0.0, False, 0.0)."""
         mock_path = Path("/tmp/test.py")
 
-        with patch('subprocess.run'):
-            with patch('time.monotonic', side_effect=[i * 0.0 for i in range(10)]):
-                with patch('sys.stderr', new_callable=io.StringIO):
+        with patch("subprocess.run"):
+            with patch("time.monotonic", side_effect=[i * 0.0 for i in range(10)]):
+                with patch("sys.stderr", new_callable=io.StringIO):
                     avg_ms, did_timeout, cv = self.orchestrator._run_timed_trial(
                         mock_path, num_runs=3, jit_enabled=True
                     )
@@ -312,15 +322,23 @@ class TestRunTimedTrial(unittest.TestCase):
         # Timings: 10ms, 100ms, 100ms, 100ms, 500ms
         # After sorting: 10, 100, 100, 100, 500
         # Stable (discard min/max): 100, 100, 100 -> mean = 100
-        with patch('subprocess.run'):
-            with patch('time.monotonic', side_effect=[
-                0.0, 0.01,    # 10ms - will be discarded (min)
-                0.1, 0.2,     # 100ms
-                0.3, 0.4,     # 100ms
-                0.5, 0.6,     # 100ms
-                0.7, 1.2,     # 500ms - will be discarded (max)
-            ]):
-                with patch('sys.stderr', new_callable=io.StringIO):
+        with patch("subprocess.run"):
+            with patch(
+                "time.monotonic",
+                side_effect=[
+                    0.0,
+                    0.01,  # 10ms - will be discarded (min)
+                    0.1,
+                    0.2,  # 100ms
+                    0.3,
+                    0.4,  # 100ms
+                    0.5,
+                    0.6,  # 100ms
+                    0.7,
+                    1.2,  # 500ms - will be discarded (max)
+                ],
+            ):
+                with patch("sys.stderr", new_callable=io.StringIO):
                     avg_ms, _, _ = self.orchestrator._run_timed_trial(
                         mock_path, num_runs=3, jit_enabled=True
                     )
@@ -343,9 +361,9 @@ class TestHandleTimeout(unittest.TestCase):
         child_log = Path("/tmp/child.log")
         parent = Path("/tmp/parent.py")
 
-        with patch.object(self.orchestrator, '_process_log_file', return_value=child_log):
-            with patch('shutil.copy'):
-                with patch('sys.stderr', new_callable=io.StringIO):
+        with patch.object(self.orchestrator, "_process_log_file", return_value=child_log):
+            with patch("shutil.copy"):
+                with patch("sys.stderr", new_callable=io.StringIO):
                     self.orchestrator._handle_timeout(child_source, child_log, parent)
 
         self.assertEqual(self.orchestrator.run_stats["timeouts_found"], 1)
@@ -356,9 +374,11 @@ class TestHandleTimeout(unittest.TestCase):
         child_log = Path("/tmp/child.log")
         parent = Path("/tmp/parent.py")
 
-        with patch.object(self.orchestrator, '_process_log_file', return_value=child_log) as mock_proc:
-            with patch('shutil.copy'):
-                with patch('sys.stderr', new_callable=io.StringIO):
+        with patch.object(
+            self.orchestrator, "_process_log_file", return_value=child_log
+        ) as mock_proc:
+            with patch("shutil.copy"):
+                with patch("sys.stderr", new_callable=io.StringIO):
                     self.orchestrator._handle_timeout(child_source, child_log, parent)
 
             mock_proc.assert_called_once_with(child_log, 1_000_000, "Timeout log")
@@ -372,9 +392,9 @@ class TestHandleTimeout(unittest.TestCase):
         mock_log = MagicMock()
         mock_log.exists.return_value = True
 
-        with patch.object(self.orchestrator, '_process_log_file', return_value=mock_log):
-            with patch('shutil.copy') as mock_copy:
-                with patch('sys.stderr', new_callable=io.StringIO):
+        with patch.object(self.orchestrator, "_process_log_file", return_value=mock_log):
+            with patch("shutil.copy") as mock_copy:
+                with patch("sys.stderr", new_callable=io.StringIO):
                     self.orchestrator._handle_timeout(child_source, child_log, parent)
 
             # Should copy both source and log
@@ -391,9 +411,9 @@ class TestHandleTimeout(unittest.TestCase):
 
         parent = Path("/tmp/parent.py")
 
-        with patch.object(self.orchestrator, '_process_log_file', return_value=mock_log):
-            with patch('shutil.copy') as mock_copy:
-                with patch('sys.stderr', new_callable=io.StringIO):
+        with patch.object(self.orchestrator, "_process_log_file", return_value=mock_log):
+            with patch("shutil.copy") as mock_copy:
+                with patch("sys.stderr", new_callable=io.StringIO):
                     self.orchestrator._handle_timeout(child_source, child_log, parent)
 
             # Check that the destination log path has _truncated
@@ -411,9 +431,9 @@ class TestHandleTimeout(unittest.TestCase):
 
         parent = Path("/tmp/parent.py")
 
-        with patch.object(self.orchestrator, '_process_log_file', return_value=mock_log):
-            with patch('shutil.copy') as mock_copy:
-                with patch('sys.stderr', new_callable=io.StringIO):
+        with patch.object(self.orchestrator, "_process_log_file", return_value=mock_log):
+            with patch("shutil.copy") as mock_copy:
+                with patch("sys.stderr", new_callable=io.StringIO):
                     self.orchestrator._handle_timeout(child_source, child_log, parent)
 
             # Check that the destination log path has .log.zst
@@ -426,9 +446,9 @@ class TestHandleTimeout(unittest.TestCase):
         child_log = Path("/tmp/child.log")
         parent = Path("/tmp/parent.py")
 
-        with patch.object(self.orchestrator, '_process_log_file', return_value=child_log):
-            with patch('shutil.copy'):
-                with patch('sys.stderr', new_callable=io.StringIO) as mock_stderr:
+        with patch.object(self.orchestrator, "_process_log_file", return_value=child_log):
+            with patch("shutil.copy"):
+                with patch("sys.stderr", new_callable=io.StringIO) as mock_stderr:
                     self.orchestrator._handle_timeout(child_source, child_log, parent)
 
                     self.assertIn("TIMEOUT DETECTED", mock_stderr.getvalue())
@@ -452,12 +472,12 @@ class TestExecuteChild(unittest.TestCase):
         log_path = Path("/tmp/child.log")
         parent_path = Path("/tmp/parent.py")
 
-        with patch('pathlib.Path.write_text'):
-            with patch('subprocess.run') as mock_run:
+        with patch("pathlib.Path.write_text"):
+            with patch("subprocess.run") as mock_run:
                 mock_run.return_value = subprocess.CompletedProcess(
                     args=[], returncode=0, stdout="", stderr="Coverage: edges={}"
                 )
-                with patch('sys.stderr', new_callable=io.StringIO):
+                with patch("sys.stderr", new_callable=io.StringIO):
                     result = self.orchestrator._execute_child(
                         source, source_path, log_path, parent_path
                     )
@@ -477,9 +497,9 @@ class TestExecuteChild(unittest.TestCase):
         nojit_result = subprocess.CompletedProcess(args=[], returncode=0, stdout="out1", stderr="")
         jit_result = subprocess.CompletedProcess(args=[], returncode=1, stdout="out2", stderr="")
 
-        with patch('pathlib.Path.write_text'):
-            with patch('subprocess.run', side_effect=[nojit_result, jit_result]):
-                with patch('sys.stderr', new_callable=io.StringIO):
+        with patch("pathlib.Path.write_text"):
+            with patch("subprocess.run", side_effect=[nojit_result, jit_result]):
+                with patch("sys.stderr", new_callable=io.StringIO):
                     result = self.orchestrator._execute_child(
                         source, source_path, log_path, parent_path
                     )
@@ -497,10 +517,12 @@ class TestExecuteChild(unittest.TestCase):
         log_path = Path("/tmp/child.log")
         parent_path = Path("/tmp/parent.py")
 
-        with patch('pathlib.Path.write_text'):
-            with patch('subprocess.run', side_effect=subprocess.TimeoutExpired("cmd", 10)):
-                with patch.object(self.orchestrator, '_handle_timeout', return_value=None) as mock_handle:
-                    with patch('sys.stderr', new_callable=io.StringIO):
+        with patch("pathlib.Path.write_text"):
+            with patch("subprocess.run", side_effect=subprocess.TimeoutExpired("cmd", 10)):
+                with patch.object(
+                    self.orchestrator, "_handle_timeout", return_value=None
+                ) as mock_handle:
+                    with patch("sys.stderr", new_callable=io.StringIO):
                         result = self.orchestrator._execute_child(
                             source, source_path, log_path, parent_path
                         )
@@ -518,10 +540,12 @@ class TestExecuteChild(unittest.TestCase):
 
         nojit_result = subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
 
-        with patch('pathlib.Path.write_text'):
-            with patch('subprocess.run', side_effect=[nojit_result, subprocess.TimeoutExpired("cmd", 10)]):
-                with patch.object(self.orchestrator, '_save_jit_hang') as mock_save:
-                    with patch('sys.stderr', new_callable=io.StringIO):
+        with patch("pathlib.Path.write_text"):
+            with patch(
+                "subprocess.run", side_effect=[nojit_result, subprocess.TimeoutExpired("cmd", 10)]
+            ):
+                with patch.object(self.orchestrator, "_save_jit_hang") as mock_save:
+                    with patch("sys.stderr", new_callable=io.StringIO):
                         result = self.orchestrator._execute_child(
                             source, source_path, log_path, parent_path
                         )
@@ -536,12 +560,12 @@ class TestExecuteChild(unittest.TestCase):
         log_path = Path("/tmp/child.log")
         parent_path = Path("/tmp/parent.py")
 
-        with patch('pathlib.Path.write_text'):
-            with patch('subprocess.run') as mock_run:
+        with patch("pathlib.Path.write_text"):
+            with patch("subprocess.run") as mock_run:
                 mock_run.return_value = subprocess.CompletedProcess(
                     args=[], returncode=0, stdout="", stderr=""
                 )
-                with patch('sys.stderr', new_callable=io.StringIO):
+                with patch("sys.stderr", new_callable=io.StringIO):
                     result = self.orchestrator._execute_child(
                         source, source_path, log_path, parent_path
                     )
@@ -566,8 +590,8 @@ class TestVerifyTargetCapabilities(unittest.TestCase):
             args=[], returncode=0, stdout="", stderr=jit_output
         )
 
-        with patch('subprocess.run', return_value=mock_result):
-            with patch('sys.stderr', new_callable=io.StringIO) as mock_stderr:
+        with patch("subprocess.run", return_value=mock_result):
+            with patch("sys.stderr", new_callable=io.StringIO) as mock_stderr:
                 # Should not raise
                 self.orchestrator.verify_target_capabilities()
 
@@ -580,9 +604,9 @@ class TestVerifyTargetCapabilities(unittest.TestCase):
             args=[], returncode=0, stdout="", stderr=no_jit_output
         )
 
-        with patch('subprocess.run', return_value=mock_result):
-            with patch('sys.stderr', new_callable=io.StringIO):
-                with patch('sys.exit') as mock_exit:
+        with patch("subprocess.run", return_value=mock_result):
+            with patch("sys.stderr", new_callable=io.StringIO):
+                with patch("sys.exit") as mock_exit:
                     self.orchestrator.verify_target_capabilities()
 
                     # Should call sys.exit(1) when JIT traces not found
@@ -590,7 +614,7 @@ class TestVerifyTargetCapabilities(unittest.TestCase):
 
     def test_handles_subprocess_timeout(self):
         """Test that subprocess timeout raises RuntimeError."""
-        with patch('subprocess.run', side_effect=subprocess.TimeoutExpired("cmd", 15)):
+        with patch("subprocess.run", side_effect=subprocess.TimeoutExpired("cmd", 15)):
             with self.assertRaises(RuntimeError) as ctx:
                 self.orchestrator.verify_target_capabilities()
 
@@ -603,13 +627,13 @@ class TestVerifyTargetCapabilities(unittest.TestCase):
             args=[], returncode=0, stdout="", stderr=jit_output
         )
 
-        with patch('subprocess.run', return_value=mock_result) as mock_run:
-            with patch('sys.stderr', new_callable=io.StringIO):
+        with patch("subprocess.run", return_value=mock_result) as mock_run:
+            with patch("sys.stderr", new_callable=io.StringIO):
                 self.orchestrator.verify_target_capabilities()
 
                 # Check environment variables
                 call_kwargs = mock_run.call_args[1]
-                self.assertIn('env', call_kwargs)
+                self.assertIn("env", call_kwargs)
 
 
 if __name__ == "__main__":

@@ -2,6 +2,7 @@ import unittest
 from unittest.mock import MagicMock
 from lafleur.analysis import CrashFingerprinter, CrashType, CrashSignature
 
+
 class TestCrashFingerprinter(unittest.TestCase):
     def setUp(self):
         self.fingerprinter = CrashFingerprinter()
@@ -73,5 +74,6 @@ class TestCrashFingerprinter(unittest.TestCase):
         self.assertEqual(sig.type, "UNKNOWN")
         self.assertEqual(sig.fingerprint, "EXIT:1")
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     unittest.main()

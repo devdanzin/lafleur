@@ -222,9 +222,6 @@ def get_jit_stats(namespace: dict) -> dict:
         except Exception as e:
             print(f"DEBUG: Introspection failed: {e}")
 
-        except Exception as e:
-            print(f"DEBUG: Introspection failed: {e}")
-
     def walk_code_objects(code_obj: CodeType, visited: set | None = None):
         """Recursively yield a code object and all its nested code objects."""
         if visited is None:

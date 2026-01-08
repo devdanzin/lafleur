@@ -106,6 +106,7 @@ def scan_watched_variables(executor_ptr: ctypes.POINTER(PyExecutorObject), names
     """Identify which globals/builtins are watched by this executor."""
     watched = []
     bloom = executor_ptr.contents.vm_data.bloom
+    print(f"[DEBUG] Scanning watched vars. Bloom bits: {list(bloom.bits)[:4]}...", flush=True)
 
     def is_watched(obj) -> bool:
         if check_bloom(bloom, id(obj)):
@@ -117,8 +118,10 @@ def scan_watched_variables(executor_ptr: ctypes.POINTER(PyExecutorObject), names
 
     try:
         # Check globals
+        print(f"[DEBUG] Checking {len(namespace)} globals...", flush=True)
         for name, obj in namespace.items():
             if isinstance(name, str) and is_watched(obj):
+                print(f"[DEBUG] Global match: {name}", flush=True)
                 watched.append(name)
 
         # Check builtins from the namespace (can be dict or module)
@@ -129,10 +132,13 @@ def scan_watched_variables(executor_ptr: ctypes.POINTER(PyExecutorObject), names
                 builtins_dict = vars(builtins_val)
 
             if isinstance(builtins_dict, dict):
+                print(f"[DEBUG] Checking {len(builtins_dict)} builtins...", flush=True)
                 for name, obj in builtins_dict.items():
                     if isinstance(name, str) and is_watched(obj):
+                        print(f"[DEBUG] Builtin match: {name}", flush=True)
                         watched.append(name)
-    except Exception:
+    except Exception as e:
+        print(f"[DEBUG] scan_watched_variables failed: {e}", flush=True)
         pass
     return watched
 
@@ -204,11 +210,17 @@ def get_jit_stats(namespace: dict) -> dict:
                 density = exit_count / code_size
                 max_exit_density = max(max_exit_density, density)
 
+                print(f"[DEBUG] Executor: exit={exit_count} size={code_size} density={density:.2f}", flush=True)
+
                 # Scan for watched variables if this executor is unstable
-                if density > 10.0:
+                if density >= 0.0:  # DEBUG: Forced scan for testing
+                    print(f"[DEBUG] Triggering scan for density {density:.2f} >= 0.0", flush=True)
                     watched = scan_watched_variables(executor_ptr, namespace)
                     if watched:
                         print(f"[EKG] WATCHED: {', '.join(watched)}", flush=True)
+
+        except Exception as e:
+            print(f"DEBUG: Introspection failed: {e}")
 
         except Exception as e:
             print(f"DEBUG: Introspection failed: {e}")

@@ -28,15 +28,19 @@ JIT_TWEAKS = {
         ("CONFIDENCE_CUTOFF", 100),
     ],
     "Include/internal/pycore_optimizer.h": [
-        ("TRACE_STACK_SIZE", 10),
+        # Decrease the JIT cleanup threshold to run it more often.
+        ("JIT_CLEANUP_THRESHOLD", 10000),
+    ],
+    "Include/internal/pycore_optimizer_types.h": [
         ("MAX_ABSTRACT_INTERP_SIZE", 8192),
         # Increase the maximum length of a side-exit chain.
         ("MAX_CHAIN_DEPTH", 16),
         # Decrease the max trace length to stress trace linking.
-        ("UOP_MAX_TRACE_LENGTH", 800),
-        # Decrease the JIT cleanup threshold to run it more often.
-        ("JIT_CLEANUP_THRESHOLD", 10000),
     ],
+    # "Include/internal/pycore_uop.h": [
+    #     ("UOP_MAX_TRACE_LENGTH", 800),
+    # ],
+
 }
 
 

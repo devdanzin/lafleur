@@ -9,6 +9,7 @@ summaries for campaign analysis.
 from __future__ import annotations
 
 import argparse
+import html
 import json
 import sys
 from collections import Counter
@@ -422,6 +423,285 @@ class CampaignAggregator:
         return "\n".join(lines)
 
 
+def generate_html_report(aggregator: CampaignAggregator) -> str:
+    """
+    Generate an offline HTML report with embedded CSS and JavaScript.
+
+    Args:
+        aggregator: The CampaignAggregator with loaded and aggregated data.
+
+    Returns:
+        Complete HTML document as a string.
+    """
+    instance_count = len(aggregator.instances)
+    total_crashes = sum(c.count for c in aggregator.global_crashes.values())
+    unique_crashes = len(aggregator.global_crashes)
+
+    # Calculate max values for bar scaling
+    max_speed = max((i.speed for i in aggregator.instances), default=1) or 1
+    max_coverage = max((i.coverage for i in aggregator.instances), default=1) or 1
+    max_hits = max((c.count for c in aggregator.global_crashes.values()), default=1) or 1
+
+    # Sort instances by coverage (descending)
+    sorted_instances = sorted(aggregator.instances, key=lambda i: i.coverage, reverse=True)
+
+    # Sort crashes by reproducibility then count
+    sorted_crashes = sorted(
+        aggregator.global_crashes.items(),
+        key=lambda x: (
+            len(x[1].finding_instances) / instance_count if instance_count else 0,
+            x[1].count,
+        ),
+        reverse=True,
+    )[:15]  # Top 15
+
+    # Build instance rows
+    instance_rows = []
+    for inst in sorted_instances:
+        name_escaped = html.escape(inst.name)
+        status_class = "running" if inst.status == "Running" else "stopped"
+        speed_pct = (inst.speed / max_speed) * 100 if max_speed else 0
+        coverage_pct = (inst.coverage / max_coverage) * 100 if max_coverage else 0
+        speed_str = f"{inst.speed:.2f}/s" if inst.speed > 0 else "N/A"
+
+        instance_rows.append(f"""        <tr>
+          <td>{name_escaped}</td>
+          <td><span class="status {status_class}">{inst.status}</span></td>
+          <td data-sort="{inst.speed:.4f}"><div class="bar-container"><div class="bar-fill speed" style="width:{speed_pct:.1f}%"></div><span class="bar-text">{speed_str}</span></div></td>
+          <td data-sort="{inst.coverage}"><div class="bar-container"><div class="bar-fill coverage" style="width:{coverage_pct:.1f}%"></div><span class="bar-text">{inst.coverage:,}</span></div></td>
+          <td data-sort="{inst.corpus_size}">{inst.corpus_size:,}</td>
+          <td data-sort="{inst.crash_count}">{inst.crash_count:,}</td>
+        </tr>""")
+
+    # Build crash rows
+    crash_rows = []
+    for fingerprint, info in sorted_crashes:
+        fp_escaped = html.escape(fingerprint[:50] if len(fingerprint) > 50 else fingerprint)
+        first_finder = html.escape(info.first_finder or "Unknown")
+        instance_pct = (len(info.finding_instances) / instance_count * 100) if instance_count else 0
+        hits_pct = (info.count / max_hits) * 100 if max_hits else 0
+
+        crash_rows.append(f"""        <tr>
+          <td title="{html.escape(fingerprint)}">{fp_escaped}</td>
+          <td data-sort="{info.count}"><div class="bar-container"><div class="bar-fill hits" style="width:{hits_pct:.1f}%"></div><span class="bar-text">{info.count:,}</span></div></td>
+          <td data-sort="{instance_pct:.1f}">{instance_pct:.1f}%</td>
+          <td>{first_finder}</td>
+        </tr>""")
+
+    # Top mutations
+    top_mutations = aggregator.get_top_mutations(5)
+    mutations_html = (
+        ", ".join(
+            f"<span class='mutation'>{html.escape(name)}</span> ({count:,})"
+            for name, count in top_mutations
+        )
+        if top_mutations
+        else "N/A"
+    )
+
+    report_date = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    return f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Lafleur Campaign Report</title>
+  <style>
+    :root {{
+      --bg: #1a1a2e;
+      --surface: #16213e;
+      --primary: #0f3460;
+      --accent: #e94560;
+      --text: #eee;
+      --text-dim: #888;
+      --success: #4ade80;
+      --warning: #fbbf24;
+    }}
+    * {{ box-sizing: border-box; margin: 0; padding: 0; }}
+    body {{
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.6;
+      padding: 2rem;
+    }}
+    h1 {{ color: var(--accent); margin-bottom: 0.5rem; }}
+    h2 {{ color: var(--text); margin: 2rem 0 1rem; border-bottom: 2px solid var(--primary); padding-bottom: 0.5rem; }}
+    .subtitle {{ color: var(--text-dim); margin-bottom: 2rem; }}
+    .kpi-grid {{
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 1rem;
+      margin-bottom: 2rem;
+    }}
+    .kpi-card {{
+      background: var(--surface);
+      border-radius: 8px;
+      padding: 1.5rem;
+      border-left: 4px solid var(--accent);
+    }}
+    .kpi-card .label {{ color: var(--text-dim); font-size: 0.875rem; text-transform: uppercase; }}
+    .kpi-card .value {{ font-size: 2rem; font-weight: bold; color: var(--text); }}
+    table {{
+      width: 100%;
+      border-collapse: collapse;
+      background: var(--surface);
+      border-radius: 8px;
+      overflow: hidden;
+    }}
+    th, td {{ padding: 0.75rem 1rem; text-align: left; }}
+    th {{
+      background: var(--primary);
+      cursor: pointer;
+      user-select: none;
+      white-space: nowrap;
+    }}
+    th:hover {{ background: #1a4a7a; }}
+    th::after {{ content: " \\2195"; opacity: 0.5; }}
+    th.asc::after {{ content: " \\2191"; opacity: 1; }}
+    th.desc::after {{ content: " \\2193"; opacity: 1; }}
+    tr:nth-child(even) {{ background: rgba(255,255,255,0.02); }}
+    tr:hover {{ background: rgba(255,255,255,0.05); }}
+    .status {{
+      padding: 0.25rem 0.5rem;
+      border-radius: 4px;
+      font-size: 0.75rem;
+      font-weight: bold;
+      text-transform: uppercase;
+    }}
+    .status.running {{ background: var(--success); color: #000; }}
+    .status.stopped {{ background: var(--text-dim); color: #000; }}
+    .bar-container {{
+      position: relative;
+      background: rgba(255,255,255,0.1);
+      border-radius: 4px;
+      height: 24px;
+      min-width: 100px;
+    }}
+    .bar-fill {{
+      position: absolute;
+      top: 0;
+      left: 0;
+      height: 100%;
+      border-radius: 4px;
+      opacity: 0.7;
+    }}
+    .bar-fill.speed {{ background: linear-gradient(90deg, #4ade80, #22c55e); }}
+    .bar-fill.coverage {{ background: linear-gradient(90deg, #60a5fa, #3b82f6); }}
+    .bar-fill.hits {{ background: linear-gradient(90deg, #f87171, #ef4444); }}
+    .bar-text {{
+      position: relative;
+      z-index: 1;
+      display: block;
+      padding: 2px 8px;
+      font-size: 0.875rem;
+      font-weight: 500;
+    }}
+    .summary {{ background: var(--surface); padding: 1.5rem; border-radius: 8px; margin-top: 2rem; }}
+    .summary p {{ margin: 0.5rem 0; }}
+    .mutation {{
+      background: var(--primary);
+      padding: 0.125rem 0.5rem;
+      border-radius: 4px;
+      font-size: 0.875rem;
+    }}
+    footer {{ margin-top: 3rem; text-align: center; color: var(--text-dim); font-size: 0.875rem; }}
+  </style>
+</head>
+<body>
+  <h1>Lafleur Campaign Report</h1>
+  <p class="subtitle">Generated: {report_date}</p>
+
+  <div class="kpi-grid">
+    <div class="kpi-card">
+      <div class="label">Core-Hours</div>
+      <div class="value">{aggregator.get_core_hours():,.1f}</div>
+    </div>
+    <div class="kpi-card">
+      <div class="label">Total Executions</div>
+      <div class="value">{aggregator.totals["total_executions"]:,}</div>
+    </div>
+    <div class="kpi-card">
+      <div class="label">Fleet Speed</div>
+      <div class="value">{aggregator.get_fleet_speed():.2f}/s</div>
+    </div>
+    <div class="kpi-card">
+      <div class="label">Unique Crashes</div>
+      <div class="value">{unique_crashes}</div>
+    </div>
+  </div>
+
+  <h2>Instance Leaderboard ({instance_count} instances)</h2>
+  <table id="instances">
+    <thead>
+      <tr>
+        <th>Name</th>
+        <th>Status</th>
+        <th>Speed</th>
+        <th>Coverage</th>
+        <th>Corpus</th>
+        <th>Crashes</th>
+      </tr>
+    </thead>
+    <tbody>
+{chr(10).join(instance_rows)}
+    </tbody>
+  </table>
+
+  <h2>Global Crash Table ({unique_crashes} unique, {total_crashes:,} hits)</h2>
+  <table id="crashes">
+    <thead>
+      <tr>
+        <th>Fingerprint</th>
+        <th>Hits</th>
+        <th>Reproducibility</th>
+        <th>First Finder</th>
+      </tr>
+    </thead>
+    <tbody>
+{chr(10).join(crash_rows)}
+    </tbody>
+  </table>
+
+  <div class="summary">
+    <h2 style="margin-top:0;border:none;">Fleet Corpus Summary</h2>
+    <p><strong>Total Files:</strong> {aggregator.global_corpus["total_files"]:,}</p>
+    <p><strong>Sterile Rate:</strong> {aggregator.get_global_sterile_rate() * 100:.2f}%</p>
+    <p><strong>Avg Lineage Depth:</strong> {aggregator.get_avg_lineage_depth():.1f}</p>
+    <p><strong>Top Mutations:</strong> {mutations_html}</p>
+  </div>
+
+  <footer>Lafleur Fuzzer Campaign Analysis</footer>
+
+  <script>
+    document.querySelectorAll('th').forEach(th => {{
+      th.addEventListener('click', () => {{
+        const table = th.closest('table');
+        const tbody = table.querySelector('tbody');
+        const idx = Array.from(th.parentNode.children).indexOf(th);
+        const rows = Array.from(tbody.querySelectorAll('tr'));
+        const asc = !th.classList.contains('asc');
+
+        th.parentNode.querySelectorAll('th').forEach(h => h.classList.remove('asc', 'desc'));
+        th.classList.add(asc ? 'asc' : 'desc');
+
+        rows.sort((a, b) => {{
+          const aCell = a.children[idx], bCell = b.children[idx];
+          let aVal = aCell.dataset.sort !== undefined ? aCell.dataset.sort : aCell.textContent.trim();
+          let bVal = bCell.dataset.sort !== undefined ? bCell.dataset.sort : bCell.textContent.trim();
+          const aNum = parseFloat(aVal.replace(/,/g, '')), bNum = parseFloat(bVal.replace(/,/g, ''));
+          if (!isNaN(aNum) && !isNaN(bNum)) return asc ? aNum - bNum : bNum - aNum;
+          return asc ? aVal.localeCompare(bVal) : bVal.localeCompare(aVal);
+        }});
+        rows.forEach(row => tbody.appendChild(row));
+      }});
+    }});
+  </script>
+</body>
+</html>"""
+
+
 def discover_instances(root_dir: Path) -> list[Path]:
     """
     Discover lafleur instance directories under a root directory.
@@ -457,9 +737,10 @@ def main() -> None:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  %(prog)s runs/                      # Analyze all instances under runs/
+  %(prog)s runs/                        # Analyze all instances under runs/
+  %(prog)s runs/ --html report.html     # Generate HTML report
   %(prog)s runs/jit_run1 runs/jit_run2  # Analyze specific instances
-  %(prog)s ~/fuzzing/campaign1/       # Analyze a campaign directory
+  %(prog)s ~/fuzzing/campaign1/         # Analyze a campaign directory
         """,
     )
     parser.add_argument(
@@ -467,6 +748,12 @@ Examples:
         nargs="+",
         type=Path,
         help="Root directory containing instances, or list of instance directories",
+    )
+    parser.add_argument(
+        "--html",
+        type=Path,
+        metavar="PATH",
+        help="Generate HTML report and save to specified path",
     )
 
     args = parser.parse_args()
@@ -502,9 +789,16 @@ Examples:
     aggregator.load_instances()
     aggregator.aggregate()
 
-    # Generate and print report
+    # Generate and print text report
     report = aggregator.generate_report()
     print(report)
+
+    # Generate HTML report if requested
+    if args.html:
+        html_report = generate_html_report(aggregator)
+        with open(args.html, "w", encoding="utf-8") as f:
+            f.write(html_report)
+        print(f"[+] HTML report saved to {args.html}", file=sys.stderr)
 
 
 if __name__ == "__main__":

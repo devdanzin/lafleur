@@ -24,6 +24,63 @@ def load_json_file(path: Path) -> dict[str, Any] | None:
         return None
 
 
+def load_latest_timeseries_entry(instance_dir: Path) -> dict[str, Any] | None:
+    """
+    Load the latest entry from the timeseries log.
+
+    The timeseries log contains system metrics (RSS, corpus size, disk usage)
+    that aren't stored in fuzz_run_stats.json.
+
+    Args:
+        instance_dir: Path to the fuzzing instance directory.
+
+    Returns:
+        Dictionary with the latest timeseries entry, or None if not found.
+    """
+    logs_dir = instance_dir / "logs"
+    if not logs_dir.exists():
+        return None
+
+    # Find timeseries files (there may be multiple from different runs)
+    timeseries_files = sorted(logs_dir.glob("timeseries_*.jsonl"), reverse=True)
+    if not timeseries_files:
+        return None
+
+    # Read the latest entry from the most recent timeseries file
+    for ts_file in timeseries_files:
+        try:
+            # Read the last line efficiently
+            with open(ts_file, "rb") as f:
+                # Seek to end and work backwards to find last newline
+                f.seek(0, 2)  # Go to end
+                file_size = f.tell()
+                if file_size == 0:
+                    continue
+
+                # Read backwards to find the last complete line
+                pos = file_size - 1
+                while pos > 0:
+                    f.seek(pos)
+                    char = f.read(1)
+                    if char == b"\n" and pos < file_size - 1:
+                        break
+                    pos -= 1
+
+                # Read the last line
+                if pos > 0:
+                    f.seek(pos + 1)
+                else:
+                    f.seek(0)
+
+                last_line = f.read().decode("utf-8").strip()
+                if last_line:
+                    return json.loads(last_line)
+        except (OSError, json.JSONDecodeError):
+            continue
+
+    return None
+
+
 def parse_timestamp(timestamp_str: str | None) -> datetime | None:
     """Parse an ISO format timestamp string into a datetime object."""
     if not timestamp_str:
@@ -116,11 +173,16 @@ def calculate_duration(
     Returns (duration_seconds, end_time_source) where end_time_source indicates
     how the end time was determined.
     """
-    # Get start time from metadata
+    # Get start time - check multiple sources
     start_time = None
     start_time_str = None
-    if metadata:
-        # Try to find start_time in various locations
+
+    # First, check stats file (most reliable source)
+    if stats:
+        start_time_str = stats.get("start_time")
+
+    # Then check metadata
+    if not start_time_str and metadata:
         start_time_str = metadata.get("start_time")
         if not start_time_str and "configuration" in metadata:
             # Check if stored in args
@@ -193,6 +255,7 @@ def generate_report(instance_dir: Path) -> str:
 
     metadata = load_json_file(metadata_path)
     stats = load_json_file(stats_path)
+    timeseries = load_latest_timeseries_entry(instance_dir)
     crash_groups = load_crash_data(instance_dir)
 
     # Calculate derived metrics
@@ -270,19 +333,32 @@ def generate_report(instance_dir: Path) -> str:
 
     uptime_str = format_duration(duration_seconds) if duration_seconds >= 0 else "N/A"
 
-    # Get memory and disk from latest stats
+    # Get memory and disk from timeseries (preferred) or stats
+    # These metrics are recorded in the timeseries log, not fuzz_run_stats.json
+    process_rss = None
+    corpus_size_mb = None
+    disk_usage = None
+    system_load = None
+
+    if timeseries:
+        process_rss = timeseries.get("process_rss_mb")
+        corpus_size_mb = timeseries.get("corpus_size_mb")
+        disk_usage = timeseries.get("disk_usage_percent")
+        system_load = timeseries.get("system_load_1min")
+
+    # Fall back to stats if timeseries doesn't have these
     if stats:
-        process_rss = stats.get("process_rss_mb")
-        corpus_size_mb = stats.get("corpus_size_mb")
-        disk_usage = stats.get("disk_usage_percent")
-    else:
-        process_rss = None
-        corpus_size_mb = None
-        disk_usage = None
+        if process_rss is None:
+            process_rss = stats.get("process_rss_mb")
+        if corpus_size_mb is None:
+            corpus_size_mb = stats.get("corpus_size_mb")
+        if disk_usage is None:
+            disk_usage = stats.get("disk_usage_percent")
 
     lines.append(f"Uptime:         {uptime_str}")
     lines.append(f"Executions:     {format_number(total_mutations)}")
     lines.append(f"Speed:          {format_number(speed, ' exec/s')}")
+    lines.append(f"System Load:    {format_number(system_load) if system_load else 'N/A'}")
     lines.append(f"Memory (RSS):   {format_number(process_rss, ' MB') if process_rss else 'N/A'}")
     lines.append(
         f"Corpus Size:    {format_number(corpus_size_mb, ' MB') if corpus_size_mb else 'N/A'}"

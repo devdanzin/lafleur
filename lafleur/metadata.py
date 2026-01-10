@@ -243,7 +243,7 @@ def get_git_info() -> dict[str, str | bool]:
 
 
 def get_installed_packages() -> list[dict[str, str]]:
-    """Get list of installed packages with their versions."""
+    """Get list of installed packages with their versions from the current interpreter."""
     packages = []
     for dist in distributions():
         packages.append({"name": dist.metadata["Name"], "version": dist.metadata["Version"]})
@@ -251,9 +251,113 @@ def get_installed_packages() -> list[dict[str, str]]:
     return sorted(packages, key=lambda p: p["name"].lower())
 
 
+def get_target_python_info(python_path: str) -> dict:
+    """
+    Retrieve metadata from the target Python interpreter.
+
+    Runs a subprocess to gather version, executable path, config args, and
+    installed packages from the specified Python interpreter rather than
+    the current one running lafleur.
+
+    Args:
+        python_path: Path to the target Python executable.
+
+    Returns:
+        Dictionary with keys: version, executable, config_args, packages, fallback.
+        If subprocess fails, returns data from current interpreter with fallback=True.
+    """
+    # Python script to run in target interpreter
+    script = """
+import sys
+import json
+import sysconfig
+try:
+    from importlib.metadata import distributions
+    packages = [{"name": d.metadata["Name"], "version": d.metadata["Version"]} for d in distributions()]
+    packages = sorted(packages, key=lambda p: p["name"].lower())
+except Exception:
+    packages = []
+
+result = {
+    "version": sys.version,
+    "executable": sys.executable,
+    "config_args": sysconfig.get_config_var("CONFIG_ARGS"),
+    "packages": packages,
+}
+print(json.dumps(result))
+"""
+
+    try:
+        result = subprocess.run(
+            [python_path, "-c", script],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+
+        if result.returncode == 0:
+            data = json.loads(result.stdout.strip())
+            data["fallback"] = False
+            return data
+        else:
+            print(
+                f"[!] Warning: Failed to get info from target Python ({python_path}): "
+                f"{result.stderr.strip()}",
+                file=sys.stderr,
+            )
+    except subprocess.TimeoutExpired:
+        print(
+            f"[!] Warning: Timeout getting info from target Python ({python_path})",
+            file=sys.stderr,
+        )
+    except (FileNotFoundError, OSError, json.JSONDecodeError) as e:
+        print(
+            f"[!] Warning: Error getting info from target Python ({python_path}): {e}",
+            file=sys.stderr,
+        )
+
+    # Fallback to current interpreter
+    print("[!] Warning: Falling back to host interpreter info", file=sys.stderr)
+    return {
+        "version": sys.version,
+        "executable": sys.executable,
+        "config_args": sysconfig.get_config_var("CONFIG_ARGS"),
+        "packages": get_installed_packages(),
+        "fallback": True,
+    }
+
+
+def load_existing_metadata(metadata_path: Path) -> dict | None:
+    """
+    Load existing metadata file if it exists.
+
+    Args:
+        metadata_path: Path to the run_metadata.json file.
+
+    Returns:
+        Dictionary with existing metadata, or None if file doesn't exist or is invalid.
+    """
+    if not metadata_path.exists():
+        return None
+
+    try:
+        with open(metadata_path, encoding="utf-8") as f:
+            return json.load(f)
+    except (json.JSONDecodeError, OSError) as e:
+        print(f"[!] Warning: Could not load existing metadata: {e}", file=sys.stderr)
+        return None
+
+
 def generate_run_metadata(output_dir: Path, args: argparse.Namespace) -> dict:
     """
     Generate comprehensive run metadata and save to a JSON file.
+
+    This function supports identity persistence: if run_metadata.json already exists
+    in output_dir, the existing run_id and instance_name are preserved. Dynamic
+    fields like hardware stats and configuration are always updated.
+
+    The target Python interpreter (specified via --target-python) is queried for
+    its version, config args, and packages, rather than using the host interpreter.
 
     Args:
         output_dir: Directory where run_metadata.json will be saved.
@@ -262,31 +366,59 @@ def generate_run_metadata(output_dir: Path, args: argparse.Namespace) -> dict:
     Returns:
         Dictionary containing all collected metadata.
     """
-    # Get instance name from args or generate one
-    instance_name = getattr(args, "instance_name", None) or generate_docker_style_name()
+    output_dir.mkdir(parents=True, exist_ok=True)
+    metadata_path = output_dir / "run_metadata.json"
+
+    # Check for existing metadata to preserve identity
+    existing_metadata = load_existing_metadata(metadata_path)
+
+    if existing_metadata:
+        # Preserve existing identity
+        run_id = existing_metadata.get("run_id", str(uuid.uuid4()))
+        instance_name = existing_metadata.get("instance_name") or generate_docker_style_name()
+        print(
+            f"[+] Reusing existing instance identity: {instance_name} ({run_id[:8]}...)",
+            file=sys.stderr,
+        )
+    else:
+        # Generate new identity
+        run_id = str(uuid.uuid4())
+        instance_name = getattr(args, "instance_name", None) or generate_docker_style_name()
+        print(
+            f"[+] Created new instance identity: {instance_name} ({run_id[:8]}...)",
+            file=sys.stderr,
+        )
+
+    # Determine target Python (the interpreter being fuzzed)
+    target_python = getattr(args, "target_python", None) or sys.executable
+
+    # Get target interpreter info (version, config, packages)
+    target_info = get_target_python_info(target_python)
 
     metadata = {
-        # Instance Identity
-        "run_id": str(uuid.uuid4()),
+        # Instance Identity (preserved across runs)
+        "run_id": run_id,
         "instance_name": instance_name,
-        # Environment
+        # Environment (from target Python, not host)
         "environment": {
             "hostname": platform.node(),
             "os": platform.platform(),
-            "python_version": sys.version,
-            "python_executable": sys.executable,
-            "python_config_args": sysconfig.get_config_var("CONFIG_ARGS"),
+            "target_python": target_python,
+            "python_version": target_info["version"],
+            "python_executable": target_info["executable"],
+            "python_config_args": target_info["config_args"],
+            "target_info_fallback": target_info.get("fallback", False),
             "lafleur_version": get_git_info(),
-            "packages": get_installed_packages(),
+            "packages": target_info["packages"],
         },
-        # Hardware
+        # Hardware (always fresh - may change between runs)
         "hardware": {
             "cpu_count_logical": psutil.cpu_count(logical=True),
             "cpu_count_physical": psutil.cpu_count(logical=False),
             "total_ram_gb": round(psutil.virtual_memory().total / (1024**3), 2),
             "disk_free_gb": round(shutil.disk_usage(output_dir).free / (1024**3), 2),
         },
-        # Configuration
+        # Configuration (always fresh - may change between runs)
         "configuration": {
             "args": vars(args),
             "env_vars": {
@@ -298,8 +430,6 @@ def generate_run_metadata(output_dir: Path, args: argparse.Namespace) -> dict:
     }
 
     # Save metadata to file
-    output_dir.mkdir(parents=True, exist_ok=True)
-    metadata_path = output_dir / "run_metadata.json"
     with open(metadata_path, "w", encoding="utf-8") as f:
         json.dump(metadata, f, indent=2, default=str)
 

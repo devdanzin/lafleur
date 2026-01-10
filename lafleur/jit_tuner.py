@@ -40,7 +40,6 @@ JIT_TWEAKS = {
     # "Include/internal/pycore_uop.h": [
     #     ("UOP_MAX_TRACE_LENGTH", 800),
     # ],
-
 }
 
 

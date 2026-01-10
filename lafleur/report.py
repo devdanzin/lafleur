@@ -255,6 +255,7 @@ def generate_report(instance_dir: Path) -> str:
 
     metadata = load_json_file(metadata_path)
     stats = load_json_file(stats_path)
+    corpus_stats = load_json_file(instance_dir / "corpus_stats.json")
     timeseries = load_latest_timeseries_entry(instance_dir)
     crash_groups = load_crash_data(instance_dir)
 
@@ -383,6 +384,50 @@ def generate_report(instance_dir: Path) -> str:
     lines.append(f"Global Edges:   {format_number(global_edges)}")
     lines.append(f"Global Uops:    {format_number(global_uops)}")
     lines.append(f"Corpus Files:   {format_number(corpus_files)}")
+    lines.append("")
+
+    # ========== CORPUS EVOLUTION ==========
+    lines.append("-" * 80)
+    lines.append("CORPUS EVOLUTION")
+    lines.append("-" * 80)
+
+    if corpus_stats:
+        # Tree topology
+        root_count = corpus_stats.get("root_count", 0)
+        leaf_count = corpus_stats.get("leaf_count", 0)
+        max_depth = corpus_stats.get("max_depth", 0)
+        lines.append(
+            f"Tree Topology:  Roots: {root_count}, Leaves: {leaf_count}, Max Depth: {max_depth}"
+        )
+
+        # Sterile rate
+        sterile_count = corpus_stats.get("sterile_count", 0)
+        sterile_rate = corpus_stats.get("sterile_rate", 0) * 100
+        viable_count = corpus_stats.get("viable_count", 0)
+        lines.append(
+            f"Sterile Files:  {sterile_count} ({sterile_rate:.1f}%), Viable: {viable_count}"
+        )
+
+        # Average metrics from distributions
+        size_dist = corpus_stats.get("file_size_distribution", {})
+        exec_dist = corpus_stats.get("execution_time_distribution", {})
+        avg_size = size_dist.get("mean")
+        avg_exec = exec_dist.get("mean")
+        lines.append(f"Avg File Size:  {format_number(avg_size, ' bytes') if avg_size else 'N/A'}")
+        lines.append(f"Avg Exec Time:  {format_number(avg_exec, ' ms') if avg_exec else 'N/A'}")
+
+        # Top mutations
+        successful_mutations = corpus_stats.get("successful_mutations", {})
+        if successful_mutations:
+            # Get top 3 mutations
+            top_mutations = list(successful_mutations.items())[:3]
+            top_str = ", ".join(f"{name} ({count})" for name, count in top_mutations)
+            lines.append(f"Top Mutations:  {top_str}")
+        else:
+            lines.append("Top Mutations:  N/A")
+    else:
+        lines.append("No corpus statistics available.")
+
     lines.append("")
 
     # ========== CRASH DIGEST ==========

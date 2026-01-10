@@ -38,6 +38,7 @@ Changelog = "https://github.com/devdanzin/lafleur/blob/main/CHANGELOG.md"
 [project.scripts]
 lafleur = "lafleur.orchestrator:main"
 lafleur-jit-tweak = "lafleur.jit_tuner:main"
+lafleur-report = "lafleur.report:main"
 
 [tool.mypy]
 check_untyped_defs = true

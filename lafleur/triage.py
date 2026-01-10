@@ -418,6 +418,53 @@ def show_crash(args: argparse.Namespace) -> None:
         print(f"  {s['timestamp']} | {s['instance_name']} | rev: {rev}")
 
 
+def export_issues(args: argparse.Namespace) -> None:
+    """Export reported issues to a JSON file."""
+    registry = CrashRegistry(args.db)
+    issues = registry.get_all_reported_issues()
+
+    try:
+        with open(args.output, "w", encoding="utf-8") as f:
+            json.dump(issues, f, indent=4, sort_keys=True)
+        print(f"[+] Exported {len(issues)} known issues to {args.output}")
+    except OSError as e:
+        print(f"Error writing to {args.output}: {e}", file=sys.stderr)
+        sys.exit(1)
+
+
+def import_issues(args: argparse.Namespace) -> None:
+    """Import reported issues from a JSON file."""
+    try:
+        with open(args.input, encoding="utf-8") as f:
+            data = json.load(f)
+    except FileNotFoundError:
+        print(f"Error: File not found: {args.input}", file=sys.stderr)
+        sys.exit(1)
+    except json.JSONDecodeError as e:
+        print(f"Error: Invalid JSON in {args.input}: {e}", file=sys.stderr)
+        sys.exit(1)
+    except OSError as e:
+        print(f"Error reading {args.input}: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    # Validate structure
+    if not isinstance(data, list):
+        print("Error: JSON file must contain a list of issue objects", file=sys.stderr)
+        sys.exit(1)
+
+    for i, item in enumerate(data):
+        if not isinstance(item, dict):
+            print(f"Error: Item {i} is not a dictionary", file=sys.stderr)
+            sys.exit(1)
+        if "issue_number" not in item:
+            print(f"Error: Item {i} missing required field 'issue_number'", file=sys.stderr)
+            sys.exit(1)
+
+    registry = CrashRegistry(args.db)
+    count = registry.upsert_reported_issues(data)
+    print(f"[+] Imported/Updated {count} known issues from {args.input}")
+
+
 def main() -> None:
     """Main entry point for the triage CLI."""
     parser = argparse.ArgumentParser(
@@ -478,6 +525,28 @@ def main() -> None:
         help="Crash fingerprint to look up",
     )
 
+    # Export issues command
+    export_parser = subparsers.add_parser(
+        "export-issues",
+        help="Export reported issues to a JSON file",
+    )
+    export_parser.add_argument(
+        "output",
+        type=Path,
+        help="Output JSON file path",
+    )
+
+    # Import issues command
+    import_issues_parser = subparsers.add_parser(
+        "import-issues",
+        help="Import reported issues from a JSON file",
+    )
+    import_issues_parser.add_argument(
+        "input",
+        type=Path,
+        help="Input JSON file path",
+    )
+
     args = parser.parse_args()
 
     if args.command == "import":
@@ -490,6 +559,10 @@ def main() -> None:
         list_crashes(args)
     elif args.command == "show":
         show_crash(args)
+    elif args.command == "export-issues":
+        export_issues(args)
+    elif args.command == "import-issues":
+        import_issues(args)
     else:
         parser.print_help()
 

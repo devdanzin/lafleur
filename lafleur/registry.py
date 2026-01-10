@@ -472,3 +472,68 @@ class CrashRegistry:
 
             cursor.execute(query, (fingerprint,))
             return [dict(row) for row in cursor.fetchall()]
+
+    def get_all_reported_issues(self) -> list[dict[str, Any]]:
+        """
+        Get all reported issues from the registry.
+
+        Returns:
+            List of dictionaries with issue data (keys matching column names).
+        """
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM reported_issues ORDER BY issue_number")
+            return [dict(row) for row in cursor.fetchall()]
+
+    def upsert_reported_issues(self, issues: list[dict[str, Any]]) -> int:
+        """
+        Insert or update multiple reported issues atomically.
+
+        Args:
+            issues: List of dictionaries with issue data.
+                    Each dict must include 'issue_number'.
+
+        Returns:
+            Count of records processed.
+        """
+        if not issues:
+            return 0
+
+        # Define the column order for consistency
+        columns = [
+            "issue_number",
+            "title",
+            "url",
+            "reported_date",
+            "reported_by",
+            "description",
+            "cpython_revision",
+            "cpython_version",
+            "build_info",
+            "issue_status",
+            "crash_status",
+            "linked_prs",
+            "tested_oses",
+            "labels",
+        ]
+
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            count = 0
+
+            for issue in issues:
+                if "issue_number" not in issue:
+                    continue
+
+                # Build values list, using None for missing keys
+                values = [issue.get(col) for col in columns]
+
+                placeholders = ", ".join(["?"] * len(columns))
+                cursor.execute(
+                    f"INSERT OR REPLACE INTO reported_issues ({', '.join(columns)}) "
+                    f"VALUES ({placeholders})",
+                    values,
+                )
+                count += 1
+
+            return count

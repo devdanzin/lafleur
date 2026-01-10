@@ -52,6 +52,7 @@ from lafleur.mutators import (
     SlicingMutator,
     VariableRenamer,
 )
+from lafleur.corpus_analysis import generate_corpus_stats
 from lafleur.metadata import generate_run_metadata
 from lafleur.mutators.sniper import SniperMutator
 from lafleur.mutators.helper_injection import HelperFunctionInjector
@@ -519,6 +520,15 @@ class LafleurOrchestrator:
             )
 
         save_run_stats(self.run_stats)
+
+        # Generate and save corpus statistics
+        try:
+            corpus_stats = generate_corpus_stats(self.corpus_manager)
+            corpus_stats_path = Path("corpus_stats.json")
+            with open(corpus_stats_path, "w", encoding="utf-8") as f:
+                json.dump(corpus_stats, f, indent=2)
+        except Exception as e:
+            print(f"[!] Warning: Could not save corpus stats: {e}", file=sys.stderr)
 
     def _run_slicing(
         self, base_ast: ast.AST, stage_name: str, len_body: int, seed: int = None

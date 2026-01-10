@@ -25,6 +25,8 @@ import socket
 import sys
 import time
 from collections import defaultdict
+
+import psutil
 from compression import zstd
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -50,6 +52,7 @@ from lafleur.mutators import (
     SlicingMutator,
     VariableRenamer,
 )
+from lafleur.metadata import generate_run_metadata
 from lafleur.mutators.sniper import SniperMutator
 from lafleur.mutators.helper_injection import HelperFunctionInjector
 from lafleur.utils import ExecutionResult, TeeLogger, load_run_stats, save_run_stats
@@ -2280,11 +2283,33 @@ class LafleurOrchestrator:
         except IOError as e:
             print(f"  [!] CRITICAL: Could not save regression file: {e}", file=sys.stderr)
 
-    def _log_timeseries_datapoint(self):
+    def _log_timeseries_datapoint(self) -> None:
         """Append a snapshot of the current run statistics to the time-series log."""
         # Create a snapshot of the current stats for logging.
         datapoint = self.run_stats.copy()
         datapoint["timestamp"] = datetime.now(timezone.utc).isoformat()
+
+        # Add system resource metrics
+        try:
+            datapoint["system_load_1min"] = psutil.getloadavg()[0]
+        except (OSError, AttributeError):
+            # getloadavg() may not be available on all platforms (e.g., Windows)
+            datapoint["system_load_1min"] = None
+
+        datapoint["process_rss_mb"] = round(psutil.Process().memory_info().rss / (1024 * 1024), 2)
+
+        # Calculate corpus directory size
+        try:
+            corpus_size_bytes = sum(f.stat().st_size for f in CORPUS_DIR.rglob("*") if f.is_file())
+            datapoint["corpus_size_mb"] = round(corpus_size_bytes / (1024 * 1024), 2)
+        except OSError:
+            datapoint["corpus_size_mb"] = None
+
+        # Get disk usage percentage for the current working directory
+        try:
+            datapoint["disk_usage_percent"] = psutil.disk_usage(Path.cwd()).percent
+        except OSError:
+            datapoint["disk_usage_percent"] = None
 
         try:
             # Open in append mode and write the JSON object as a single line.
@@ -2476,6 +2501,13 @@ def main():
         default=sys.executable,
         help="Path to the target Python executable to fuzz. Defaults to the current interpreter.",
     )
+    parser.add_argument(
+        "--instance-name",
+        type=str,
+        default=None,
+        help="A human-readable name for this fuzzing instance (e.g., 'stoic-darwin'). "
+        "Auto-generated if not provided.",
+    )
     args = parser.parse_args()
 
     LOGS_DIR.mkdir(exist_ok=True)
@@ -2498,12 +2530,19 @@ def main():
     termination_reason = "Completed"  # Default reason
     start_stats = load_run_stats()  # Capture stats at the start
 
+    # Generate and save run metadata
+    run_metadata = generate_run_metadata(LOGS_DIR, args)
+    run_id = run_metadata["run_id"]
+    instance_name = run_metadata["instance_name"]
+
     try:
         # --- Create and Write the Informative Header ---
         header = f"""
 ================================================================================
 LAFLEUR FUZZER RUN
 ================================================================================
+- Instance Name:     {instance_name}
+- Run ID:            {run_id}
 - Hostname:          {socket.gethostname()}
 - Platform:          {platform.platform()}
 - Process ID:        {os.getpid()}

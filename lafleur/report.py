@@ -116,11 +116,16 @@ def calculate_duration(
     Returns (duration_seconds, end_time_source) where end_time_source indicates
     how the end time was determined.
     """
-    # Get start time from metadata
+    # Get start time - check multiple sources
     start_time = None
     start_time_str = None
-    if metadata:
-        # Try to find start_time in various locations
+
+    # First, check stats file (most reliable source)
+    if stats:
+        start_time_str = stats.get("start_time")
+
+    # Then check metadata
+    if not start_time_str and metadata:
         start_time_str = metadata.get("start_time")
         if not start_time_str and "configuration" in metadata:
             # Check if stored in args

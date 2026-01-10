@@ -39,6 +39,8 @@ Changelog = "https://github.com/devdanzin/lafleur/blob/main/CHANGELOG.md"
 lafleur = "lafleur.orchestrator:main"
 lafleur-jit-tweak = "lafleur.jit_tuner:main"
 lafleur-report = "lafleur.report:main"
+lafleur-campaign = "lafleur.campaign:main"
+lafleur-triage = "lafleur.triage:main"
 
 [tool.mypy]
 check_untyped_defs = true

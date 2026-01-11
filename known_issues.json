@@ -1,0 +1,212 @@
+[
+    {
+        "issue_number": 143610,
+        "title": "Assertion `_tstate->jit_tracer_state.initial_state.func != NULL` failed in `_PyOptimizer_Optimize`",
+        "url": "https://github.com/python/cpython/issues/143610",
+        "reported_date": "2026-01-09",
+        "reported_by": "devdanzin",
+        "description": "JIT assertion failure in optimizer when tracing state is invalid",
+        "issue_status": "Closed",
+        "crash_status": "FIXED"
+    },
+    {
+        "issue_number": 143604,
+        "title": "JIT: Use-after-free in `stop_tracing_and_jit`",
+        "url": "https://github.com/python/cpython/issues/143604",
+        "reported_date": "2026-01-09",
+        "reported_by": "devdanzin",
+        "description": "Heap-use-after-free when stopping JIT tracing",
+        "issue_status": "Closed",
+        "crash_status": "FIXED"
+    },
+    {
+        "issue_number": 143358,
+        "title": "JIT: Assertion `exc && PyExceptionInstance_Check(exc)` failed in `_PyEval_EvalFrameDefault`",
+        "url": "https://github.com/python/cpython/issues/143358",
+        "reported_date": "2026-01-02",
+        "reported_by": "devdanzin",
+        "description": "JIT assertion failure when handling exceptions",
+        "issue_status": "Open",
+        "crash_status": "REPORTED"
+    },
+    {
+        "issue_number": 143183,
+        "title": "JIT: Assertion failure in `stopiteration_error`",
+        "url": "https://github.com/python/cpython/issues/143183",
+        "reported_date": "2025-12-26",
+        "reported_by": "devdanzin",
+        "description": "JIT assertion failure related to StopIteration handling",
+        "issue_status": "Closed",
+        "crash_status": "FIXED"
+    },
+    {
+        "issue_number": 143123,
+        "title": "JIT: Assertion failure in `_PyOptimizer_Optimize`",
+        "url": "https://github.com/python/cpython/issues/143123",
+        "reported_date": "2025-12-23",
+        "reported_by": "devdanzin",
+        "description": "JIT optimizer assertion failure",
+        "issue_status": "Open",
+        "crash_status": "REPORTED"
+    },
+    {
+        "issue_number": 143092,
+        "title": "JIT: Segfault from invalid memory read in `_PyTier2Interpreter`",
+        "url": "https://github.com/python/cpython/issues/143092",
+        "reported_date": "2025-12-23",
+        "reported_by": "devdanzin",
+        "description": "JIT segfault from invalid memory access in tier 2 interpreter",
+        "issue_status": "Closed",
+        "crash_status": "FIXED"
+    },
+    {
+        "issue_number": 143026,
+        "title": "JIT: assertion failure in `_Py_DECREF_NO_DEALLOC`",
+        "url": "https://github.com/python/cpython/issues/143026",
+        "reported_date": "2025-12-20",
+        "reported_by": "devdanzin",
+        "description": "JIT reference counting assertion failure",
+        "issue_status": "Closed",
+        "crash_status": "FIXED"
+    },
+    {
+        "issue_number": 143020,
+        "title": "JIT: Segfaults from binary ops in code abusing descriptors",
+        "url": "https://github.com/python/cpython/issues/143020",
+        "reported_date": "2025-12-20",
+        "reported_by": "devdanzin",
+        "description": "JIT segfault when executing binary operations with descriptor abuse",
+        "issue_status": "Closed",
+        "crash_status": "FIXED"
+    },
+    {
+        "issue_number": 142961,
+        "title": "JIT: Segfault at `binary_op1`",
+        "url": "https://github.com/python/cpython/issues/142961",
+        "reported_date": "2025-12-19",
+        "reported_by": "devdanzin",
+        "description": "JIT segfault in binary operation handler",
+        "issue_status": "Closed",
+        "crash_status": "FIXED"
+    },
+    {
+        "issue_number": 141976,
+        "title": "JIT: Assertion failure for `WITHIN_STACK_BOUNDS()` in `optimize_uops`",
+        "url": "https://github.com/python/cpython/issues/141976",
+        "reported_date": "2025-11-26",
+        "reported_by": "devdanzin",
+        "description": "JIT stack bounds check assertion failure during optimization",
+        "issue_status": "Closed",
+        "crash_status": "FIXED"
+    },
+    {
+        "issue_number": 141861,
+        "title": "JIT: invalid memory read in _PyEval_EvalFrameDefault",
+        "url": "https://github.com/python/cpython/issues/141861",
+        "reported_date": "2025-11-22",
+        "reported_by": "devdanzin",
+        "description": "JIT invalid memory read in frame evaluation",
+        "issue_status": "Closed",
+        "crash_status": "FIXED"
+    },
+    {
+        "issue_number": 141797,
+        "title": "JIT: assertion failure in `_PyJit_translate_single_bytecode_to_trace`",
+        "url": "https://github.com/python/cpython/issues/141797",
+        "reported_date": "2025-11-20",
+        "reported_by": "devdanzin",
+        "description": "JIT assertion failure during bytecode to trace translation",
+        "issue_status": "Open",
+        "crash_status": "REPORTED"
+    },
+    {
+        "issue_number": 141786,
+        "title": "JIT: assertion failure in pycore_backoff.h",
+        "url": "https://github.com/python/cpython/issues/141786",
+        "reported_date": "2025-11-20",
+        "reported_by": "devdanzin",
+        "description": "JIT backoff mechanism assertion failure",
+        "issue_status": "Open",
+        "crash_status": "REPORTED"
+    },
+    {
+        "issue_number": 141648,
+        "title": "JIT segfault or aborts from shape confusion code",
+        "url": "https://github.com/python/cpython/issues/141648",
+        "reported_date": "2025-11-17",
+        "reported_by": "devdanzin",
+        "description": "JIT crashes from type/shape confusion patterns",
+        "issue_status": "Closed",
+        "crash_status": "FIXED"
+    },
+    {
+        "issue_number": 140104,
+        "title": "JIT (correctness): Different `UnboundLocalError` for same code with JIT on or off",
+        "url": "https://github.com/python/cpython/issues/140104",
+        "reported_date": "2025-10-14",
+        "reported_by": "devdanzin",
+        "description": "JIT correctness bug causing different exception behavior",
+        "issue_status": "Closed",
+        "crash_status": "FIXED"
+    },
+    {
+        "issue_number": 139192,
+        "title": "JIT: Failed assertion (`trace_length < max_length`) in `translate_bytecode_to_trace`",
+        "url": "https://github.com/python/cpython/issues/139192",
+        "reported_date": "2025-09-20",
+        "reported_by": "devdanzin",
+        "description": "JIT trace length assertion failure during compilation",
+        "issue_status": "Closed",
+        "crash_status": "FIXED"
+    },
+    {
+        "issue_number": 138431,
+        "title": "JIT: failed assertion in `_POP_TOP_NOP` calling `str()` on variable due to wrong reference information",
+        "url": "https://github.com/python/cpython/issues/138431",
+        "reported_date": "2025-09-03",
+        "reported_by": "devdanzin",
+        "description": "JIT reference tracking bug causing assertion failure",
+        "issue_status": "Closed",
+        "crash_status": "FIXED"
+    },
+    {
+        "issue_number": 137762,
+        "title": "Assertion failure in `optimize_uops` in a JIT build",
+        "url": "https://github.com/python/cpython/issues/137762",
+        "reported_date": "2025-08-14",
+        "reported_by": "devdanzin",
+        "description": "JIT optimizer assertion failure during uop optimization",
+        "issue_status": "Closed",
+        "crash_status": "FIXED"
+    },
+    {
+        "issue_number": 137728,
+        "title": "Assertion failure or `SystemError` in `_PyEval_EvalFrameDefault` in a JIT build",
+        "url": "https://github.com/python/cpython/issues/137728",
+        "reported_date": "2025-08-13",
+        "reported_by": "devdanzin",
+        "description": "JIT assertion failure or SystemError during frame evaluation",
+        "issue_status": "Closed",
+        "crash_status": "FIXED"
+    },
+    {
+        "issue_number": 137007,
+        "title": "JIT: assertion failure in _PyObject_GC_UNTRACK",
+        "url": "https://github.com/python/cpython/issues/137007",
+        "reported_date": "2025-07-22",
+        "reported_by": "devdanzin",
+        "description": "JIT garbage collection tracking assertion failure",
+        "issue_status": "Closed",
+        "crash_status": "FIXED"
+    },
+    {
+        "issue_number": 136996,
+        "title": "JIT: `executor->vm_data.valid` assertion failure in `unlink_executor`",
+        "url": "https://github.com/python/cpython/issues/136996",
+        "reported_date": "2025-07-22",
+        "reported_by": "devdanzin",
+        "description": "JIT executor validity assertion failure during unlinking",
+        "issue_status": "Open",
+        "crash_status": "REPORTED"
+    }
+]

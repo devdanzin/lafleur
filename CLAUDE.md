@@ -87,6 +87,27 @@ python scripts/analyze_uop_coverage.py
 grep -L -E "(statically|indentation|unsupported|formatting|invalid syntax)" crashes/*.log | sed 's/\.log$/.py/'
 ```
 
+### Analysis & Triage Tools
+```bash
+# Single instance health report
+lafleur-report /path/to/instance
+
+# Campaign aggregation with HTML dashboard
+lafleur-campaign runs/ --html report.html --registry crashes.db
+
+# Import crashes to registry
+lafleur-triage import runs/
+
+# Interactive crash triage (review NEW crashes)
+lafleur-triage interactive
+
+# Review/update previously triaged crashes
+lafleur-triage review --status REPORTED
+
+# Export known issues for sharing
+lafleur-triage export-issues known_issues.json
+```
+
 ## Architecture Overview
 
 ### Project Structure
@@ -103,8 +124,13 @@ grep -L -E "(statically|indentation|unsupported|formatting|invalid syntax)" cras
     - `utils.py` — Shared utilities for mutators
   - `coverage_parser.py` — Parses JIT trace logs for uop-edge coverage
   - `corpus_manager.py` — Manages test case corpus and scheduling
+  - `report.py` — Single-instance text reporter CLI
+  - `campaign.py` — Multi-instance campaign aggregator with HTML reports
+  - `registry.py` — SQLite-based crash registry for historical tracking
+  - `triage.py` — Interactive crash triage CLI
 - `tests/` — Test suite (unittest-based)
 - `doc/dev/` — Developer documentation
+- `docs/` — User-facing documentation (TOOLING.md)
 
 ### Core Components
 
@@ -139,6 +165,31 @@ grep -L -E "(statically|indentation|unsupported|formatting|invalid syntax)" cras
 - `MutatorScoreTracker` tracks historical success of each mutator
 - Implements decaying scores (0.995 factor) to favor recent successes
 - Uses epsilon-greedy selection to balance exploration vs exploitation
+
+### Analysis & Triage Components
+
+**lafleur/report.py** - Single instance reporter
+- Generates text summaries of fuzzing instance health
+- Reads from `fuzz_run_stats.json`, `logs/run_metadata.json`, `corpus_stats.json`
+- Sections: System, Performance, Coverage, Corpus Evolution, Crash Digest
+
+**lafleur/campaign.py** - Campaign aggregator
+- `CampaignAggregator` class aggregates metrics across multiple instances
+- Deduplicates crashes by fingerprint across the fleet
+- Produces both text and HTML reports with `--html` flag
+- Integrates with crash registry via `--registry` for status enrichment
+- Status labels: NEW, KNOWN, REGRESSION, NOISE
+
+**lafleur/registry.py** - Crash registry
+- `CrashRegistry` class provides SQLite-based crash tracking
+- Three tables: `reported_issues`, `crashes`, `sightings`
+- Tracks crash fingerprints, links to GitHub issues, triage status
+- Supports import/export of known issues as JSON
+
+**lafleur/triage.py** - Triage CLI
+- Subcommands: `import`, `interactive`, `review`, `record-issue`, `status`, `list`, `show`, `export-issues`, `import-issues`
+- Interactive triage loop for NEW crashes with actions: Report, Ignore, Mark Fixed, Note, Skip
+- Review mode for auditing/correcting previous triage decisions
 
 ### Mutation Categories
 
@@ -296,4 +347,16 @@ Developer documentation is in `doc/dev/`:
 - `05_state_and_data_formats.md`: State file format
 - `06_developer_getting_started.md`: Development setup
 - `07_extending_lafleur.md`: Adding features
+
+User-facing documentation is in `docs/`:
+- `TOOLING.md`: Analysis & triage workflow guide (report, campaign, triage tools)
+
+## CLI Entry Points
+
+Defined in `pyproject.toml` under `[project.scripts]`:
+- `lafleur` → `lafleur.orchestrator:main` — Main fuzzer
+- `lafleur-jit-tweak` → `lafleur.jit_tuner:main` — JIT parameter tuning
+- `lafleur-report` → `lafleur.report:main` — Single instance reporter
+- `lafleur-campaign` → `lafleur.campaign:main` — Campaign aggregator
+- `lafleur-triage` → `lafleur.triage:main` — Crash triage CLI
   

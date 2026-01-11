@@ -416,15 +416,25 @@ def generate_report(instance_dir: Path) -> str:
         lines.append(f"Avg File Size:  {format_number(avg_size, ' bytes') if avg_size else 'N/A'}")
         lines.append(f"Avg Exec Time:  {format_number(avg_exec, ' ms') if avg_exec else 'N/A'}")
 
-        # Top mutations
-        successful_mutations = corpus_stats.get("successful_mutations", {})
-        if successful_mutations:
-            # Get top 3 mutations
-            top_mutations = list(successful_mutations.items())[:3]
-            top_str = ", ".join(f"{name} ({count})" for name, count in top_mutations)
-            lines.append(f"Top Mutations:  {top_str}")
+        # Top strategies (with backwards compatibility)
+        successful_strategies = corpus_stats.get("successful_strategies", {})
+        if not successful_strategies:
+            successful_strategies = corpus_stats.get("successful_mutations", {})
+        if successful_strategies:
+            top_strategies = list(successful_strategies.items())[:3]
+            top_str = ", ".join(f"{name} ({count})" for name, count in top_strategies)
+            lines.append(f"Top Strategies: {top_str}")
         else:
-            lines.append("Top Mutations:  N/A")
+            lines.append("Top Strategies: N/A")
+
+        # Top mutators
+        successful_mutators = corpus_stats.get("successful_mutators", {})
+        if successful_mutators:
+            top_mutators = list(successful_mutators.items())[:3]
+            top_str = ", ".join(f"{name} ({count})" for name, count in top_mutators)
+            lines.append(f"Top Mutators:   {top_str}")
+        else:
+            lines.append("Top Mutators:   N/A")
     else:
         lines.append("No corpus statistics available.")
 

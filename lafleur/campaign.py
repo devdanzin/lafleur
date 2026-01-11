@@ -117,7 +117,8 @@ class CampaignAggregator:
             "sum_depth": 0.0,
             "sum_size": 0.0,
             "file_count_for_avg": 0,
-            "mutation_counter": Counter(),
+            "strategy_counter": Counter(),
+            "mutator_counter": Counter(),
         }
         self.totals = {
             "total_executions": 0,
@@ -257,10 +258,18 @@ class CampaignAggregator:
             if size_dist.get("mean"):
                 self.global_corpus["sum_size"] += size_dist["mean"] * total_files
 
-        # Aggregate mutation strategies
-        successful_mutations = corpus.get("successful_mutations", {})
-        for strategy, count in successful_mutations.items():
-            self.global_corpus["mutation_counter"][strategy] += count
+        # Aggregate mutation strategies (with backwards compatibility)
+        successful_strategies = corpus.get("successful_strategies", {})
+        # Fall back to old field name for backwards compatibility
+        if not successful_strategies:
+            successful_strategies = corpus.get("successful_mutations", {})
+        for strategy, count in successful_strategies.items():
+            self.global_corpus["strategy_counter"][strategy] += count
+
+        # Aggregate individual mutators
+        successful_mutators = corpus.get("successful_mutators", {})
+        for mutator, count in successful_mutators.items():
+            self.global_corpus["mutator_counter"][mutator] += count
 
     def _aggregate_performance(self, instance: InstanceData) -> None:
         """Aggregate performance metrics from an instance."""
@@ -300,9 +309,13 @@ class CampaignAggregator:
             return self.global_corpus["sum_depth"] / self.global_corpus["file_count_for_avg"]
         return 0.0
 
-    def get_top_mutations(self, n: int = 5) -> list[tuple[str, int]]:
+    def get_top_strategies(self, n: int = 5) -> list[tuple[str, int]]:
         """Get top N mutation strategies by success count."""
-        return self.global_corpus["mutation_counter"].most_common(n)
+        return self.global_corpus["strategy_counter"].most_common(n)
+
+    def get_top_mutators(self, n: int = 5) -> list[tuple[str, int]]:
+        """Get top N individual mutators/transformers by success count."""
+        return self.global_corpus["mutator_counter"].most_common(n)
 
     def enrich_crashes_from_registry(self, registry: Any) -> None:
         """
@@ -472,13 +485,21 @@ class CampaignAggregator:
         lines.append(f"Sterile Rate:   {total_sterile:,} ({sterile_rate:.2f}%)")
         lines.append(f"Avg Depth:      {avg_depth:.1f}")
 
-        # Top mutations
-        top_mutations = self.get_top_mutations(5)
-        if top_mutations:
-            top_str = ", ".join(f"{name} ({count:,})" for name, count in top_mutations)
-            lines.append(f"Top Mutations:  {top_str}")
+        # Top strategies
+        top_strategies = self.get_top_strategies(5)
+        if top_strategies:
+            top_str = ", ".join(f"{name} ({count:,})" for name, count in top_strategies)
+            lines.append(f"Top Strategies: {top_str}")
         else:
-            lines.append("Top Mutations:  N/A")
+            lines.append("Top Strategies: N/A")
+
+        # Top mutators
+        top_mutators = self.get_top_mutators(5)
+        if top_mutators:
+            top_str = ", ".join(f"{name} ({count:,})" for name, count in top_mutators)
+            lines.append(f"Top Mutators:   {top_str}")
+        else:
+            lines.append("Top Mutators:   N/A")
 
         lines.append("")
         lines.append("=" * 90)
@@ -580,14 +601,25 @@ def generate_html_report(aggregator: CampaignAggregator) -> str:
           <td>{issue_html}</td>
         </tr>""")
 
-    # Top mutations
-    top_mutations = aggregator.get_top_mutations(5)
-    mutations_html = (
+    # Top strategies
+    top_strategies = aggregator.get_top_strategies(5)
+    strategies_html = (
         ", ".join(
             f"<span class='mutation'>{html.escape(name)}</span> ({count:,})"
-            for name, count in top_mutations
+            for name, count in top_strategies
         )
-        if top_mutations
+        if top_strategies
+        else "N/A"
+    )
+
+    # Top mutators
+    top_mutators = aggregator.get_top_mutators(5)
+    mutators_html = (
+        ", ".join(
+            f"<span class='mutation'>{html.escape(name)}</span> ({count:,})"
+            for name, count in top_mutators
+        )
+        if top_mutators
         else "N/A"
     )
 
@@ -779,7 +811,8 @@ def generate_html_report(aggregator: CampaignAggregator) -> str:
     <p><strong>Total Files:</strong> {aggregator.global_corpus["total_files"]:,}</p>
     <p><strong>Sterile Rate:</strong> {aggregator.get_global_sterile_rate() * 100:.2f}%</p>
     <p><strong>Avg Lineage Depth:</strong> {aggregator.get_avg_lineage_depth():.1f}</p>
-    <p><strong>Top Mutations:</strong> {mutations_html}</p>
+    <p><strong>Top Strategies:</strong> {strategies_html}</p>
+    <p><strong>Top Mutators:</strong> {mutators_html}</p>
   </div>
 
   <footer>Lafleur Fuzzer Campaign Analysis</footer>

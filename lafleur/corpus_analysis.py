@@ -73,7 +73,8 @@ def generate_corpus_stats(corpus_manager: CorpusManager) -> dict[str, Any]:
             "root_count": 0,
             "leaf_count": 0,
             "max_depth": 0,
-            "successful_mutations": {},
+            "successful_strategies": {},
+            "successful_mutators": {},
         }
 
     # Collect data for analysis
@@ -85,7 +86,8 @@ def generate_corpus_stats(corpus_manager: CorpusManager) -> dict[str, Any]:
     parent_ids: set[str] = set()
     all_file_ids: set[str] = set()
     max_depth = 0
-    mutation_counter: Counter[str] = Counter()
+    mutation_counter: Counter[str] = Counter()  # Strategies
+    mutator_counter: Counter[str] = Counter()  # Individual transformers
 
     for filename, metadata in per_file_coverage.items():
         all_file_ids.add(filename)
@@ -113,11 +115,16 @@ def generate_corpus_stats(corpus_manager: CorpusManager) -> dict[str, Any]:
         if parent_id is not None:
             parent_ids.add(parent_id)
 
-        # Count successful mutations by strategy
+        # Count successful mutations by strategy and individual mutators
         discovery_mutation = metadata.get("discovery_mutation", {})
         if discovery_mutation:
             strategy = discovery_mutation.get("strategy", "unknown")
             mutation_counter[strategy] += 1
+
+            # Also count individual transformers/mutators
+            transformers = discovery_mutation.get("transformers", [])
+            for transformer in transformers:
+                mutator_counter[transformer] += 1
 
     # Calculate tree topology
     root_count = sum(
@@ -146,5 +153,6 @@ def generate_corpus_stats(corpus_manager: CorpusManager) -> dict[str, Any]:
         "leaf_count": leaf_count,
         "max_depth": max_depth,
         # Mutation intelligence (convert Counter to dict for JSON serialization)
-        "successful_mutations": dict(mutation_counter.most_common()),
+        "successful_strategies": dict(mutation_counter.most_common()),
+        "successful_mutators": dict(mutator_counter.most_common()),
     }

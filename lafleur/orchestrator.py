@@ -1647,6 +1647,9 @@ class LafleurOrchestrator:
                                 print(f"Error deleting {child_source_path}, file doesn't exist!")
 
                             compressed_log_path = child_log_path.with_suffix(".log.zst")
+                            truncated_log_path = child_log_path.with_name(
+                                f"{child_log_path.stem}_truncated{child_log_path.suffix}"
+                            )
                             if child_log_path.exists():
                                 if self.keep_tmp_logs:
                                     dest_log_path = (
@@ -1666,10 +1669,18 @@ class LafleurOrchestrator:
                                     shutil.move(compressed_log_path, dest_log_path)
                                 else:
                                     compressed_log_path.unlink()
-                            else:
-                                print(
-                                    f"Error processing log named {child_log_path.stem}, file doesn't exist!"
-                                )
+
+                            elif truncated_log_path.exists():
+                                if self.keep_tmp_logs:
+                                    dest_log_path = (
+                                        RUN_LOGS_DIR
+                                        / f"log_{parent_id}_seed_{mutation_seed}_run_{run_num + 1}_truncated.log"
+                                    )
+                                    shutil.move(truncated_log_path, dest_log_path)
+                                else:
+                                    truncated_log_path.unlink()
+                            # Note: If no log file exists, it was already processed and saved
+                            # by timeout/crash handling - this is expected, not an error.
 
                         except OSError as e:
                             print(

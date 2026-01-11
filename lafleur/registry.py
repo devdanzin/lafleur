@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import sqlite3
 from contextlib import contextmanager
-from datetime import datetime
 from pathlib import Path
 from typing import Any, Iterator
 
@@ -438,6 +437,120 @@ class CrashRegistry:
             )
 
             return cursor.rowcount > 0
+
+    def get_new_crashes(self) -> list[dict[str, Any]]:
+        """
+        Get all crashes with NEW triage status.
+
+        Returns:
+            List of crash dictionaries ordered by first_seen_date.
+        """
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT * FROM crashes
+                WHERE triage_status = 'NEW'
+                ORDER BY first_seen_date ASC
+                """
+            )
+            return [dict(row) for row in cursor.fetchall()]
+
+    def get_triaged_crashes(self, status: str | None = None) -> list[dict[str, Any]]:
+        """
+        Get crashes that have been triaged (non-NEW status).
+
+        Args:
+            status: Optional specific status to filter by (TRIAGED, REPORTED, IGNORED, FIXED).
+                    If None, returns all non-NEW crashes.
+
+        Returns:
+            List of crash dictionaries with linked issue info, ordered by first_seen_date.
+        """
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+
+            if status:
+                cursor.execute(
+                    """
+                    SELECT
+                        c.fingerprint,
+                        c.issue_number,
+                        c.triage_status,
+                        c.first_seen_date,
+                        c.notes,
+                        i.title AS issue_title,
+                        i.url AS issue_url,
+                        i.issue_status
+                    FROM crashes c
+                    LEFT JOIN reported_issues i ON c.issue_number = i.issue_number
+                    WHERE c.triage_status = ?
+                    ORDER BY c.first_seen_date ASC
+                    """,
+                    (status,),
+                )
+            else:
+                cursor.execute(
+                    """
+                    SELECT
+                        c.fingerprint,
+                        c.issue_number,
+                        c.triage_status,
+                        c.first_seen_date,
+                        c.notes,
+                        i.title AS issue_title,
+                        i.url AS issue_url,
+                        i.issue_status
+                    FROM crashes c
+                    LEFT JOIN reported_issues i ON c.issue_number = i.issue_number
+                    WHERE c.triage_status != 'NEW'
+                    ORDER BY c.first_seen_date ASC
+                    """
+                )
+
+            return [dict(row) for row in cursor.fetchall()]
+
+    def unlink_crash_from_issue(self, fingerprint: str) -> bool:
+        """
+        Unlink a crash from its associated issue.
+
+        Args:
+            fingerprint: The crash fingerprint.
+
+        Returns:
+            True if unlinked, False if crash doesn't exist.
+        """
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+
+            cursor.execute(
+                """
+                UPDATE crashes
+                SET issue_number = NULL
+                WHERE fingerprint = ?
+                """,
+                (fingerprint,),
+            )
+
+            return cursor.rowcount > 0
+
+    def get_sighting_count(self, fingerprint: str) -> int:
+        """
+        Get the number of sightings for a crash.
+
+        Args:
+            fingerprint: The crash fingerprint.
+
+        Returns:
+            Number of sightings.
+        """
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT COUNT(*) FROM sightings WHERE fingerprint = ?",
+                (fingerprint,),
+            )
+            return cursor.fetchone()[0]
 
     def get_stats(self) -> dict[str, Any]:
         """

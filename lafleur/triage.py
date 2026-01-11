@@ -200,7 +200,7 @@ def import_campaign(args: argparse.Namespace) -> None:
 
     # Show summary stats
     stats = registry.get_stats()
-    print(f"\n[+] Registry now contains:")
+    print("\n[+] Registry now contains:")
     print(f"    {stats['total_crashes']} unique crashes")
     print(f"    {stats['total_sightings']} total sightings")
     print(f"    {stats['unique_instances']} unique instances")
@@ -465,6 +465,242 @@ def import_issues(args: argparse.Namespace) -> None:
     print(f"[+] Imported/Updated {count} known issues from {args.input}")
 
 
+def run_interactive_triage(args: argparse.Namespace) -> None:
+    """Run interactive triage loop for NEW crashes."""
+    registry = CrashRegistry(args.db)
+    new_crashes = registry.get_new_crashes()
+
+    if not new_crashes:
+        print("\n[+] All caught up! No crashes need triage.")
+        return
+
+    print(f"\n[+] Found {len(new_crashes)} crash(es) needing triage\n")
+
+    try:
+        for i, crash in enumerate(new_crashes, 1):
+            fingerprint = crash["fingerprint"]
+            first_seen = crash.get("first_seen_date", "Unknown")
+            sighting_count = registry.get_sighting_count(fingerprint)
+
+            # Display crash info
+            notes = crash.get("notes", "")
+            print("-" * 64)
+            print(f"CRASH [{i}/{len(new_crashes)}]: {fingerprint}")
+            print(f"First Seen: {first_seen} | Total Sightings: {sighting_count}")
+            if notes:
+                print(f"Notes: {notes}")
+            print("-" * 64)
+
+            # Get user action
+            while True:
+                try:
+                    action = (
+                        input(
+                            "\nAction? [R]eport / [I]gnore / [M]ark Fixed / [N]ote / [S]kip / [Q]uit > "
+                        )
+                        .strip()
+                        .lower()
+                    )
+                except EOFError:
+                    print("\n[!] EOF received, exiting.")
+                    return
+
+                if action in ("r", "report"):
+                    # Link to issue
+                    while True:
+                        try:
+                            issue_input = input("Issue Number: ").strip()
+                            if not issue_input:
+                                print("Issue number is required.")
+                                continue
+                            issue_num = int(issue_input)
+                            break
+                        except ValueError:
+                            print("Please enter a valid integer.")
+                        except EOFError:
+                            print("\n[!] EOF received, exiting.")
+                            return
+
+                    registry.link_crash_to_issue(fingerprint, issue_num)
+                    registry.set_triage_status(fingerprint, "REPORTED")
+                    print(f"[+] Linked to Issue #{issue_num}")
+                    break
+
+                elif action in ("i", "ignore"):
+                    registry.set_triage_status(fingerprint, "IGNORED")
+                    print("[+] Marked as IGNORED (Noise)")
+                    break
+
+                elif action in ("m", "fixed"):
+                    registry.set_triage_status(fingerprint, "FIXED")
+                    print("[+] Marked as FIXED")
+                    break
+
+                elif action in ("n", "note"):
+                    try:
+                        note_text = input("Note: ").strip()
+                        if note_text:
+                            registry.add_note(fingerprint, note_text)
+                            print("[+] Note saved")
+                        else:
+                            print("[~] No note added")
+                    except EOFError:
+                        print("\n[!] EOF received, exiting.")
+                        return
+                    # Continue prompting for action (don't break)
+
+                elif action in ("s", "skip"):
+                    print("[~] Skipped")
+                    break
+
+                elif action in ("q", "quit"):
+                    print("\n[+] Exiting triage loop.")
+                    return
+
+                else:
+                    print("Invalid action. Use R, I, M, N, S, or Q.")
+
+            print()  # Blank line between crashes
+
+    except KeyboardInterrupt:
+        print("\n\n[!] Interrupted. Exiting triage loop.")
+        return
+
+    print("[+] Triage session complete!")
+
+
+def run_review_triage(args: argparse.Namespace) -> None:
+    """Review and update already-triaged crashes."""
+    registry = CrashRegistry(args.db)
+
+    # Get filter status if specified
+    status_filter = getattr(args, "status", None)
+    triaged_crashes = registry.get_triaged_crashes(status=status_filter)
+
+    if not triaged_crashes:
+        if status_filter:
+            print(f"\n[+] No crashes with status '{status_filter}'.")
+        else:
+            print("\n[+] No triaged crashes to review.")
+        return
+
+    filter_msg = f" (status: {status_filter})" if status_filter else ""
+    print(f"\n[+] Found {len(triaged_crashes)} triaged crash(es){filter_msg}\n")
+
+    try:
+        for i, crash in enumerate(triaged_crashes, 1):
+            fingerprint = crash["fingerprint"]
+            status = crash["triage_status"]
+            issue_num = crash.get("issue_number")
+            issue_title = crash.get("issue_title", "")
+            issue_url = crash.get("issue_url", "")
+            notes = crash.get("notes", "")
+            first_seen = crash.get("first_seen_date", "Unknown")
+            sighting_count = registry.get_sighting_count(fingerprint)
+
+            # Display crash info
+            print("-" * 64)
+            print(f"CRASH [{i}/{len(triaged_crashes)}]: {fingerprint}")
+            print(f"Status: {status} | First Seen: {first_seen} | Sightings: {sighting_count}")
+            if issue_num:
+                print(f"Linked Issue: #{issue_num} - {issue_title}")
+                if issue_url:
+                    print(f"URL: {issue_url}")
+            if notes:
+                print(f"Notes: {notes}")
+            print("-" * 64)
+
+            # Get user action
+            while True:
+                try:
+                    action = (
+                        input(
+                            "\nAction? [L]ink issue / [U]nlink / [S]tatus / [N]ote / [K]eep / [Q]uit > "
+                        )
+                        .strip()
+                        .lower()
+                    )
+                except EOFError:
+                    print("\n[!] EOF received, exiting.")
+                    return
+
+                if action in ("l", "link"):
+                    # Link to a (different) issue
+                    while True:
+                        try:
+                            issue_input = input("Issue Number: ").strip()
+                            if not issue_input:
+                                print("Issue number is required.")
+                                continue
+                            new_issue_num = int(issue_input)
+                            break
+                        except ValueError:
+                            print("Please enter a valid integer.")
+                        except EOFError:
+                            print("\n[!] EOF received, exiting.")
+                            return
+
+                    registry.link_crash_to_issue(fingerprint, new_issue_num)
+                    print(f"[+] Linked to Issue #{new_issue_num}")
+                    break
+
+                elif action in ("u", "unlink"):
+                    if issue_num:
+                        registry.unlink_crash_from_issue(fingerprint)
+                        print(f"[+] Unlinked from Issue #{issue_num}")
+                    else:
+                        print("[~] No issue linked to unlink.")
+                    break
+
+                elif action in ("s", "status"):
+                    print("\nAvailable statuses: NEW, TRIAGED, REPORTED, IGNORED, FIXED")
+                    try:
+                        new_status = input("New status: ").strip().upper()
+                        if new_status in ("NEW", "TRIAGED", "REPORTED", "IGNORED", "FIXED"):
+                            registry.set_triage_status(fingerprint, new_status)
+                            print(f"[+] Status changed to {new_status}")
+                            break
+                        else:
+                            print(
+                                "[!] Invalid status. Choose from: NEW, TRIAGED, REPORTED, IGNORED, FIXED"
+                            )
+                    except EOFError:
+                        print("\n[!] EOF received, exiting.")
+                        return
+
+                elif action in ("n", "note"):
+                    try:
+                        note_text = input("Note: ").strip()
+                        if note_text:
+                            registry.add_note(fingerprint, note_text)
+                            print("[+] Note saved")
+                        else:
+                            print("[~] No note added")
+                    except EOFError:
+                        print("\n[!] EOF received, exiting.")
+                        return
+                    # Continue prompting for action (don't break)
+
+                elif action in ("k", "keep"):
+                    print("[~] No changes made")
+                    break
+
+                elif action in ("q", "quit"):
+                    print("\n[+] Exiting review loop.")
+                    return
+
+                else:
+                    print("Invalid action. Use L, U, S, N, K, or Q.")
+
+            print()  # Blank line between crashes
+
+    except KeyboardInterrupt:
+        print("\n\n[!] Interrupted. Exiting review loop.")
+        return
+
+    print("[+] Review session complete!")
+
+
 def main() -> None:
     """Main entry point for the triage CLI."""
     parser = argparse.ArgumentParser(
@@ -547,6 +783,23 @@ def main() -> None:
         help="Input JSON file path",
     )
 
+    # Interactive triage command
+    subparsers.add_parser(
+        "interactive",
+        help="Interactively triage NEW crashes",
+    )
+
+    # Review triaged crashes command
+    review_parser = subparsers.add_parser(
+        "review",
+        help="Review and update already-triaged crashes",
+    )
+    review_parser.add_argument(
+        "--status",
+        choices=["TRIAGED", "REPORTED", "IGNORED", "FIXED"],
+        help="Filter by triage status",
+    )
+
     args = parser.parse_args()
 
     if args.command == "import":
@@ -563,6 +816,10 @@ def main() -> None:
         export_issues(args)
     elif args.command == "import-issues":
         import_issues(args)
+    elif args.command == "interactive":
+        run_interactive_triage(args)
+    elif args.command == "review":
+        run_review_triage(args)
     else:
         parser.print_help()
 

@@ -105,6 +105,33 @@ lafleur --fusil-path /path/to/fusil/fuzzers/fusil-python-threaded --differential
 
 -----
 
+### Analysis & Triage
+
+`lafleur` includes a suite of tools for monitoring fuzzing progress, aggregating campaign results, and managing crash discoveries over time.
+
+| Tool | Purpose |
+|------|---------|
+| **`lafleur-report`** | Check the pulse of a running fuzzer. Generates health, coverage, and crash summaries for a single instance. |
+| **`lafleur-campaign`** | Aggregate results from 50+ cores into one dashboard. Deduplicates crashes, produces fleet-wide metrics, and generates HTML reports. |
+| **`lafleur-triage`** | Track regressions and known issues with a built-in SQLite database. Link crashes to GitHub issues and manage their lifecycle. |
+
+#### Quick Examples
+
+```bash
+# Single instance report
+lafleur-report /path/to/instance
+
+# Campaign dashboard with HTML output
+lafleur-campaign runs/ --html report.html --registry crashes.db
+
+# Interactive crash triage
+lafleur-triage interactive
+```
+
+For detailed usage, see [docs/TOOLING.md](docs/TOOLING.md).
+
+-----
+
 ### Interpreting the Results
 
 The most important findings from a fuzzing run will be saved in four directories:

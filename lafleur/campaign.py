@@ -561,12 +561,14 @@ def generate_html_report(aggregator: CampaignAggregator) -> str:
             badge = '<span class="badge new">NEW</span>'
 
         # Format issue link
-        if info.issue_number and info.issue_url:
-            issue_html = (
-                f'<a href="{html.escape(info.issue_url)}" target="_blank">#{info.issue_number}</a>'
+        if info.issue_number:
+            # Use provided URL or default to CPython issues tracker
+            issue_url = (
+                info.issue_url or f"https://github.com/python/cpython/issues/{info.issue_number}"
             )
-        elif info.issue_number:
-            issue_html = f"#{info.issue_number}"
+            issue_html = (
+                f'<a href="{html.escape(issue_url)}" target="_blank">#{info.issue_number}</a>'
+            )
         else:
             issue_html = "-"
 

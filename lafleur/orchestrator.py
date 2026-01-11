@@ -1771,6 +1771,14 @@ class LafleurOrchestrator:
 
             crash_signature = self.fingerprinter.analyze(return_code, log_content)
 
+            # Filter out crashes marked as IGNORE (OOM, allocation failures, etc.)
+            if crash_signature.crash_type == CrashType.IGNORE:
+                print(
+                    f"  [~] Ignoring uninteresting crash: {crash_signature.fingerprint}",
+                    file=sys.stderr,
+                )
+                return False
+
             # Filter out mundane Python errors (Exit Code 1)
             if crash_signature.crash_type == CrashType.PYTHON_UNCAUGHT:
                 # We typically ignore standard exceptions unless they trigger an internal error

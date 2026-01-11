@@ -439,6 +439,42 @@ class CrashRegistry:
 
             return cursor.rowcount > 0
 
+    def get_new_crashes(self) -> list[dict[str, Any]]:
+        """
+        Get all crashes with NEW triage status.
+
+        Returns:
+            List of crash dictionaries ordered by first_seen_date.
+        """
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT * FROM crashes
+                WHERE triage_status = 'NEW'
+                ORDER BY first_seen_date ASC
+                """
+            )
+            return [dict(row) for row in cursor.fetchall()]
+
+    def get_sighting_count(self, fingerprint: str) -> int:
+        """
+        Get the number of sightings for a crash.
+
+        Args:
+            fingerprint: The crash fingerprint.
+
+        Returns:
+            Number of sightings.
+        """
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT COUNT(*) FROM sightings WHERE fingerprint = ?",
+                (fingerprint,),
+            )
+            return cursor.fetchone()[0]
+
     def get_stats(self) -> dict[str, Any]:
         """
         Get summary statistics about the registry.

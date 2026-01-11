@@ -465,6 +465,92 @@ def import_issues(args: argparse.Namespace) -> None:
     print(f"[+] Imported/Updated {count} known issues from {args.input}")
 
 
+def run_interactive_triage(args: argparse.Namespace) -> None:
+    """Run interactive triage loop for NEW crashes."""
+    registry = CrashRegistry(args.db)
+    new_crashes = registry.get_new_crashes()
+
+    if not new_crashes:
+        print("\n[+] All caught up! No crashes need triage.")
+        return
+
+    print(f"\n[+] Found {len(new_crashes)} crash(es) needing triage\n")
+
+    try:
+        for i, crash in enumerate(new_crashes, 1):
+            fingerprint = crash["fingerprint"]
+            first_seen = crash.get("first_seen_date", "Unknown")
+            sighting_count = registry.get_sighting_count(fingerprint)
+
+            # Display crash info
+            print("-" * 64)
+            print(f"CRASH [{i}/{len(new_crashes)}]: {fingerprint}")
+            print(f"First Seen: {first_seen} | Total Sightings: {sighting_count}")
+            print("-" * 64)
+
+            # Get user action
+            while True:
+                try:
+                    action = (
+                        input("\nAction? [R]eport / [I]gnore / [M]ark Fixed / [S]kip / [Q]uit > ")
+                        .strip()
+                        .lower()
+                    )
+                except EOFError:
+                    print("\n[!] EOF received, exiting.")
+                    return
+
+                if action in ("r", "report"):
+                    # Link to issue
+                    while True:
+                        try:
+                            issue_input = input("Issue Number: ").strip()
+                            if not issue_input:
+                                print("Issue number is required.")
+                                continue
+                            issue_num = int(issue_input)
+                            break
+                        except ValueError:
+                            print("Please enter a valid integer.")
+                        except EOFError:
+                            print("\n[!] EOF received, exiting.")
+                            return
+
+                    registry.link_crash_to_issue(fingerprint, issue_num)
+                    registry.set_triage_status(fingerprint, "REPORTED")
+                    print(f"[+] Linked to Issue #{issue_num}")
+                    break
+
+                elif action in ("i", "ignore"):
+                    registry.set_triage_status(fingerprint, "IGNORED")
+                    print("[+] Marked as IGNORED (Noise)")
+                    break
+
+                elif action in ("m", "fixed"):
+                    registry.set_triage_status(fingerprint, "FIXED")
+                    print("[+] Marked as FIXED")
+                    break
+
+                elif action in ("s", "skip"):
+                    print("[~] Skipped")
+                    break
+
+                elif action in ("q", "quit"):
+                    print("\n[+] Exiting triage loop.")
+                    return
+
+                else:
+                    print("Invalid action. Use R, I, M, S, or Q.")
+
+            print()  # Blank line between crashes
+
+    except KeyboardInterrupt:
+        print("\n\n[!] Interrupted. Exiting triage loop.")
+        return
+
+    print("[+] Triage session complete!")
+
+
 def main() -> None:
     """Main entry point for the triage CLI."""
     parser = argparse.ArgumentParser(
@@ -547,6 +633,12 @@ def main() -> None:
         help="Input JSON file path",
     )
 
+    # Interactive triage command
+    subparsers.add_parser(
+        "interactive",
+        help="Interactively triage NEW crashes",
+    )
+
     args = parser.parse_args()
 
     if args.command == "import":
@@ -563,6 +655,8 @@ def main() -> None:
         export_issues(args)
     elif args.command == "import-issues":
         import_issues(args)
+    elif args.command == "interactive":
+        run_interactive_triage(args)
     else:
         parser.print_help()
 

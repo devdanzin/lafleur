@@ -128,7 +128,7 @@ CRASH_KEYWORDS = [
     # "Traceback (most recent call last):",
     "JITCorrectnessError",
     "Assertion ",
-    "Abort",
+    "Abort ",
     "Fatal Python error",
     "panic",
     "AddressSanitizer",
@@ -1763,6 +1763,12 @@ class LafleurOrchestrator:
 
         # 1. Analyze with Fingerprinter
         if return_code != 0:
+            # Ignore standard termination signals (SIGKILL=-9, SIGTERM=-15)
+            # These are usually caused by timeouts or OOM killers, not JIT bugs.
+            if return_code in (-9, -15):
+                print(f"  [~] Ignoring signal {return_code} (SIGKILL/SIGTERM).", file=sys.stderr)
+                return False
+
             crash_signature = self.fingerprinter.analyze(return_code, log_content)
 
             # Filter out mundane Python errors (Exit Code 1)
@@ -1774,6 +1780,11 @@ class LafleurOrchestrator:
                     return False
                 if "IndentationError: too many levels of indentation" in log_content:
                     print("  [~] Ignoring known-uninteresting IndentationError.", file=sys.stderr)
+                    return False
+
+                # Check for generic SyntaxErrors (often from fuzzer generating invalid code)
+                if "SyntaxError:" in log_content:
+                    print("  [~] Ignoring known-uninteresting SyntaxError.", file=sys.stderr)
                     return False
 
                 # If it's just a Python exception without other signals, ignore it

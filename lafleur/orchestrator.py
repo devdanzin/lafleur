@@ -123,6 +123,10 @@ TRUNCATE_TAIL_SIZE = 300 * 1024  # 300 KB
 # Session fuzzing: The Mixer strategy
 MIXER_PROBABILITY = 0.3  # 30% chance to prepend polluter scripts
 
+# Tachycardia (instability) tracking: decay factor to prevent local optima
+# By decaying the saved density, persistent instability remains interesting over generations
+TACHYCARDIA_DECAY_FACTOR = 0.95
+
 CRASH_KEYWORDS = [
     "Segmentation fault",
     # "Traceback (most recent call last):",
@@ -2245,12 +2249,23 @@ class LafleurOrchestrator:
 
             if parent_density > 0:
                 # Allow exponential growth (up to 5x), but clamp massive outliers.
-                saved_density = min(parent_density * 5.0, child_density)
+                clamped_density = min(parent_density * 5.0, child_density)
             else:
                 # First generation or no parent data: trust the child's value.
-                saved_density = child_density
+                clamped_density = child_density
 
-            # Create a copy of stats for persistence, with the clamped density.
+            # --- Tachycardia Decay ---
+            # Apply decay to the saved metric so persistent instability remains interesting.
+            # This prevents the fuzzer from getting stuck in local optima where high baseline
+            # densities make incremental improvements invisible.
+            saved_density = clamped_density * TACHYCARDIA_DECAY_FACTOR
+            if clamped_density > 0:
+                print(
+                    f"  [~] Tachycardia decay: {clamped_density:.4f} -> {saved_density:.4f}",
+                    file=sys.stderr,
+                )
+
+            # Create a copy of stats for persistence, with the decayed density.
             jit_stats_for_save = jit_stats.copy()
             jit_stats_for_save["max_exit_density"] = saved_density
 

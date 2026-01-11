@@ -70,6 +70,11 @@ class CrashInfo:
     finding_instances: set[str] = field(default_factory=set)
     first_found: datetime | None = None
     first_finder: str | None = None
+    # Registry enrichment fields
+    status_label: str = "NEW"  # NEW, KNOWN, REGRESSION, NOISE
+    issue_number: int | None = None
+    issue_url: str | None = None
+    issue_title: str | None = None
 
 
 @dataclass
@@ -299,6 +304,43 @@ class CampaignAggregator:
         """Get top N mutation strategies by success count."""
         return self.global_corpus["mutation_counter"].most_common(n)
 
+    def enrich_crashes_from_registry(self, registry: Any) -> None:
+        """
+        Enrich crash data with registry context.
+
+        Queries the registry for each crash fingerprint and computes
+        status labels (NEW, KNOWN, REGRESSION, NOISE).
+
+        Args:
+            registry: CrashRegistry instance to query.
+        """
+        for fingerprint, crash_info in self.global_crashes.items():
+            context = registry.get_crash_context(fingerprint)
+
+            if context is None:
+                # Not in registry - stays as NEW
+                crash_info.status_label = "NEW"
+                continue
+
+            triage_status = context.get("triage_status", "")
+            crash_status = context.get("crash_status", "")
+            issue_number = context.get("issue_number")
+
+            # Compute status label
+            if crash_status == "FIXED" or triage_status == "FIXED":
+                crash_info.status_label = "REGRESSION"
+            elif triage_status in ("IGNORED", "WONTFIX") or crash_status == "WONTFIX":
+                crash_info.status_label = "NOISE"
+            elif issue_number is not None:
+                crash_info.status_label = "KNOWN"
+            else:
+                crash_info.status_label = "NEW"
+
+            # Store issue info for linking
+            crash_info.issue_number = issue_number
+            crash_info.issue_url = context.get("issue_url")
+            crash_info.issue_title = context.get("title")
+
     def generate_report(self) -> str:
         """Generate a text report of the campaign analysis."""
         lines: list[str] = []
@@ -352,44 +394,65 @@ class CampaignAggregator:
         lines.append("")
 
         # ========== GLOBAL CRASH TABLE ==========
-        lines.append("-" * 90)
+        lines.append("-" * 100)
         lines.append("GLOBAL CRASH TABLE")
-        lines.append("-" * 90)
+        lines.append("-" * 100)
 
         if self.global_crashes:
-            # Sort by instance percentage (reproducibility), then by count
+            # Status priority for sorting: REGRESSION > NEW > KNOWN > NOISE
+            status_priority = {"REGRESSION": 0, "NEW": 1, "KNOWN": 2, "NOISE": 3}
+
+            # Sort by status priority, then by reproducibility, then by count
             sorted_crashes = sorted(
                 self.global_crashes.items(),
-                key=lambda x: (len(x[1].finding_instances) / instance_count, x[1].count),
-                reverse=True,
+                key=lambda x: (
+                    status_priority.get(x[1].status_label, 1),
+                    -len(x[1].finding_instances) / instance_count if instance_count else 0,
+                    -x[1].count,
+                ),
             )
 
             # Table header
             lines.append(
-                f"{'Fingerprint':<40} | {'Hits':>6} | {'Instance %':>10} | {'First Finder':<20}"
+                f"{'Status':<12} | {'Fingerprint':<35} | {'Hits':>6} | "
+                f"{'Repro %':>7} | {'Issue':<15}"
             )
-            lines.append("-" * 90)
+            lines.append("-" * 100)
 
             for fingerprint, info in sorted_crashes[:15]:  # Top 15
                 instance_pct = (len(info.finding_instances) / instance_count) * 100
-                first_finder = info.first_finder or "Unknown"
+                status = f"[{info.status_label}]"
 
                 # Truncate fingerprint if too long
-                fp_display = fingerprint[:40] if len(fingerprint) > 40 else fingerprint
+                fp_display = fingerprint[:35] if len(fingerprint) > 35 else fingerprint
+
+                # Format issue reference
+                if info.issue_number:
+                    issue_str = f"#{info.issue_number}"
+                else:
+                    issue_str = "-"
 
                 lines.append(
-                    f"{fp_display:<40} | {info.count:>6,} | {instance_pct:>9.1f}% | "
-                    f"{first_finder:<20}"
+                    f"{status:<12} | {fp_display:<35} | {info.count:>6,} | "
+                    f"{instance_pct:>6.1f}% | {issue_str:<15}"
                 )
 
             if len(sorted_crashes) > 15:
                 lines.append(f"... and {len(sorted_crashes) - 15} more unique fingerprints")
 
+            # Count by status
+            status_counts = Counter(info.status_label for info in self.global_crashes.values())
             lines.append("")
             lines.append(f"Total Unique Crashes: {len(self.global_crashes)}")
             lines.append(
                 f"Total Crash Hits:     {sum(c.count for c in self.global_crashes.values()):,}"
             )
+            if status_counts.get("REGRESSION", 0) > 0:
+                lines.append(f"  REGRESSIONS: {status_counts['REGRESSION']}")
+            if status_counts.get("KNOWN", 0) > 0:
+                lines.append(f"  KNOWN:       {status_counts['KNOWN']}")
+            if status_counts.get("NOISE", 0) > 0:
+                lines.append(f"  NOISE:       {status_counts['NOISE']}")
         else:
             lines.append("No crashes recorded across fleet.")
 
@@ -445,14 +508,17 @@ def generate_html_report(aggregator: CampaignAggregator) -> str:
     # Sort instances by coverage (descending)
     sorted_instances = sorted(aggregator.instances, key=lambda i: i.coverage, reverse=True)
 
-    # Sort crashes by reproducibility then count
+    # Status priority for sorting: REGRESSION > NEW > KNOWN > NOISE
+    status_priority = {"REGRESSION": 0, "NEW": 1, "KNOWN": 2, "NOISE": 3}
+
+    # Sort crashes by status priority, then by reproducibility, then by count
     sorted_crashes = sorted(
         aggregator.global_crashes.items(),
         key=lambda x: (
-            len(x[1].finding_instances) / instance_count if instance_count else 0,
-            x[1].count,
+            status_priority.get(x[1].status_label, 1),
+            -len(x[1].finding_instances) / instance_count if instance_count else 0,
+            -x[1].count,
         ),
-        reverse=True,
     )[:15]  # Top 15
 
     # Build instance rows
@@ -476,16 +542,40 @@ def generate_html_report(aggregator: CampaignAggregator) -> str:
     # Build crash rows
     crash_rows = []
     for fingerprint, info in sorted_crashes:
-        fp_escaped = html.escape(fingerprint[:50] if len(fingerprint) > 50 else fingerprint)
-        first_finder = html.escape(info.first_finder or "Unknown")
+        fp_escaped = html.escape(fingerprint[:40] if len(fingerprint) > 40 else fingerprint)
         instance_pct = (len(info.finding_instances) / instance_count * 100) if instance_count else 0
         hits_pct = (info.count / max_hits) * 100 if max_hits else 0
 
-        crash_rows.append(f"""        <tr>
+        # Determine row class and status badge
+        status_label = info.status_label
+        row_class = ""
+        if status_label == "REGRESSION":
+            row_class = "regression"
+            badge = '<span class="badge regression">REGRESSION</span>'
+        elif status_label == "NOISE":
+            row_class = "noise"
+            badge = '<span class="badge noise">NOISE</span>'
+        elif status_label == "KNOWN":
+            badge = '<span class="badge known">KNOWN</span>'
+        else:
+            badge = '<span class="badge new">NEW</span>'
+
+        # Format issue link
+        if info.issue_number and info.issue_url:
+            issue_html = (
+                f'<a href="{html.escape(info.issue_url)}" target="_blank">#{info.issue_number}</a>'
+            )
+        elif info.issue_number:
+            issue_html = f"#{info.issue_number}"
+        else:
+            issue_html = "-"
+
+        crash_rows.append(f"""        <tr class="{row_class}" data-status="{status_priority.get(status_label, 1)}">
+          <td>{badge}</td>
           <td title="{html.escape(fingerprint)}">{fp_escaped}</td>
           <td data-sort="{info.count}"><div class="bar-container"><div class="bar-fill hits" style="width:{hits_pct:.1f}%"></div><span class="bar-text">{info.count:,}</span></div></td>
           <td data-sort="{instance_pct:.1f}">{instance_pct:.1f}%</td>
-          <td>{first_finder}</td>
+          <td>{issue_html}</td>
         </tr>""")
 
     # Top mutations
@@ -606,6 +696,23 @@ def generate_html_report(aggregator: CampaignAggregator) -> str:
       border-radius: 4px;
       font-size: 0.875rem;
     }}
+    .badge {{
+      padding: 0.25rem 0.5rem;
+      border-radius: 4px;
+      font-size: 0.7rem;
+      font-weight: bold;
+      text-transform: uppercase;
+    }}
+    .badge.regression {{ background: #dc2626; color: #fff; }}
+    .badge.noise {{ background: #6b7280; color: #fff; }}
+    .badge.known {{ background: #2563eb; color: #fff; }}
+    .badge.new {{ background: #16a34a; color: #fff; }}
+    tr.regression {{ background: rgba(220, 38, 38, 0.15) !important; }}
+    tr.regression:hover {{ background: rgba(220, 38, 38, 0.25) !important; }}
+    tr.noise {{ opacity: 0.6; }}
+    tr.noise:hover {{ opacity: 0.8; }}
+    a {{ color: #60a5fa; text-decoration: none; }}
+    a:hover {{ text-decoration: underline; }}
     footer {{ margin-top: 3rem; text-align: center; color: var(--text-dim); font-size: 0.875rem; }}
   </style>
 </head>
@@ -653,10 +760,11 @@ def generate_html_report(aggregator: CampaignAggregator) -> str:
   <table id="crashes">
     <thead>
       <tr>
+        <th>Status</th>
         <th>Fingerprint</th>
         <th>Hits</th>
-        <th>Reproducibility</th>
-        <th>First Finder</th>
+        <th>Repro %</th>
+        <th>Issue</th>
       </tr>
     </thead>
     <tbody>
@@ -739,6 +847,7 @@ def main() -> None:
 Examples:
   %(prog)s runs/                        # Analyze all instances under runs/
   %(prog)s runs/ --html report.html     # Generate HTML report
+  %(prog)s runs/ --registry crashes.db  # Enrich with registry data
   %(prog)s runs/jit_run1 runs/jit_run2  # Analyze specific instances
   %(prog)s ~/fuzzing/campaign1/         # Analyze a campaign directory
         """,
@@ -754,6 +863,12 @@ Examples:
         type=Path,
         metavar="PATH",
         help="Generate HTML report and save to specified path",
+    )
+    parser.add_argument(
+        "--registry",
+        type=Path,
+        metavar="PATH",
+        help="Path to crash registry database for enrichment",
     )
 
     args = parser.parse_args()
@@ -788,6 +903,20 @@ Examples:
     aggregator = CampaignAggregator(unique_instances)
     aggregator.load_instances()
     aggregator.aggregate()
+
+    # Enrich crashes with registry data if provided
+    if args.registry:
+        if args.registry.exists():
+            try:
+                from lafleur.registry import CrashRegistry
+
+                registry = CrashRegistry(args.registry)
+                aggregator.enrich_crashes_from_registry(registry)
+                print(f"[+] Enriched crashes from registry: {args.registry}", file=sys.stderr)
+            except Exception as e:
+                print(f"[!] Warning: Could not load registry: {e}", file=sys.stderr)
+        else:
+            print(f"[!] Warning: Registry not found: {args.registry}", file=sys.stderr)
 
     # Generate and print text report
     report = aggregator.generate_report()

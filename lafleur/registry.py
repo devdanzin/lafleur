@@ -230,6 +230,44 @@ class CrashRegistry:
 
             return result
 
+    def get_crash_context(self, fingerprint: str) -> dict[str, Any] | None:
+        """
+        Get crash context for report enrichment.
+
+        Performs a lightweight query to get triage status and linked issue info
+        for use in campaign reports.
+
+        Args:
+            fingerprint: The crash fingerprint to look up.
+
+        Returns:
+            Dictionary with triage_status, issue_number, issue_url, crash_status,
+            and title. Returns None if fingerprint not found in registry.
+        """
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+
+            cursor.execute(
+                """
+                SELECT
+                    c.triage_status,
+                    c.issue_number,
+                    i.url AS issue_url,
+                    i.crash_status,
+                    i.title
+                FROM crashes c
+                LEFT JOIN reported_issues i ON c.issue_number = i.issue_number
+                WHERE c.fingerprint = ?
+                """,
+                (fingerprint,),
+            )
+            row = cursor.fetchone()
+
+            if not row:
+                return None
+
+            return dict(row)
+
     def get_all_crashes(self, triage_status: str | None = None) -> list[dict[str, Any]]:
         """
         Get all crashes, optionally filtered by triage status.

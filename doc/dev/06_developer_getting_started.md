@@ -225,3 +225,30 @@ The main fuzzing results will be stored in four directories: `crashes/`, `timeou
   * `timeouts/` will contain scripts and their respective logs that caused a timeout (default: 10 seconds) while executing, which might indicate interesting JIT behavior. Most common causes are infinite loops (e.g. from unpacking an object with a `__getitem__` that unconditionally returns a value) and too deeply nested `for` loops.
   * `divergences/` will contain scripts where the JITted and non-JITted versions of the same code resulted in different `locals()` at the end of execution. It's only populated when the `--differential-testing` flag is passed, and will also contain the logs from executing such scripts. This is where we expect the valuable cases of incorrectness due to JIT behavior to be recorded.
   * `regressions/` will contain scripts where the JIT-enabled execution was significantly slower than the standard interpreter. This directory is only populated when the `--timing-fuzz` flag is passed.
+
+-----
+
+### Tooling for Analysis
+
+After running fuzzing sessions, you can use `lafleur`'s analysis tools to verify results and track findings.
+
+#### Verifying Local Test Runs
+
+Use `lafleur-report` to quickly check the health of your local fuzzing instance:
+
+```bash
+# Check your current fuzzing directory
+lafleur-report
+
+# Check a specific instance
+lafleur-report /path/to/instance
+```
+
+This shows you execution speed, coverage progress, and a summary of unique crashes found. It's useful for verifying that your local setup is working correctly before starting longer fuzzing campaigns.
+
+#### Campaign Analysis and Triage
+
+For multi-instance campaigns and crash management, see the full [Analysis & Triage Workflow](../../docs/TOOLING.md) documentation, which covers:
+
+- **`lafleur-campaign`**: Aggregate metrics from multiple instances
+- **`lafleur-triage`**: Track crashes and link them to GitHub issues

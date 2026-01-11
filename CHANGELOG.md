@@ -77,6 +77,18 @@ All notable changes to this project should be documented in this file.
 - **Exit Density Metric**: Introduced a normalized metric (`exit_count / code_size`) to measure instability per instruction, avoiding bias towards large traces, by @devdanzin.
 - **Differential Scoring**: Implemented a smart scoring rule where children are only rewarded if their instability (`max_exit_density`) is significantly worse than their parent's, preventing the fuzzer from getting stuck in local optima, by @devdanzin.
 - **Dynamic Density Clamping**: Added a mechanism to clamp the saved instability metrics for the next generation, preventing massive outliers from creating impossible targets for future mutations, by @devdanzin.
+- **Tier 3 Introspection**: Implemented Bloom Filter probing in `driver.py` to detect which globals and builtins the JIT is optimizing against, by @devdanzin.
+- **Sniper Mutator**: A new targeted strategy that uses introspection data to surgically invalidate watched variables during execution, by @devdanzin.
+- **Instance Metadata**: `lafleur/metadata.py` now generates `run_metadata.json` capturing hardware stats, build flags, and environment details for every run, by @devdanzin.
+- **Runtime Telemetry**: Enhanced orchestrator to track and log system load, RSS memory usage, and disk consumption, by @devdanzin.
+- **Lafleur Report**: A new CLI tool (`lafleur-report`) to generate human-readable summaries of individual fuzzing instances, by @devdanzin.
+- **Corpus Analysis**: Automated calculation of evolutionary stats (lineage depth, sterile rate, tree topology) saved to `corpus_stats.json`, by @devdanzin.
+- **Campaign Aggregator**: A new CLI tool (`lafleur-campaign`) to merge metrics from multiple instances into a fleet-wide dashboard, by @devdanzin.
+- **HTML Campaign Reports**: `lafleur-campaign` can now generate self-contained, offline-capable HTML reports with visualizations, by @devdanzin.
+- **Crash Registry**: A SQLite-based system (`lafleur/registry.py`) to track crash fingerprints, sightings, and reported issues over time, by @devdanzin.
+- **Lafleur Triage**: A comprehensive CLI tool (`lafleur-triage`) for managing the crash registry, supporting interactive triage, issue recording, and import/export, by @devdanzin.
+- **Regression Detection**: Campaign reports now integrate with the registry to automatically highlight regressions (fixed bugs that reappeared) and filter known noise, by @devdanzin.
+- **Documentation**: Added `docs/TOOLING.md` covering the new analysis and triage workflows, by @devdanzin.
 
 
 ### Enhanced

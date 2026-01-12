@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "lafleur"
-version = "0.0.2-dev"
+version = "0.1.0"
 authors = [
   {name="Daniel Diniz"},
 ]
@@ -41,6 +41,7 @@ lafleur-jit-tweak = "lafleur.jit_tuner:main"
 lafleur-report = "lafleur.report:main"
 lafleur-campaign = "lafleur.campaign:main"
 lafleur-triage = "lafleur.triage:main"
+lafleur-driver = "lafleur.driver:main"
 
 [tool.mypy]
 check_untyped_defs = true

@@ -1794,22 +1794,15 @@ class LafleurOrchestrator:
                 )
                 return False
 
+            # Filter out SyntaxErrors and IndentationErrors early (applies to all crash types)
+            # These are just invalid mutations, not real bugs. The driver may output them in
+            # a format that the fingerprinter doesn't recognize as PYTHON_UNCAUGHT.
+            if "SyntaxError:" in log_content or "IndentationError:" in log_content:
+                print("  [~] Ignoring SyntaxError/IndentationError from invalid mutation.", file=sys.stderr)
+                return False
+
             # Filter out mundane Python errors (Exit Code 1)
             if crash_signature.crash_type == CrashType.PYTHON_UNCAUGHT:
-                # We typically ignore standard exceptions unless they trigger an internal error
-                # Check for "SyntaxError: too many statically nested blocks" which is boring
-                if "too many statically nested blocks" in log_content:
-                    print("  [~] Ignoring known-uninteresting SyntaxError.", file=sys.stderr)
-                    return False
-                if "IndentationError: too many levels of indentation" in log_content:
-                    print("  [~] Ignoring known-uninteresting IndentationError.", file=sys.stderr)
-                    return False
-
-                # Check for generic SyntaxErrors (often from fuzzer generating invalid code)
-                if "SyntaxError:" in log_content:
-                    print("  [~] Ignoring known-uninteresting SyntaxError.", file=sys.stderr)
-                    return False
-
                 # If it's just a Python exception without other signals, ignore it
                 return False
 

@@ -96,3 +96,8 @@ quote-style = "double"
 indent-style = "space"
 skip-magic-trailing-comma = false
 line-ending = "auto"
+
+[tool.pytest.ini_options]
+# Prevent pytest from looking into cpython-src or other build artifacts
+norecursedirs = ["cpython-src", ".git", "build", "dist", "venv"]
+testpaths = ["tests"]

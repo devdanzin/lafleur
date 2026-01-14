@@ -106,7 +106,7 @@ jobs:
           source venv/bin/activate
           
           # Install test dependencies
-          pip install pytest pytest-cov coverage
+          pip install pytest pytest-cov coverage psutil
           pip install -e .
 
           # Run Tests

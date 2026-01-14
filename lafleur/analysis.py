@@ -37,7 +37,7 @@ class CrashFingerprinter:
     ASAN_ERROR_PATTERN = re.compile(r"ERROR:\s+AddressSanitizer:\s+([a-zA-Z0-9-]+)")
     ASAN_SEGV_PATTERN = re.compile(r"AddressSanitizer:\s+SEGV\s+on\s+unknown\s+address")
     # Stack frame pattern: #N 0xADDR in function_name /path/to/file.c:line:col
-    ASAN_FRAME_PATTERN = re.compile(r"^\s*#(\d+)\s+0x[0-9a-f]+\s+in\s+(\S+)\s+(.*)$", re.MULTILINE)
+    ASAN_FRAME_PATTERN = re.compile(r"^\s*#(\d+)\s+0x[0-9a-fA-F]+\s+in\s+(\S+)\s+(.*)$", re.MULTILINE)
     ASSERT_PATTERN = re.compile(r"Assertion\s+[`'\"](.*?)['\"]\s+failed")
     # Captures file and line for assertion if available
     ASSERT_LOC_PATTERN = re.compile(r"([^:\s]+):(\d+):\s+[^:]+:\s+Assertion")
@@ -81,6 +81,7 @@ class CrashFingerprinter:
             "_PyMem_DebugMalloc",
             "_PyMem_DebugRealloc",
             "_PyMem_DebugFree",
+            "_PyObject_GC_NewVar",
             "_PyObject_Malloc",
             "_PyObject_Realloc",
             "_PyObject_Free",

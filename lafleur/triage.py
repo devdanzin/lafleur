@@ -84,6 +84,156 @@ def discover_instances(root_dir: Path) -> list[Path]:
     return instances
 
 
+# ============================================================================
+# Testable Helper Functions
+# These functions contain the core logic, separated from CLI/interactive I/O
+# ============================================================================
+
+
+def do_export_issues(registry: CrashRegistry, output_path: Path) -> int:
+    """
+    Export reported issues to a JSON file.
+
+    Args:
+        registry: The crash registry to export from.
+        output_path: Path to write the JSON file.
+
+    Returns:
+        Number of issues exported.
+
+    Raises:
+        OSError: If the file cannot be written.
+    """
+    issues = registry.get_all_reported_issues()
+    with open(output_path, "w", encoding="utf-8") as f:
+        json.dump(issues, f, indent=4, sort_keys=True)
+    return len(issues)
+
+
+def do_import_issues(registry: CrashRegistry, input_path: Path) -> int:
+    """
+    Import reported issues from a JSON file.
+
+    Args:
+        registry: The crash registry to import into.
+        input_path: Path to read the JSON file from.
+
+    Returns:
+        Number of issues imported/updated.
+
+    Raises:
+        FileNotFoundError: If the file doesn't exist.
+        json.JSONDecodeError: If the file is not valid JSON.
+        ValueError: If the JSON structure is invalid.
+    """
+    with open(input_path, encoding="utf-8") as f:
+        data = json.load(f)
+
+    # Validate structure
+    if not isinstance(data, list):
+        raise ValueError("JSON file must contain a list of issue objects")
+
+    for i, item in enumerate(data):
+        if not isinstance(item, dict):
+            raise ValueError(f"Item {i} is not a dictionary")
+        if "issue_number" not in item:
+            raise ValueError(f"Item {i} missing required field 'issue_number'")
+
+    return registry.upsert_reported_issues(data)
+
+
+def get_triage_candidates(
+    registry: CrashRegistry, status_filter: str | None = None
+) -> list[dict[str, Any]]:
+    """
+    Get crashes that need triage attention.
+
+    Args:
+        registry: The crash registry to query.
+        status_filter: Optional status to filter by. If None, returns NEW crashes.
+
+    Returns:
+        List of crash dictionaries.
+    """
+    if status_filter is None:
+        return registry.get_new_crashes()
+    return registry.get_triaged_crashes(status=status_filter)
+
+
+def handle_triage_action(
+    registry: CrashRegistry,
+    fingerprint: str,
+    action: str,
+    issue_number: int | None = None,
+    note_text: str | None = None,
+    new_status: str | None = None,
+) -> tuple[bool, str]:
+    """
+    Handle a triage action for a crash.
+
+    Args:
+        registry: The crash registry.
+        fingerprint: The crash fingerprint to act on.
+        action: The action to take ('report', 'ignore', 'fixed', 'note', 'link',
+                'unlink', 'status').
+        issue_number: Issue number for 'report' or 'link' actions.
+        note_text: Note text for 'note' action.
+        new_status: New status for 'status' action.
+
+    Returns:
+        Tuple of (success: bool, message: str).
+    """
+    action = action.lower()
+
+    if action in ("r", "report"):
+        if issue_number is None:
+            return (False, "Issue number is required for report action")
+        registry.link_crash_to_issue(fingerprint, issue_number)
+        registry.set_triage_status(fingerprint, "REPORTED")
+        return (True, f"Linked to Issue #{issue_number}")
+
+    elif action in ("i", "ignore"):
+        registry.set_triage_status(fingerprint, "IGNORED")
+        return (True, "Marked as IGNORED (Noise)")
+
+    elif action in ("m", "fixed"):
+        registry.set_triage_status(fingerprint, "FIXED")
+        return (True, "Marked as FIXED")
+
+    elif action in ("n", "note"):
+        if not note_text:
+            return (False, "No note text provided")
+        registry.add_note(fingerprint, note_text)
+        return (True, "Note saved")
+
+    elif action in ("l", "link"):
+        if issue_number is None:
+            return (False, "Issue number is required for link action")
+        registry.link_crash_to_issue(fingerprint, issue_number)
+        return (True, f"Linked to Issue #{issue_number}")
+
+    elif action in ("u", "unlink"):
+        registry.unlink_crash_from_issue(fingerprint)
+        return (True, "Unlinked from issue")
+
+    elif action in ("s", "status"):
+        if not new_status:
+            return (False, "New status is required")
+        valid_statuses = ("NEW", "TRIAGED", "REPORTED", "IGNORED", "FIXED")
+        if new_status.upper() not in valid_statuses:
+            return (False, f"Invalid status. Choose from: {', '.join(valid_statuses)}")
+        registry.set_triage_status(fingerprint, new_status.upper())
+        return (True, f"Status changed to {new_status.upper()}")
+
+    else:
+        return (False, f"Unknown action: {action}")
+
+
+# ============================================================================
+# CLI Command Handlers
+# ============================================================================
+
+
 def import_campaign(args: argparse.Namespace) -> None:
     """Import crashes from a campaign directory into the registry."""
     registry = CrashRegistry(args.db)
@@ -419,50 +569,34 @@ def show_crash(args: argparse.Namespace) -> None:
 
 
 def export_issues(args: argparse.Namespace) -> None:
-    """Export reported issues to a JSON file."""
+    """Export reported issues to a JSON file (CLI handler)."""
     registry = CrashRegistry(args.db)
-    issues = registry.get_all_reported_issues()
-
     try:
-        with open(args.output, "w", encoding="utf-8") as f:
-            json.dump(issues, f, indent=4, sort_keys=True)
-        print(f"[+] Exported {len(issues)} known issues to {args.output}")
+        count = do_export_issues(registry, args.output)
+        print(f"[+] Exported {count} known issues to {args.output}")
     except OSError as e:
         print(f"Error writing to {args.output}: {e}", file=sys.stderr)
         sys.exit(1)
 
 
 def import_issues(args: argparse.Namespace) -> None:
-    """Import reported issues from a JSON file."""
+    """Import reported issues from a JSON file (CLI handler)."""
+    registry = CrashRegistry(args.db)
     try:
-        with open(args.input, encoding="utf-8") as f:
-            data = json.load(f)
+        count = do_import_issues(registry, args.input)
+        print(f"[+] Imported/Updated {count} known issues from {args.input}")
     except FileNotFoundError:
         print(f"Error: File not found: {args.input}", file=sys.stderr)
         sys.exit(1)
     except json.JSONDecodeError as e:
         print(f"Error: Invalid JSON in {args.input}: {e}", file=sys.stderr)
         sys.exit(1)
+    except ValueError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
     except OSError as e:
         print(f"Error reading {args.input}: {e}", file=sys.stderr)
         sys.exit(1)
-
-    # Validate structure
-    if not isinstance(data, list):
-        print("Error: JSON file must contain a list of issue objects", file=sys.stderr)
-        sys.exit(1)
-
-    for i, item in enumerate(data):
-        if not isinstance(item, dict):
-            print(f"Error: Item {i} is not a dictionary", file=sys.stderr)
-            sys.exit(1)
-        if "issue_number" not in item:
-            print(f"Error: Item {i} missing required field 'issue_number'", file=sys.stderr)
-            sys.exit(1)
-
-    registry = CrashRegistry(args.db)
-    count = registry.upsert_reported_issues(data)
-    print(f"[+] Imported/Updated {count} known issues from {args.input}")
 
 
 def run_interactive_triage(args: argparse.Namespace) -> None:

@@ -6,11 +6,14 @@ All notable changes to this project should be documented in this file.
 
 ### Added
 
+- GitHub Actions CI/CD workflow with lint, format, and JIT test jobs, by @devdanzin.
 
 ### Enhanced
 
 
 ### Fixed
+
+- Filter SyntaxError/IndentationError crashes from invalid mutations, by @devdanzin.
 
 
 ## [0.1.0] - 2026-01-11

@@ -4,7 +4,6 @@ These tests verify end-to-end behavior of the orchestrator with real components
 and file I/O, using temporary directories to isolate test state.
 """
 
-import ast
 import os
 import shutil
 import sys
@@ -12,13 +11,11 @@ import tempfile
 import unittest
 from pathlib import Path
 from textwrap import dedent
-from unittest.mock import MagicMock, Mock, patch
+from unittest.mock import MagicMock, patch
 
 from lafleur.corpus_manager import CorpusManager
-from lafleur.coverage import CoverageManager, save_coverage_state
-from lafleur.learning import MutatorScoreTracker
+from lafleur.coverage import save_coverage_state
 from lafleur.orchestrator import LafleurOrchestrator
-from lafleur.utils import ExecutionResult
 
 
 class TestRunEvolutionaryLoopIntegration(unittest.TestCase):
@@ -388,7 +385,7 @@ class TestCorpusBootstrappingIntegration(unittest.TestCase):
         for f in Path("corpus").glob("*.py"):
             f.unlink()
 
-        with patch("sys.stdout") as mock_stdout:
+        with patch("sys.stdout"):
             with patch("sys.exit") as mock_exit:
                 # Set select_parent to return None to trigger empty corpus path
                 self.orchestrator.corpus_manager.select_parent = MagicMock(return_value=None)
@@ -471,7 +468,6 @@ class TestMutationCycleIntegration(unittest.TestCase):
 
         # Mock _score_and_decide_interestingness to return True (interesting)
         # This bypasses the complex JIT log parsing and directly tests child creation
-        original_score = self.orchestrator._score_and_decide_interestingness
 
         def mock_score_interesting(*args, **kwargs):
             # Call original to get NewCoverageInfo, but force it to be interesting

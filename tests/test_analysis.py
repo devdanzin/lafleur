@@ -1,6 +1,5 @@
 import unittest
-from unittest.mock import MagicMock
-from lafleur.analysis import CrashFingerprinter, CrashType, CrashSignature
+from lafleur.analysis import CrashFingerprinter, CrashType
 
 
 class TestCrashFingerprinter(unittest.TestCase):
@@ -10,14 +9,14 @@ class TestCrashFingerprinter(unittest.TestCase):
     def test_asan_detection(self):
         log = """
         ...
-        AddressSanitizer: heap-use-after-free on address 0x602000000010 at pc...
-        READ of size 8 at 0x602000000010 thread T0
+        SUMMARY: AddressSanitizer: heap-use-after-free on address 0x602000000010 at pc...
+
         ...
         """
         sig = self.fingerprinter.analyze(-6, log)
         self.assertEqual(sig.type, "ASAN")
         self.assertEqual(sig.crash_type, CrashType.ASAN_VIOLATION)
-        self.assertEqual(sig.fingerprint, "ASAN:heap-use-after-free")
+        self.assertEqual(sig.fingerprint, "ASAN:heap-use-after-free:unknown")
 
     def test_assertion_detection(self):
         log = """

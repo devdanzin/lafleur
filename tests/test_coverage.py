@@ -3,10 +3,8 @@
 Unit tests for lafleur/coverage.py
 """
 
-import re
 import tempfile
 import unittest
-from collections import Counter
 from pathlib import Path
 
 from lafleur.coverage import (
@@ -14,7 +12,6 @@ from lafleur.coverage import (
     RARE_EVENT_REGEX,
     UOP_REGEX,
     CoverageManager,
-    JitState,
     parse_log_for_edge_coverage,
 )
 

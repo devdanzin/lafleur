@@ -1,6 +1,4 @@
 import unittest
-from unittest.mock import MagicMock
-from lafleur.orchestrator import LafleurOrchestrator
 
 
 class TestJITClamping(unittest.TestCase):

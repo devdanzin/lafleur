@@ -9,7 +9,6 @@ calculating coverage hashes, and deciding interestingness.
 
 import hashlib
 import io
-import sys
 import unittest
 from unittest.mock import MagicMock, patch
 

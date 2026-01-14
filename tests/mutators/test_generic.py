@@ -390,7 +390,7 @@ class TestImportChaosMutator(unittest.TestCase):
             def test():
                 x = 42
         """)
-        tree = ast.parse(code)
+        ast.parse(code)
 
         # Mock sys.stdlib_module_names with blacklisted modules
         mock_modules = {"antigravity", "tkinter", "os", "sys"}
@@ -411,7 +411,7 @@ class TestImportChaosMutator(unittest.TestCase):
             def test():
                 x = 42
         """)
-        tree = ast.parse(code)
+        ast.parse(code)
 
         # Mock sys.stdlib_module_names with underscore-prefixed modules
         mock_modules = {"_thread", "_ast", "os", "sys"}

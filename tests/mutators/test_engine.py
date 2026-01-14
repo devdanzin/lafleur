@@ -15,7 +15,6 @@ from unittest.mock import patch
 from lafleur.mutators.engine import ASTMutator, SlicingMutator
 from lafleur.mutators.generic import ConstantPerturbator, OperatorSwapper
 from lafleur.mutators.utils import (
-    EmptyBodySanitizer,
     FuzzerSetupNormalizer,
     genStatefulBoolObject,
     genStatefulIndexObject,
@@ -679,7 +678,7 @@ class TestSlicingMutator(unittest.TestCase):
         with patch("random.randint") as mock_randint:
             mock_randint.return_value = 100
             mutator = SlicingMutator([ConstantPerturbator()])
-            mutated = mutator.visit(tree)
+            mutator.visit(tree)
 
             # Check that randint was called with (0, 125)
             mock_randint.assert_called_once_with(0, 150 - 25)

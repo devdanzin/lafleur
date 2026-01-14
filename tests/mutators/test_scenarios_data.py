@@ -255,7 +255,7 @@ class TestBuiltinNamespaceCorruptor(unittest.TestCase):
 
     def test_supports_multiple_attack_scenarios(self):
         """Test that different attack scenarios can be selected."""
-        code = dedent("""
+        dedent("""
             def uop_harness_test():
                 x = 1
         """)
@@ -849,7 +849,7 @@ class TestReentrantSideEffectMutator(unittest.TestCase):
                 my_list = [1, 2, 3]
         """)
         tree = ast.parse(code)
-        original_code = ast.unparse(tree)
+        ast.unparse(tree)
 
         with patch("random.random", return_value=0.5):  # Above threshold (0.10)
             mutator = ReentrantSideEffectMutator()
@@ -981,7 +981,7 @@ class TestLatticeSurfingMutator(unittest.TestCase):
                 x = 42
         """)
         tree = ast.parse(code)
-        original_code = ast.unparse(tree)
+        ast.unparse(tree)
 
         with patch("random.random", return_value=0.5):  # Above 0.1 threshold
             mutator = LatticeSurfingMutator()

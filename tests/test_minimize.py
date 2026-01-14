@@ -2,12 +2,10 @@ import unittest
 import shutil
 import tempfile
 import json
-import os
 from pathlib import Path
-from unittest.mock import MagicMock, patch, call
+from unittest.mock import patch
 from lafleur.minimize import (
     rename_harnesses,
-    check_reproduction,
     extract_grep_pattern,
     minimize_session,
 )

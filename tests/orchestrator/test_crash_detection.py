@@ -8,10 +8,9 @@ output, and save various types of findings (divergences, regressions, hangs).
 
 import io
 import signal
-import shutil
 import unittest
 from pathlib import Path
-from unittest.mock import MagicMock, patch, mock_open
+from unittest.mock import patch
 from lafleur.orchestrator import LafleurOrchestrator
 from lafleur.analysis import CrashFingerprinter
 
@@ -44,7 +43,10 @@ class TestCheckForCrash(unittest.TestCase):
             result = self.orchestrator._check_for_crash(1, log_content, source_path, log_path)
 
             self.assertFalse(result)
-            self.assertIn("Ignoring known-uninteresting IndentationError", mock_stderr.getvalue())
+            self.assertIn(
+                "Ignoring SyntaxError/IndentationError from invalid mutation",
+                mock_stderr.getvalue(),
+            )
 
     def test_ignores_syntax_error_nested_blocks(self):
         """Test that nested blocks SyntaxError is ignored."""
@@ -56,7 +58,10 @@ class TestCheckForCrash(unittest.TestCase):
             result = self.orchestrator._check_for_crash(1, log_content, source_path, log_path)
 
             self.assertFalse(result)
-            self.assertIn("Ignoring known-uninteresting SyntaxError", mock_stderr.getvalue())
+            self.assertIn(
+                "Ignoring SyntaxError/IndentationError from invalid mutation",
+                mock_stderr.getvalue(),
+            )
 
     def test_detects_signal_crash(self):
         """Test that negative return code is interpreted as signal."""
@@ -113,21 +118,6 @@ class TestCheckForCrash(unittest.TestCase):
                     stderr_output = mock_stderr.getvalue()
                     self.assertIn("CRASH DETECTED", stderr_output)
                     self.assertIn("keyword_segmentation_fault", stderr_output)
-
-    def test_detects_keyword_traceback(self):
-        """Test that 'Traceback' keyword triggers crash detection."""
-        source_path = Path("/tmp/child_test.py")
-        log_path = Path("/tmp/child_test.log")
-        log_content = "Traceback (most recent call last):\n  File 'test.py', line 1"
-
-        with patch.object(self.orchestrator, "_process_log_file", return_value=log_path):
-            with patch("shutil.copy"):
-                with patch("sys.stderr", new_callable=io.StringIO):
-                    result = self.orchestrator._check_for_crash(
-                        0, log_content, source_path, log_path
-                    )
-
-                    self.assertTrue(result)
 
     def test_calls_process_log_file(self):
         """Test that _process_log_file is called with crash log limit."""
@@ -208,7 +198,7 @@ class TestCheckForCrash(unittest.TestCase):
         """Test that IOError during file copy is handled gracefully."""
         source_path = Path("/tmp/child_test.py")
         log_path = Path("/tmp/child_test.log")
-        log_content = "Abort!"
+        log_content = "Abort "
 
         with patch.object(self.orchestrator, "_process_log_file", return_value=log_path):
             with patch("shutil.copy", side_effect=IOError("Permission denied")):

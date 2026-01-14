@@ -1506,9 +1506,7 @@ class LafleurOrchestrator:
             if base_harness_node is None:
                 return  # Abort if parent is invalid
 
-            setup_code = ast.unparse(setup_nodes)
             core_logic_to_mutate = base_harness_node
-            prefix = base_harness_node.name.replace("uop_harness_", "")
 
             # Retrieve watched dependencies from parent metadata
             watched_keys = (
@@ -1798,7 +1796,10 @@ class LafleurOrchestrator:
             # These are just invalid mutations, not real bugs. The driver may output them in
             # a format that the fingerprinter doesn't recognize as PYTHON_UNCAUGHT.
             if "SyntaxError:" in log_content or "IndentationError:" in log_content:
-                print("  [~] Ignoring SyntaxError/IndentationError from invalid mutation.", file=sys.stderr)
+                print(
+                    "  [~] Ignoring SyntaxError/IndentationError from invalid mutation.",
+                    file=sys.stderr,
+                )
                 return False
 
             # Filter out mundane Python errors (Exit Code 1)

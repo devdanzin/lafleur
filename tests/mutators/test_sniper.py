@@ -72,7 +72,7 @@ class TestSniperMutator(unittest.TestCase):
         mutator = SniperMutator([])
         mutated = mutator.visit(tree)
 
-        generated = ast.unparse(mutated)
+        ast.unparse(mutated)
         # Should match original exactly (ignoring potential whitespace diffs, but structure same)
         self.assertEqual(ast.dump(tree), ast.dump(mutated))
 

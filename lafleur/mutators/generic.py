@@ -245,102 +245,6 @@ class LiteralTypeSwapMutator(ast.NodeTransformer):
             return node
 
 
-class ImportChaosMutator(ast.NodeTransformer):
-    """
-    Injects random standard library imports to alter memory layout and global state.
-
-    This mutator adds try/except wrapped imports from the standard library
-    to help unmask latent JIT bugs by changing the process memory layout
-    and global state.
-    """
-
-    # Blacklist of modules that should never be imported
-    BLACKLIST = {
-        "antigravity",
-        "this",
-        "tkinter",
-        "turtle",
-        "idlelib",
-        "turtledemo",
-        "pdb",
-        "http.server",
-        "pydoc",
-        "ensurepip",
-    }
-
-    # Build safe import list once at class definition time
-    _safe_imports = None
-
-    @classmethod
-    def _get_safe_imports(cls):
-        """Get the list of safe imports, building it if necessary."""
-        if cls._safe_imports is None:
-            # Get all stdlib module names
-            all_modules = sys.stdlib_module_names
-
-            # Filter out private modules (starting with _) and blacklisted modules
-            cls._safe_imports = [
-                name
-                for name in all_modules
-                if not name.startswith("_") and name not in cls.BLACKLIST
-            ]
-
-        return cls._safe_imports
-
-    def visit_Module(self, node: ast.Module) -> ast.Module:
-        self.generic_visit(node)
-
-        # Select 1-5 random modules to import
-        num_imports = random.randint(1, 5)
-        safe_imports = self._get_safe_imports()
-
-        if not safe_imports:
-            return node
-
-        # Sample random modules (without replacement if possible)
-        num_to_sample = min(num_imports, len(safe_imports))
-        selected_modules = random.sample(safe_imports, num_to_sample)
-
-        # Create import statements wrapped in try/except
-        import_nodes = []
-        for module_name in selected_modules:
-            # Create: import <module_name>
-            import_stmt = ast.Import(names=[ast.alias(name=module_name, asname=None)])
-
-            # Wrap in try/except
-            try_node = ast.Try(
-                body=[import_stmt],
-                handlers=[
-                    ast.ExceptHandler(
-                        type=ast.Tuple(
-                            elts=[
-                                ast.Name(id="ImportError", ctx=ast.Load()),
-                                ast.Name(id="Exception", ctx=ast.Load()),
-                            ],
-                            ctx=ast.Load(),
-                        ),
-                        name=None,
-                        body=[ast.Pass()],
-                    )
-                ],
-                orelse=[],
-                finalbody=[],
-            )
-
-            import_nodes.append(try_node)
-
-        # Prepend imports to the module body
-        if import_nodes:
-            print(
-                f"    -> Injecting {len(import_nodes)} random imports: {', '.join(selected_modules)}",
-                file=sys.stderr,
-            )
-            node.body = import_nodes + node.body
-            ast.fix_missing_locations(node)
-
-        return node
-
-
 class BoundaryValuesMutator(ast.NodeTransformer):
     """
     Replaces numeric constants with interesting boundary values to stress
@@ -764,7 +668,7 @@ class NewUnpackingMutator(ast.NodeTransformer):
             # Targets generic _UNPACK_SEQUENCE behavior on iterables
             # Pattern: a, b = {1: 1, 2: 2}
             if random.random() < 0.5:
-                print(f"    -> Injecting dictionary unpacking", file=sys.stderr)
+                print("    -> Injecting dictionary unpacking", file=sys.stderr)
                 # We create a dictionary with 3 items and unpack into 3 variables
                 # The keys/values don't matter much, just the structure.
                 code_to_inject = dedent(f"""
@@ -1237,7 +1141,7 @@ class ArithmeticSpamMutator(ast.NodeTransformer):
                     except Exception: pass
                 """)
             else:
-                print(f"    -> Failed to pick a target for mutation.", file=sys.stderr)
+                print("    -> Failed to pick a target for mutation.", file=sys.stderr)
 
             if code_to_inject:
                 new_nodes = ast.parse(code_to_inject).body
@@ -1299,7 +1203,7 @@ class StringInterpolationMutator(ast.NodeTransformer):
             # Strategy 1: Complex F-Strings (Targets _FORMAT_WITH_SPEC)
             # We must use format specifiers (e.g., :04d, :.2f) to trigger this UOP.
             if random.random() < 0.5:
-                print(f"    -> Injecting complex f-string", file=sys.stderr)
+                print("    -> Injecting complex f-string", file=sys.stderr)
 
                 if int_vars and random.random() < 0.3:
                     target = random.choice(int_vars)
@@ -1391,7 +1295,7 @@ class ExceptionGroupMutator(ast.NodeTransformer):
         if random.random() < 0.25:
             code_to_inject = ""
 
-            print(f"    -> Injecting ExceptionGroup handling", file=sys.stderr)
+            print("    -> Injecting ExceptionGroup handling", file=sys.stderr)
 
             # We inject a loop to ensure the JIT traces this block.
             # We raise a nested ExceptionGroup and catch parts of it.
@@ -1473,7 +1377,7 @@ class AsyncConstructMutator(ast.NodeTransformer):
 
             # Strategy 1: Async For (Targets _GET_AITER, _GET_ANEXT)
             if random.random() < 0.5:
-                print(f"    -> Injecting async for loop", file=sys.stderr)
+                print("    -> Injecting async for loop", file=sys.stderr)
                 # We define an async function and then drive it manually
                 code_to_inject = dedent(f"""
                 {helpers}
@@ -1499,7 +1403,7 @@ class AsyncConstructMutator(ast.NodeTransformer):
 
             # Strategy 2: Async With (Targets generic async setup UOPs)
             else:
-                print(f"    -> Injecting async with block", file=sys.stderr)
+                print("    -> Injecting async with block", file=sys.stderr)
                 code_to_inject = dedent(f"""
                 {helpers}
 
@@ -1547,7 +1451,7 @@ class SysMonitoringMutator(ast.NodeTransformer):
             # We use a unique suffix to ensure variable/function name uniqueness
             uid = random.randint(1000, 9999)
 
-            print(f"    -> Injecting sys.monitoring scenario", file=sys.stderr)
+            print("    -> Injecting sys.monitoring scenario", file=sys.stderr)
             # print(f"    -> Injecting GLOBAL sys.monitoring scenario", file=sys.stderr)
 
             # This scenario:
@@ -1702,15 +1606,8 @@ class ImportChaosMutator(ast.NodeTransformer):
         return cls._safe_imports
 
     def visit_Module(self, node: ast.Module) -> ast.Module:
-        """
-        Inject random imports at the module level.
+        self.generic_visit(node)
 
-        Args:
-            node: The module AST node
-
-        Returns:
-            The modified module with injected imports
-        """
         safe_imports = self._get_safe_imports()
 
         if not safe_imports:
@@ -1752,8 +1649,13 @@ class ImportChaosMutator(ast.NodeTransformer):
             )
             import_nodes.append(try_node)
 
-        # Prepend the imports to the module
-        node.body = import_nodes + node.body
-        ast.fix_missing_locations(node)
+        if import_nodes:
+            print(
+                f"    -> Injecting {len(import_nodes)} random imports: {', '.join(modules_to_import)}",
+                file=sys.stderr,
+            )
+            # Prepend the imports to the module
+            node.body = import_nodes + node.body
+            ast.fix_missing_locations(node)
 
         return node

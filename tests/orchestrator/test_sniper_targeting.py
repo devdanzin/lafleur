@@ -1,10 +1,16 @@
 import ast
 import unittest
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 from lafleur.orchestrator import LafleurOrchestrator
+from lafleur.utils import RUN_STATS_FILE
 
 
 class TestSniperTargeting(unittest.TestCase):
+    def setUp(self):
+        save_file = Path(RUN_STATS_FILE)
+        save_file.unlink(missing_ok=True)
+
     def test_harness_exclusion(self):
         """Test that the harness function itself is excluded from sniper targets."""
         # Setup mocks
@@ -45,7 +51,7 @@ class TestSniperTargeting(unittest.TestCase):
             patch.object(
                 orch, "_get_mutated_harness", return_value=(None, None)
             ) as mock_get_mutated,
-            patch("lafleur.orchestrator.CORPUS_DIR") as mock_corpus_dir,
+            patch("lafleur.orchestrator.CORPUS_DIR"),
         ):
             # Run cycle (will abort early due to mock_get_mutated returning None, but enough to test logic)
             orch.execute_mutation_and_analysis_cycle(mock_path, 100.0, 1, False)

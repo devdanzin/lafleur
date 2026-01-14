@@ -132,7 +132,6 @@ class TestRecursionWrappingMutator(unittest.TestCase):
                 f = 6
         """)
         tree = ast.parse(code)
-        original_statements = ["a = 1", "b = 2", "c = 3", "d = 4", "e = 5", "f = 6"]
 
         with patch("random.random", return_value=0.01):
             with patch("random.randint", side_effect=[1, 6000]):  # Start at index 1
@@ -1208,7 +1207,7 @@ class TestYieldFromInjector(unittest.TestCase):
                 mutated = mutator.visit(tree)
 
         result = ast.unparse(mutated)
-        lines = [l.strip() for l in result.split("\n") if l.strip()]
+        lines = [line.strip() for line in result.split("\n") if line.strip()]
 
         # Generator definition should come before original code
         gen_def_idx = next(i for i, line in enumerate(lines) if "def _yield_from_gen_7000" in line)

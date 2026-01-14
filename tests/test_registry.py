@@ -26,7 +26,9 @@ class TestCrashRegistry(unittest.TestCase):
         self.assertIsNotNone(cursor.fetchone())
 
         # Check reported_issues table
-        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='reported_issues'")
+        cursor.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='reported_issues'"
+        )
         self.assertIsNotNone(cursor.fetchone())
         conn.close()
 
@@ -36,12 +38,7 @@ class TestCrashRegistry(unittest.TestCase):
 
         # 1. Add sighting (creates crash row implicitly)
         # add_sighting(fingerprint, run_id, instance_name, timestamp, ...)
-        success = self.registry.add_sighting(
-            fingerprint,
-            "run_1",
-            "inst_1",
-            "2025-01-01T12:00:00"
-        )
+        success = self.registry.add_sighting(fingerprint, "run_1", "inst_1", "2025-01-01T12:00:00")
         self.assertTrue(success)
 
         # 2. Verify data
@@ -58,12 +55,14 @@ class TestCrashRegistry(unittest.TestCase):
         self.registry.add_sighting(fingerprint, "run_1", "inst_1", "2025-01-01")
 
         # Record the issue first so we have details
-        self.registry.record_issue({
-            "issue_number": 123,
-            "title": "Memory Error",
-            "url": "https://github.com/python/cpython/issues/123",
-            "crash_status": "FIXED"
-        })
+        self.registry.record_issue(
+            {
+                "issue_number": 123,
+                "title": "Memory Error",
+                "url": "https://github.com/python/cpython/issues/123",
+                "crash_status": "FIXED",
+            }
+        )
 
         # Link to issue
         self.registry.link_crash_to_issue(fingerprint, 123)
@@ -86,7 +85,7 @@ class TestCrashRegistry(unittest.TestCase):
                 "title": "Test Bug",
                 "url": "http://test",
                 "crash_status": "OPEN",
-                "notes": "Note"
+                "notes": "Note",
             }
         ]
         count = self.registry.upsert_reported_issues(issues)

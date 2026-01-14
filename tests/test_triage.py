@@ -46,18 +46,22 @@ class TestTriageImportExport(unittest.TestCase):
     def test_export_issues_with_data(self):
         """Test exporting issues with data."""
         # Add some issues
-        self.registry.record_issue({
-            "issue_number": 123,
-            "title": "Test Bug",
-            "url": "https://github.com/test/123",
-            "crash_status": "REPORTED",
-        })
-        self.registry.record_issue({
-            "issue_number": 456,
-            "title": "Another Bug",
-            "url": "https://github.com/test/456",
-            "crash_status": "FIXED",
-        })
+        self.registry.record_issue(
+            {
+                "issue_number": 123,
+                "title": "Test Bug",
+                "url": "https://github.com/test/123",
+                "crash_status": "REPORTED",
+            }
+        )
+        self.registry.record_issue(
+            {
+                "issue_number": 456,
+                "title": "Another Bug",
+                "url": "https://github.com/test/456",
+                "crash_status": "FIXED",
+            }
+        )
 
         output_path = Path(self.temp_dir.name) / "export.json"
         count = do_export_issues(self.registry, output_path)
@@ -216,18 +220,14 @@ class TestTriageActions(unittest.TestCase):
 
     def test_action_report_missing_issue(self):
         """Test report action fails without issue number."""
-        success, msg = handle_triage_action(
-            self.registry, self.fingerprint, "report"
-        )
+        success, msg = handle_triage_action(self.registry, self.fingerprint, "report")
 
         self.assertFalse(success)
         self.assertIn("required", msg.lower())
 
     def test_action_ignore(self):
         """Test ignore action sets status."""
-        success, msg = handle_triage_action(
-            self.registry, self.fingerprint, "ignore"
-        )
+        success, msg = handle_triage_action(self.registry, self.fingerprint, "ignore")
 
         self.assertTrue(success)
         crash = self.registry.get_crash(self.fingerprint)
@@ -235,9 +235,7 @@ class TestTriageActions(unittest.TestCase):
 
     def test_action_fixed(self):
         """Test fixed action sets status."""
-        success, msg = handle_triage_action(
-            self.registry, self.fingerprint, "fixed"
-        )
+        success, msg = handle_triage_action(self.registry, self.fingerprint, "fixed")
 
         self.assertTrue(success)
         crash = self.registry.get_crash(self.fingerprint)
@@ -255,9 +253,7 @@ class TestTriageActions(unittest.TestCase):
 
     def test_action_note_empty(self):
         """Test note action fails with empty note."""
-        success, msg = handle_triage_action(
-            self.registry, self.fingerprint, "note", note_text=""
-        )
+        success, msg = handle_triage_action(self.registry, self.fingerprint, "note", note_text="")
 
         self.assertFalse(success)
         self.assertIn("no note", msg.lower())
@@ -278,9 +274,7 @@ class TestTriageActions(unittest.TestCase):
         self.registry.record_issue({"issue_number": 777, "title": "Bug"})
         self.registry.link_crash_to_issue(self.fingerprint, 777)
 
-        success, msg = handle_triage_action(
-            self.registry, self.fingerprint, "unlink"
-        )
+        success, msg = handle_triage_action(self.registry, self.fingerprint, "unlink")
 
         self.assertTrue(success)
 
@@ -305,9 +299,7 @@ class TestTriageActions(unittest.TestCase):
 
     def test_action_unknown(self):
         """Test unknown action returns error."""
-        success, msg = handle_triage_action(
-            self.registry, self.fingerprint, "unknown_action"
-        )
+        success, msg = handle_triage_action(self.registry, self.fingerprint, "unknown_action")
 
         self.assertFalse(success)
         self.assertIn("unknown", msg.lower())

@@ -221,9 +221,7 @@ class TestGenerateReport(unittest.TestCase):
                 "total_ram_gb": 16.0,
             },
         }
-        (logs_dir / "run_metadata.json").write_text(
-            json.dumps(metadata), encoding="utf-8"
-        )
+        (logs_dir / "run_metadata.json").write_text(json.dumps(metadata), encoding="utf-8")
 
         # Create stats file
         stats = {
@@ -235,9 +233,7 @@ class TestGenerateReport(unittest.TestCase):
             "start_time": "2025-01-01T10:00:00Z",
             "last_update_time": "2025-01-01T11:00:00Z",
         }
-        (self.root / "fuzz_run_stats.json").write_text(
-            json.dumps(stats), encoding="utf-8"
-        )
+        (self.root / "fuzz_run_stats.json").write_text(json.dumps(stats), encoding="utf-8")
 
     def test_generate_report_minimal(self):
         """Test generating report for minimal instance."""
@@ -298,10 +294,12 @@ class TestGenerateReport(unittest.TestCase):
         crash_dir = crashes_dir / "crash_1"
         crash_dir.mkdir(parents=True)
         (crash_dir / "metadata.json").write_text(
-            json.dumps({
-                "fingerprint": "ASSERT:test_crash",
-                "timestamp": "20250101_103000",
-            })
+            json.dumps(
+                {
+                    "fingerprint": "ASSERT:test_crash",
+                    "timestamp": "20250101_103000",
+                }
+            )
         )
 
         report = generate_report(self.root)
@@ -325,9 +323,7 @@ class TestGenerateReport(unittest.TestCase):
             "successful_strategies": {"default": 20, "aggressive": 10},
             "successful_mutators": {"OperatorSwapper": 15, "ConstantPerturbator": 10},
         }
-        (self.root / "corpus_stats.json").write_text(
-            json.dumps(corpus_stats), encoding="utf-8"
-        )
+        (self.root / "corpus_stats.json").write_text(json.dumps(corpus_stats), encoding="utf-8")
 
         report = generate_report(self.root)
 

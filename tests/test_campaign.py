@@ -1,9 +1,7 @@
 import unittest
 import json
-import shutil
 import tempfile
 from pathlib import Path
-from unittest.mock import patch, MagicMock
 from lafleur.campaign import CampaignAggregator, generate_html_report
 
 
@@ -30,7 +28,7 @@ class TestCampaignAggregator(unittest.TestCase):
             "run_id": name,
             "host": "test-host",
             "python_version": "3.14.0",
-            "instance_name": name
+            "instance_name": name,
         }
         logs_dir = run_dir / "logs"
         logs_dir.mkdir()
@@ -44,24 +42,30 @@ class TestCampaignAggregator(unittest.TestCase):
     def test_aggregation_logic(self):
         """Test that metrics are summed correctly across runs."""
         # Run 1: 10 execs, 1 crash
-        self._create_run("run1", {
-            "total_mutations": 10,
-            "global_edges": 100,
-            "crashes_found": 1,
-            "new_coverage_finds": 5,
-            "start_time": "2025-01-01T10:00:00Z",
-            "last_update_time": "2025-01-01T10:00:10Z"  # 10 seconds
-        })
+        self._create_run(
+            "run1",
+            {
+                "total_mutations": 10,
+                "global_edges": 100,
+                "crashes_found": 1,
+                "new_coverage_finds": 5,
+                "start_time": "2025-01-01T10:00:00Z",
+                "last_update_time": "2025-01-01T10:00:10Z",  # 10 seconds
+            },
+        )
 
         # Run 2: 20 execs, 0 crashes
-        self._create_run("run2", {
-            "total_mutations": 20,
-            "global_edges": 150,
-            "crashes_found": 0,
-            "new_coverage_finds": 2,
-            "start_time": "2025-01-01T10:00:00Z",
-            "last_update_time": "2025-01-01T10:00:10Z"  # 10 seconds
-        })
+        self._create_run(
+            "run2",
+            {
+                "total_mutations": 20,
+                "global_edges": 150,
+                "crashes_found": 0,
+                "new_coverage_finds": 2,
+                "start_time": "2025-01-01T10:00:00Z",
+                "last_update_time": "2025-01-01T10:00:10Z",  # 10 seconds
+            },
+        )
 
         # Initialize with list of paths
         aggregator = CampaignAggregator([self.runs_dir / "run1", self.runs_dir / "run2"])

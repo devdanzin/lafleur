@@ -166,24 +166,32 @@ class TestCheckForCrash(unittest.TestCase):
         # Mock session files (e.g. parent + child)
         session_files = [parent_path, source_path]
 
-        with patch("pathlib.Path.mkdir"), \
-                patch("shutil.copy") as mock_copy, \
-                patch("shutil.copy2") as mock_copy2, \
-                patch("builtins.open", mock_open()), \
-                patch("sys.stderr"):
+        with (
+            patch("pathlib.Path.mkdir"),
+            patch("shutil.copy"),
+            patch("shutil.copy2"),
+            patch("builtins.open", mock_open()),
+            patch("sys.stderr"),
+        ):
             # Mock _save_session_crash to verify it gets called
             with patch.object(self.orchestrator, "_save_session_crash") as mock_save_bundle:
                 mock_save_bundle.return_value = Path("/tmp/crashes/session_crash_123")
 
                 # Trigger a crash (return code -11 = SIGSEGV)
                 self.orchestrator._check_for_crash(
-                    -11, "Segmentation fault", source_path, log_path,
-                    parent_path=parent_path, session_files=session_files
+                    -11,
+                    "Segmentation fault",
+                    source_path,
+                    log_path,
+                    parent_path=parent_path,
+                    session_files=session_files,
                 )
 
                 # Verify the bundle saver was called with the correct list
                 mock_save_bundle.assert_called_once_with(
-                    session_files, -11, self.orchestrator.fingerprinter.analyze(-11, "Segmentation fault")
+                    session_files,
+                    -11,
+                    self.orchestrator.fingerprinter.analyze(-11, "Segmentation fault"),
                 )
 
     def test_crash_with_segfault_returns_true(self):
@@ -194,9 +202,7 @@ class TestCheckForCrash(unittest.TestCase):
 
         with patch("shutil.copy"), patch("sys.stderr"):
             # Return code -11 is SIGSEGV
-            result = self.orchestrator._check_for_crash(
-                -11, log_content, source_path, log_path
-            )
+            result = self.orchestrator._check_for_crash(-11, log_content, source_path, log_path)
             self.assertTrue(result)
 
     def test_preserves_truncated_log_extension(self):

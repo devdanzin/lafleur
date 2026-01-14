@@ -7,7 +7,6 @@ of fuzzing runs by consuming metadata, stats, and crash information.
 
 import argparse
 import json
-import os
 import sys
 from collections import defaultdict
 from datetime import datetime, timezone
@@ -296,7 +295,6 @@ def generate_report(instance_dir: Path) -> str:
     if metadata:
         hardware = metadata.get("hardware", {})
         env = metadata.get("environment", {})
-        config = metadata.get("configuration", {})
 
         cpu_physical = hardware.get("cpu_count_physical", "N/A")
         cpu_logical = hardware.get("cpu_count_logical", "N/A")

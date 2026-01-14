@@ -19,7 +19,6 @@ import subprocess
 import sys
 import time
 from pathlib import Path
-from typing import Optional
 
 # Environment variables for reproduction
 REPRO_ENV = os.environ.copy()

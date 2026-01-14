@@ -9,11 +9,10 @@ and verification methods in the LafleurOrchestrator class.
 import ast
 import io
 import subprocess
-import sys
 import unittest
 from pathlib import Path
 from textwrap import dedent
-from unittest.mock import MagicMock, Mock, patch, mock_open
+from unittest.mock import MagicMock, patch
 
 from lafleur.orchestrator import LafleurOrchestrator
 from lafleur.utils import ExecutionResult
@@ -106,9 +105,7 @@ class TestPrepareChildScript(unittest.TestCase):
             mock_instr.return_value = mock_instance
             mock_instance.visit.return_value = parent_tree
 
-            result = self.orchestrator._prepare_child_script(
-                parent_tree, mutated_harness, runtime_seed=42
-            )
+            self.orchestrator._prepare_child_script(parent_tree, mutated_harness, runtime_seed=42)
 
             mock_instr.assert_called_once()
             mock_instance.visit.assert_called_once()
@@ -171,7 +168,7 @@ class TestRunTimedTrial(unittest.TestCase):
         mock_path = Path("/tmp/test.py")
 
         # Simulate 5 runs (num_runs=3 means 5 total to discard outliers)
-        with patch("subprocess.run") as mock_run:
+        with patch("subprocess.run"):
             with patch(
                 "time.monotonic",
                 side_effect=[
@@ -478,9 +475,7 @@ class TestExecuteChild(unittest.TestCase):
                     args=[], returncode=0, stdout="", stderr="Coverage: edges={}"
                 )
                 with patch("sys.stderr", new_callable=io.StringIO):
-                    result = self.orchestrator._execute_child(
-                        source, source_path, log_path, parent_path
-                    )
+                    self.orchestrator._execute_child(source, source_path, log_path, parent_path)
 
         # Should only run once for coverage (no differential runs)
         self.assertEqual(mock_run.call_count, 1)
@@ -523,9 +518,7 @@ class TestExecuteChild(unittest.TestCase):
                     self.orchestrator, "_handle_timeout", return_value=None
                 ) as mock_handle:
                     with patch("sys.stderr", new_callable=io.StringIO):
-                        result = self.orchestrator._execute_child(
-                            source, source_path, log_path, parent_path
-                        )
+                        self.orchestrator._execute_child(source, source_path, log_path, parent_path)
 
                     mock_handle.assert_called_once()
 

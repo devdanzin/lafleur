@@ -8,13 +8,10 @@ methods in the LafleurOrchestrator class.
 
 import ast
 import io
-import random
-import sys
 import unittest
 from collections import defaultdict
-from pathlib import Path
 from textwrap import dedent
-from unittest.mock import MagicMock, PropertyMock, patch
+from unittest.mock import MagicMock, patch
 
 from lafleur.orchestrator import LafleurOrchestrator
 
@@ -33,7 +30,7 @@ class TestApplyMutationStrategy(unittest.TestCase):
         # Mock score_tracker
         self.orchestrator.score_tracker = MagicMock()
         self.orchestrator.score_tracker.attempts = defaultdict(int)
-        self.orchestrator.score_tracker.get_weights.return_value = [1.0, 1.0, 1.0]
+        self.orchestrator.score_tracker.get_weights.return_value = [1.0, 1.0, 1.0, 1.0]
 
         # Create default mock strategy methods with __name__ attributes
         # These can be overridden in individual tests

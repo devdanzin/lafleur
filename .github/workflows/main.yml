@@ -1,0 +1,119 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  # JOB 1: Fast linting and type checking on standard Python
+  static-analysis:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.14"
+
+      - name: Install dependencies
+        run: |
+          pip install ruff mypy
+          # Install lafleur in editable mode to check types
+          pip install -e .
+
+      - name: Run Ruff Check (Lint)
+        run: ruff check .
+
+      - name: Run Ruff Format (Check)
+        run: ruff format --check .
+
+#      - name: Run Mypy
+#        run: mypy .
+
+  # JOB 2: Build CPython JIT and run Tests
+  jit-tests:
+    runs-on: ubuntu-24.04
+    env:
+      # Configure ASan to be less noisy for Fuzzing/CI
+      ASAN_OPTIONS: detect_leaks=0:allocator_may_return_null=1
+      # Tell the build script which LLVM version to use
+      LLVM_VERSION: 21
+
+    steps:
+      - uses: actions/checkout@v6
+
+      # 1. Install Clang-21 (Required for JIT codegen)
+      - name: Install Clang/LLVM 21
+        run: |
+          wget https://apt.llvm.org/llvm.sh
+          chmod +x llvm.sh
+          sudo ./llvm.sh 21
+          # Verify installation
+          clang-21 --version
+
+      # 2. Checkout CPython Source (Pin to a recent commit to avoid daily breakage)
+      - name: Checkout CPython
+        uses: actions/checkout@v6
+        with:
+          repository: python/cpython
+          ref: 1857a40807daeae3a1bf5efb682de9c9ae6df845  # Or pin to a specific hash if main breaks often
+          path: cpython-src
+
+      # 3. Cache the Compiled Interpreter
+      # Key includes: OS, Clang Version, and CPython Commit Hash
+      - name: Cache CPython Build
+        id: cache-cpython
+        uses: actions/cache@v5
+        with:
+          path: /opt/cpython-jit
+          key: cpython-jit-asan-${{ runner.os }}-llvm21-${{ hashFiles('cpython-src/COMMIT_SHA') }}
+          # Fallback to restore older builds if the exact commit isn't found
+          restore-keys: |
+            cpython-jit-asan-${{ runner.os }}-llvm21-
+
+      # 4. Build CPython (Only if Cache Miss)
+      - name: Build CPython JIT+ASan
+        if: steps.cache-cpython.outputs.cache-hit != 'true'
+        working-directory: cpython-src
+        run: |
+          # Configure with JIT and ASan
+          # We prefer a local install to /opt/cpython-jit to make caching easy
+          ./configure \
+            --enable-experimental-jit \
+            --with-address-sanitizer \
+            --without-pymalloc \
+            --with-pydebug \
+            --prefix=/opt/cpython-jit \
+            --with-ensurepip=install
+
+          # Build and Install
+          make -j$(nproc)
+          sudo make install
+
+      # 5. Fix permissions (since sudo make install owns files)
+      - name: Fix Cache Permissions
+        if: steps.cache-cpython.outputs.cache-hit != 'true'
+        run: sudo chown -R $USER /opt/cpython-jit
+
+      # 6. Run Tests
+      - name: Run Tests with JIT
+        run: |
+          # Create a venv using our CUSTOM python
+          /opt/cpython-jit/bin/python3 -m venv venv
+          source venv/bin/activate
+          
+          # Install test dependencies
+          pip install pytest pytest-cov coverage psutil
+          pip install -e .
+
+          # Run Tests
+          pytest --cov=lafleur
+
+#      # 7. Upload Coverage
+#      - name: Upload coverage reports to Codecov
+#        uses: codecov/codecov-action@v5
+#        with:
+#          token: ${{ secrets.CODECOV_TOKEN }}

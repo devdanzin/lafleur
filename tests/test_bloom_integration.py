@@ -2,7 +2,7 @@ import unittest
 from unittest.mock import MagicMock, patch
 import ctypes
 import io
-from lafleur.driver import get_jit_stats, PyExecutorObject
+from lafleur.driver import get_jit_stats
 
 
 class TestBloomIntegration(unittest.TestCase):

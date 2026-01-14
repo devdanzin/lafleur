@@ -7,11 +7,10 @@ execution, and statistics management.
 """
 
 import io
-import math
 import unittest
 from datetime import datetime, timezone
 from pathlib import Path
-from unittest.mock import MagicMock, patch, call
+from unittest.mock import MagicMock, patch
 
 from lafleur.orchestrator import LafleurOrchestrator
 

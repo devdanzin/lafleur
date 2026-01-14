@@ -140,7 +140,7 @@ def scan_watched_variables(
     try:
         # First, check if the namespace dict itself is watched
         if check_bloom(bloom, id(namespace), "namespace_dict"):
-            print(f"[DEBUG] The globals() dict itself is watched!", flush=True)
+            print("[DEBUG] The globals() dict itself is watched!", flush=True)
 
         # Check globals
         print(f"[DEBUG] Checking {len(namespace)} globals...", flush=True)
@@ -154,7 +154,7 @@ def scan_watched_variables(
         if builtins_val:
             # Check if the builtins dict/module itself is watched
             if check_bloom(bloom, id(builtins_val), "builtins_dict_or_module"):
-                print(f"[DEBUG] The __builtins__ dict/module itself is watched!", flush=True)
+                print("[DEBUG] The __builtins__ dict/module itself is watched!", flush=True)
 
             builtins_dict = builtins_val
             if isinstance(builtins_val, ModuleType):

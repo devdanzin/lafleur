@@ -80,7 +80,7 @@ class TeeLogger:
         self.flush()
 
     def flush(self) -> None:
-        """Flushe both the original stream and the log file."""
+        """Flush both the original stream and the log file."""
         self.original_stream.flush()
         self.log_file.flush()
 

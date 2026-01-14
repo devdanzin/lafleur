@@ -5,7 +5,7 @@ Unit tests for lafleur/corpus_manager.py
 
 import unittest
 from pathlib import Path
-from unittest.mock import MagicMock, Mock, patch
+from unittest.mock import Mock, patch
 
 from lafleur.corpus_manager import CorpusManager, CorpusScheduler
 from lafleur.coverage import CoverageManager
@@ -332,7 +332,7 @@ class TestCorpusManager(unittest.TestCase):
     def test_synchronize_removes_missing_files(self, mock_corpus_dir, mock_save):
         """Test that synchronize removes files from state that are missing from disk."""
         # Mock the corpus directory
-        mock_path = Mock(spec=Path)
+        Mock(spec=Path)
         mock_corpus_dir.exists.return_value = True
 
         # Create mock path objects for the files

@@ -10,7 +10,7 @@ import io
 import signal
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import patch, mock_open
 from lafleur.orchestrator import LafleurOrchestrator
 from lafleur.analysis import CrashFingerprinter
 
@@ -153,6 +153,57 @@ class TestCheckForCrash(unittest.TestCase):
                     self.assertTrue(result)
                     # Should copy both source and log
                     self.assertEqual(mock_copy.call_count, 2)
+
+    def test_session_crash_saving(self):
+        """Test that session fuzzing crashes save the full bundle of scripts."""
+        # Enable session fuzzing on the instance
+        self.orchestrator.session_fuzz = True
+
+        source_path = Path("/tmp/01_child.py")
+        parent_path = Path("/tmp/00_parent.py")
+        log_path = Path("/tmp/crash.log")
+
+        # Mock session files (e.g. parent + child)
+        session_files = [parent_path, source_path]
+
+        with (
+            patch("pathlib.Path.mkdir"),
+            patch("shutil.copy"),
+            patch("shutil.copy2"),
+            patch("builtins.open", mock_open()),
+            patch("sys.stderr"),
+        ):
+            # Mock _save_session_crash to verify it gets called
+            with patch.object(self.orchestrator, "_save_session_crash") as mock_save_bundle:
+                mock_save_bundle.return_value = Path("/tmp/crashes/session_crash_123")
+
+                # Trigger a crash (return code -11 = SIGSEGV)
+                self.orchestrator._check_for_crash(
+                    -11,
+                    "Segmentation fault",
+                    source_path,
+                    log_path,
+                    parent_path=parent_path,
+                    session_files=session_files,
+                )
+
+                # Verify the bundle saver was called with the correct list
+                mock_save_bundle.assert_called_once_with(
+                    session_files,
+                    -11,
+                    self.orchestrator.fingerprinter.analyze(-11, "Segmentation fault"),
+                )
+
+    def test_crash_with_segfault_returns_true(self):
+        """Test that a standard SIGSEGV returns True."""
+        source_path = Path("/tmp/child.py")
+        log_path = Path("/tmp/child.log")
+        log_content = "Segmentation  fault (core dumped)"
+
+        with patch("shutil.copy"), patch("sys.stderr"):
+            # Return code -11 is SIGSEGV
+            result = self.orchestrator._check_for_crash(-11, log_content, source_path, log_path)
+            self.assertTrue(result)
 
     def test_preserves_truncated_log_extension(self):
         """Test that _truncated.log extension is preserved in crash filename."""

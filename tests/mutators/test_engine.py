@@ -683,6 +683,31 @@ class TestSlicingMutator(unittest.TestCase):
             # Check that randint was called with (0, 125)
             mock_randint.assert_called_once_with(0, 150 - 25)
 
+    def test_slice_maintains_syntactic_structure(self):
+        """Test that slicing doesn't leave orphaned indentation."""
+        code = dedent("""
+            def uop_harness_test():
+                if True:
+                    x = 1
+                    y = 2
+                    z = 3
+                return x
+        """)
+        # We need a large enough function for slicing to trigger,
+        # or mock the constants to allow small slices.
+        tree = ast.parse(code)
+
+        # Mock constants to allow slicing this small function
+        with patch("lafleur.mutators.engine.SlicingMutator.MIN_STATEMENTS_FOR_SLICE", 2):
+            with patch("lafleur.mutators.engine.SlicingMutator.SLICE_SIZE", 2):
+                mutator = SlicingMutator([])
+                # This might raise if the slicer isn't smart about blocks
+                try:
+                    mutated = mutator.visit(tree)
+                    ast.unparse(mutated)
+                except Exception as e:
+                    self.fail(f"Slicing produced invalid structure: {e}")
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

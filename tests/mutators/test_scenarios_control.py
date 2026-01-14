@@ -1464,5 +1464,32 @@ class TestMaxOperandMutator(unittest.TestCase):
         self.assertIsInstance(reparsed, ast.Module)
 
 
+class TestExitStresser(unittest.TestCase):
+    """Test ExitStresser mutator."""
+
+    def test_injects_loops_and_exits(self):
+        """Test that side-exit loops are injected."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+                y = 2
+        """)
+        tree = ast.parse(code)
+
+        # Mock random to ensure injection happens
+        with patch("random.random", return_value=0.01):  # Trigger probability
+            with patch("random.randint", return_value=5):  # Loop count
+                mutator = ExitStresser()
+                mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+
+        # Should contain the loop and the break/continue logic
+        self.assertIn("Running exit stress scenario", result)
+        self.assertIn("res_es_5", result)
+        # Check that it produces valid python
+        ast.parse(result)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

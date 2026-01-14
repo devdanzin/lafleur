@@ -78,6 +78,22 @@ class TestJITParsing(unittest.TestCase):
         # Should return defaults, not crash
         self.assertEqual(parsed["max_exit_count"], 0)
 
+    def test_parse_jit_stats_malformed_json(self):
+        """Test that malformed JSON in driver stats is ignored gracefully."""
+        # The JSON is cut off mid-stream
+        log_content = """
+        [DRIVER:START] script.py
+        [DRIVER:STATS] {"max_exit_count": 100, "max_chain_depth": 
+        [DRIVER:ERROR] Process killed
+        """
+
+        # Should not raise JSONDecodeError
+        stats = self.orch._parse_jit_stats(log_content)
+
+        # Should return safe defaults
+        self.assertEqual(stats["max_exit_count"], 0)
+        self.assertEqual(stats["zombie_traces"], 0)
+
 
 if __name__ == "__main__":
     unittest.main()

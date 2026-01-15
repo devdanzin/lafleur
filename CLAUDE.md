@@ -14,16 +14,29 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Development Commands
 
+### Python Interpreter
+
+**Important**: Always use the JIT CPython venv for running commands:
+```bash
+~/venvs/jit_cpython_venv/bin/python
+```
+
+For pytest and mypy:
+```bash
+~/venvs/jit_cpython_venv/bin/python -m pytest tests
+~/venvs/jit_cpython_venv/bin/python -m mypy lafleur
+```
+
 ### Testing
 ```bash
-# Run tests (from repository root)
-python -m unittest tests
+# Run tests with pytest (preferred)
+~/venvs/jit_cpython_venv/bin/python -m pytest tests
 
 # Run a specific test file
-python -m unittest tests.test_mutator
+~/venvs/jit_cpython_venv/bin/python -m pytest tests/test_mutator.py
 
 # Run with verbose output
-python -m unittest -v tests
+~/venvs/jit_cpython_venv/bin/python -m pytest tests -v
 ```
 
 ## Testing Mutators

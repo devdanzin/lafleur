@@ -7,12 +7,13 @@ This document contains important context for continuing work on the lafleur proj
 ### Completed Work
 - **PR #331**: Re-enable mypy type checking - **MERGED**
 - All previous PRs have been merged
+- **Testing**: `tests/` coverage is robust, including recent additions for Triage and Reporting.
 
 ### Next Task: Refactor orchestrator.py
 
-**Goal**: Break up `lafleur/orchestrator.py` into multiple modules, splitting the features of `LafleurOrchestrator` into multiple classes.
-
+**Goal**: Transform `LafleurOrchestrator` from a 2206-line "God Class" into a clean "Conductor" that coordinates distinct manager classes.
 **Rationale**: The file is ~2600 lines with the `LafleurOrchestrator` class spanning 2206 lines and containing 45 methods. This makes it difficult to maintain, test, and understand.
+**Constraint**: We must maintain passing tests and mypy checks at every step. Do not introduce circular dependencies.
 
 ## LafleurOrchestrator Deep Dive
 
@@ -29,117 +30,6 @@ This document contains important context for continuing work on the lafleur proj
 - **Total lines**: 2206
 - **Methods**: 45
 - **Key dependencies**: `CorpusManager`, `CoverageManager`, `ASTMutator`, `MutatorScoreTracker`
-
-### Method Categories and Suggested Modules
-
-#### 1. Initialization & Configuration (112 lines)
-Could remain in core orchestrator or move to a config module.
-```
-__init__                          (85 lines) - Initialize orchestrator and corpus manager
-get_boilerplate                   (3 lines)  - Return cached boilerplate code
-_extract_and_cache_boilerplate    (15 lines) - Parse source to extract boilerplate
-_get_core_code                    (9 lines)  - Strip boilerplate from source
-```
-
-#### 2. Main Loop & Orchestration (323 lines)
-Core orchestrator - coordinates all other components.
-```
-run_evolutionary_loop                  (93 lines)  - Main fuzzing loop entry point
-execute_mutation_and_analysis_cycle    (230 lines) - Single parent mutation cycle
-```
-
-#### 3. Mutation Strategies → `mutation_strategies.py` (~350 lines)
-All mutation-related logic could be extracted to a `MutationEngine` or `MutationStrategyRunner` class.
-```
-apply_mutation_strategy      (65 lines)  - Select and apply mutation strategy
-_run_deterministic_stage     (17 lines)  - Single seeded mutation
-_run_havoc_stage             (29 lines)  - Random stack of mutations
-_run_spam_stage              (30 lines)  - Repeat same mutation type
-_run_splicing_stage          (82 lines)  - Crossover from second parent
-_run_sniper_stage            (23 lines)  - Targeted mutation via Bloom filter
-_run_helper_sniper_stage     (42 lines)  - Target helper function injection
-_run_slicing                 (32 lines)  - Apply mutations to large AST slice
-_get_mutated_harness         (16 lines)  - Apply strategy and handle errors
-_analyze_setup_ast           (15 lines)  - Map variable names to types
-_calculate_mutations         (18 lines)  - Dynamic mutation count calculation
-```
-
-#### 4. Child Execution → `execution.py` (~320 lines)
-Execution logic could be a `ChildExecutor` class.
-```
-_execute_child          (212 lines) - Run child process with JIT, handle results
-_run_timed_trial        (63 lines)  - Execute with timeout and timing
-_prepare_child_script   (45 lines)  - Reassemble AST to Python source
-```
-
-#### 5. Log Processing → `log_processing.py` (~120 lines)
-Log handling could be a `LogProcessor` class.
-```
-_truncate_huge_log      (25 lines) - Truncate oversized logs
-_compress_log_stream    (18 lines) - Compress log content
-_process_log_file       (30 lines) - Process and optionally compress logs
-_filter_jit_stderr      (12 lines) - Remove benign JIT debug messages
-_parse_jit_stats        (61 lines) - Extract JIT statistics from logs
-```
-
-#### 6. Crash & Timeout Handling → `crash_handling.py` (~250 lines)
-Crash detection/saving could be a `CrashHandler` class.
-```
-_handle_timeout            (31 lines)  - Save timeout test case
-_save_regression_timeout   (16 lines)  - Save JIT-only timeout
-_save_jit_hang             (14 lines)  - Save JIT hang case
-_check_for_crash           (130 lines) - Detect crash cause (signal/keyword/etc)
-_save_session_crash        (62 lines)  - Save session-mode crash
-```
-
-#### 7. Coverage & Analysis → `analysis.py` (~290 lines)
-Analysis logic could be an `AnalysisEngine` class.
-```
-analyze_run                       (124 lines) - Orchestrate run analysis
-_handle_analysis_data             (62 lines)  - Process analysis results
-_find_new_coverage                (52 lines)  - Detect new coverage
-_update_global_coverage           (9 lines)   - Commit coverage to global state
-_calculate_coverage_hash          (12 lines)  - SHA256 hash of coverage
-_score_and_decide_interestingness (61 lines)  - Score child interestingness
-_build_lineage_profile            (33 lines)  - Build coverage lineage
-_get_nodes_from_parent            (34 lines)  - Parse parent AST nodes
-```
-
-#### 8. Result Saving → `result_saving.py` (~50 lines)
-Could be part of crash_handling or separate.
-```
-_save_divergence    (31 lines) - Save JIT divergence artifacts
-_save_regression    (16 lines) - Save JIT performance regression
-```
-
-#### 9. Statistics & Logging (~65 lines)
-Could remain in orchestrator or move to a stats module.
-```
-update_and_save_run_stats    (29 lines) - Update and persist statistics
-_log_timeseries_datapoint    (36 lines) - Append stats to time-series log
-```
-
-#### 10. Debugging & Verification (~130 lines)
-Testing/debugging utilities.
-```
-verify_target_capabilities    (70 lines) - Verify JIT target works
-debug_mutation_differences    (23 lines) - Check mutation variety
-verify_jit_determinism        (38 lines) - Check coverage determinism
-```
-
-### Suggested Refactoring Approach
-
-1. **Start with lowest coupling**: Begin with `log_processing.py` - these methods have minimal dependencies on orchestrator state.
-
-2. **Extract execution next**: `ChildExecutor` class for `_execute_child`, `_run_timed_trial`, etc.
-
-3. **Then crash handling**: `CrashHandler` class - depends on execution but not mutation.
-
-4. **Analysis engine**: `AnalysisEngine` - depends on coverage manager.
-
-5. **Mutation strategies last**: Most tightly coupled to orchestrator state.
-
-### Key State in LafleurOrchestrator.__init__
 
 ```python
 # Core components
@@ -161,6 +51,108 @@ self.global_seed_counter: int
 self.mutations_since_last_find: int
 self.nojit_cv: float | None  # Coefficient of variation for no-JIT runs
 ```
+
+
+## Architectural Plan
+
+We will reject the idea of splitting into many tiny, fragmented modules (e.g., `log_processing.py`, `result_saving.py`). Instead, we will group responsibilities into four cohesive "Manager" modules.
+
+**IMPORTANT:** Do not create a module named `analysis.py`. We already have `lafleur/analysis.py` (Crash Fingerprinting). Use `lafleur/scoring.py` instead.
+
+### Phase 1: Preparation
+
+1. **Remove Dead Code**: Ensure `debug_mutation_differences` and `verify_jit_determinism` are deleted from `orchestrator.py` before moving any code.
+
+### Phase 2: The Refactoring Roadmap
+
+#### 1. `lafleur/artifacts.py` ("The Librarian")
+
+**Responsibility**: Managing files, processing logs, and saving findings. This has low coupling and is the safest place to start.
+
+* **Move methods**:
+* `_process_log_file`, `_truncate_huge_log`, `_compress_log_stream`
+* `_check_for_crash`
+* `_handle_timeout`, `_save_regression_timeout`, `_save_jit_hang`
+* `_save_session_crash`, `_save_divergence`, `_save_regression`
+
+
+
+#### 2. `lafleur/scoring.py` ("The Judge")
+
+**Responsibility**: Parsing results, calculating scores, and detecting coverage.
+
+* **Move Classes**: `InterestingnessScorer`, `NewCoverageInfo`
+* **Move Methods**:
+* `_parse_jit_stats`
+* `_find_new_coverage`
+* `_calculate_coverage_hash`
+* `_score_and_decide_interestingness` (logic only; keep state updates in orchestrator if needed)
+
+
+
+#### 3. `lafleur/execution.py` ("The Muscle")
+
+**Responsibility**: Running subprocesses and handling the OS layer.
+
+* **Move Classes**: `ExecutionResult` (if not already in utils)
+* **Move Methods**:
+* `_execute_child`
+* `_run_timed_trial`
+* `verify_target_capabilities`
+* `_filter_jit_stderr`
+
+
+
+#### 4. `lafleur/mutation_controller.py` ("The Strategist")
+
+**Responsibility**: Deciding *how* to mutate and assembling the source code.
+
+* **Move Methods**:
+* `apply_mutation_strategy`
+* `_run_deterministic_stage`, `_run_havoc_stage`, `_run_spam_stage`, `_run_splicing_stage`, `_run_sniper_stage`, `_run_helper_sniper_stage`, `_run_slicing`
+* `_get_mutated_harness`
+* `_prepare_child_script` (Source code assembly/GC injection)
+* `_analyze_setup_ast`
+* `_calculate_mutations`
+
+
+
+---
+
+## Resulting `orchestrator.py` ("The Conductor")
+
+After refactoring, `orchestrator.py` should effectively look like this high-level story:
+
+```python
+class LafleurOrchestrator:
+    def __init__(self, ...):
+        self.executor = Executor(...)
+        self.mutator = MutationController(...)
+        self.artifacts = ArtifactManager(...)
+        self.scorer = ScoreKeeper(...)
+
+    def run_evolutionary_loop(self):
+        # 1. Select Parent
+        # 2. Cycle:
+        #    child_src = self.mutator.create_child(parent)
+        #    result = self.executor.run(child_src)
+        #    if self.artifacts.is_crash(result):
+        #        self.artifacts.save_crash(result)
+        #    score = self.scorer.evaluate(result)
+        #    if score > threshold:
+        #        self.corpus.save(child)
+
+```
+
+## Key Dependencies & Method Map
+
+| Method | Target Module | Dependencies to Inject |
+| --- | --- | --- |
+| `_execute_child` | `execution.py` | `timeout`, `target_python`, `ENV` |
+| `_check_for_crash` | `artifacts.py` | `CrashFingerprinter` |
+| `_prepare_child_script` | `mutation_controller.py` | `boilerplate_code` |
+| `_find_new_coverage` | `scoring.py` | `CoverageManager` (read-only access) |
+
 
 ## Working Patterns
 
@@ -191,6 +183,7 @@ Co-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>
 ```bash
 ~/venvs/jit_cpython_venv/bin/python
 ```
+**Checks**: Run `pytest tests` and `mypy lafleur` frequently.
 
 ## Key Technical Details
 

@@ -466,12 +466,12 @@ class TestMutationCycleIntegration(unittest.TestCase):
         """Complete mutation cycle creates child file with mutations."""
         seed_file = list(Path("corpus").glob("*.py"))[0]
 
-        # Mock _score_and_decide_interestingness to return True (interesting)
+        # Mock score_and_decide_interestingness to return True (interesting)
         # This bypasses the complex JIT log parsing and directly tests child creation
 
         def mock_score_interesting(*args, **kwargs):
             # Call original to get NewCoverageInfo, but force it to be interesting
-            from lafleur.orchestrator import NewCoverageInfo
+            from lafleur.scoring import NewCoverageInfo
 
             # Return interesting coverage: 2 global edges = score of 20 > 10
             return True, NewCoverageInfo(global_edges=2)
@@ -479,8 +479,8 @@ class TestMutationCycleIntegration(unittest.TestCase):
         with patch("subprocess.run") as mock_run:
             mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
             with patch.object(
-                self.orchestrator,
-                "_score_and_decide_interestingness",
+                self.orchestrator.scoring_manager,
+                "score_and_decide_interestingness",
                 side_effect=mock_score_interesting,
             ):
                 # Run one mutation cycle

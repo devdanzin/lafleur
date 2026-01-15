@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Tests for scoring components in lafleur/orchestrator.py.
+Tests for scoring components in lafleur/scoring.py.
 
 This module contains unit tests for NewCoverageInfo and InterestingnessScorer
 classes that determine which mutations are worth keeping.
@@ -8,7 +8,7 @@ classes that determine which mutations are worth keeping.
 
 import unittest
 
-from lafleur.orchestrator import NewCoverageInfo, InterestingnessScorer
+from lafleur.scoring import NewCoverageInfo, InterestingnessScorer
 
 
 class TestNewCoverageInfo(unittest.TestCase):

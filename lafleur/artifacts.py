@@ -1,0 +1,546 @@
+"""
+Artifact management for the lafleur fuzzer.
+
+This module provides the ArtifactManager class ("The Librarian") which handles:
+- Log file processing (truncation, compression)
+- Crash detection and artifact saving
+- Timeout and hang artifact saving
+- Divergence and regression artifact saving
+"""
+
+import difflib
+import json
+import random
+import re
+import shutil
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+from textwrap import dedent
+
+from compression import zstd
+
+from lafleur.analysis import CrashFingerprinter, CrashSignature, CrashType
+
+# Log processing constants
+TIMEOUT_LOG_COMPRESSION_THRESHOLD = 1_048_576  # 1 MB
+TRUNCATE_HEAD_SIZE = 50 * 1024  # 50 KB
+TRUNCATE_TAIL_SIZE = 300 * 1024  # 300 KB
+
+# Keywords that indicate a crash even if exit code is 0
+CRASH_KEYWORDS = [
+    "Segmentation fault",
+    "JITCorrectnessError",
+    "Assertion ",
+    "Abort ",
+    "Fatal Python error",
+    "panic",
+    "AddressSanitizer",
+]
+
+
+class ArtifactManager:
+    """
+    Manages saving and processing of fuzzer artifacts.
+
+    This class handles log file processing, crash detection, and saving of
+    various artifact types (crashes, timeouts, divergences, regressions).
+    """
+
+    def __init__(
+        self,
+        crashes_dir: Path,
+        timeouts_dir: Path,
+        divergences_dir: Path,
+        regressions_dir: Path,
+        fingerprinter: CrashFingerprinter,
+        max_timeout_log_bytes: int,
+        max_crash_log_bytes: int,
+        session_fuzz: bool = False,
+    ):
+        """
+        Initialize the ArtifactManager.
+
+        Args:
+            crashes_dir: Directory to save crash artifacts
+            timeouts_dir: Directory to save timeout artifacts
+            divergences_dir: Directory to save divergence artifacts
+            regressions_dir: Directory to save regression artifacts
+            fingerprinter: CrashFingerprinter instance for crash analysis
+            max_timeout_log_bytes: Maximum size for timeout logs before truncation
+            max_crash_log_bytes: Maximum size for crash logs before truncation
+            session_fuzz: Whether session fuzzing mode is enabled
+        """
+        self.crashes_dir = crashes_dir
+        self.timeouts_dir = timeouts_dir
+        self.divergences_dir = divergences_dir
+        self.regressions_dir = regressions_dir
+        self.fingerprinter = fingerprinter
+        self.max_timeout_log_bytes = max_timeout_log_bytes
+        self.max_crash_log_bytes = max_crash_log_bytes
+        self.session_fuzz = session_fuzz
+
+        # Ensure directories exist
+        self.crashes_dir.mkdir(parents=True, exist_ok=True)
+        self.timeouts_dir.mkdir(parents=True, exist_ok=True)
+        self.divergences_dir.mkdir(parents=True, exist_ok=True)
+        self.regressions_dir.mkdir(parents=True, exist_ok=True)
+
+    def truncate_huge_log(self, log_path: Path, original_size: int) -> Path:
+        """
+        Truncate a huge log file by keeping only the head and tail.
+
+        Args:
+            log_path: Path to the log file
+            original_size: Original size of the log file in bytes
+
+        Returns:
+            Path to the truncated file (or original if truncation failed)
+        """
+        truncated_path = log_path.with_name(f"{log_path.stem}_truncated{log_path.suffix}")
+        try:
+            with open(log_path, "rb") as src, open(truncated_path, "wb") as dst:
+                # Write Head
+                dst.write(src.read(TRUNCATE_HEAD_SIZE))
+
+                # Write Marker
+                mb_size = original_size / (1024 * 1024)
+                msg = f"\n\n... [Log Truncated by Lafleur: Original size {mb_size:.2f} MB] ...\n\n"
+                dst.write(msg.encode("utf-8", errors="replace"))
+
+                # Write Tail
+                src.seek(original_size - TRUNCATE_TAIL_SIZE)
+                dst.write(src.read(TRUNCATE_TAIL_SIZE))
+
+            log_path.unlink()  # Delete the original huge file
+            return truncated_path
+        except Exception as e:
+            print(f"  [!] Warning: Could not truncate huge log: {e}", file=sys.stderr)
+            return log_path  # Fallback to keeping the original
+
+    def compress_log_stream(self, log_path: Path) -> Path:
+        """
+        Compress a log file using streaming to avoid high memory usage.
+
+        Args:
+            log_path: Path to the log file
+
+        Returns:
+            Path to the compressed file (or original if compression failed)
+        """
+        compressed_path = log_path.with_suffix(".log.zst")
+        try:
+            # Use zstd.open for streaming compression (Python 3.14+ feature)
+            with open(log_path, "rb") as src, zstd.open(compressed_path, "wb") as dst:
+                shutil.copyfileobj(src, dst)
+
+            log_path.unlink()  # Delete the original file
+            return compressed_path
+        except Exception as e:
+            print(f"  [!] Warning: Could not compress log stream: {e}", file=sys.stderr)
+            if compressed_path.exists():
+                compressed_path.unlink()
+            return log_path  # Fallback to keeping the original
+
+    def process_log_file(self, log_path: Path, max_size_bytes: int, label: str = "Log") -> Path:
+        """
+        Apply size policies to a log file: Truncate if huge, Compress if large, Keep if small.
+
+        Args:
+            log_path: Path to the log file
+            max_size_bytes: Maximum size threshold for truncation
+            label: Label for log messages (e.g., "Timeout log", "Crash log")
+
+        Returns:
+            Path to the processed file
+        """
+        try:
+            if not log_path.exists():
+                return log_path
+
+            log_size = log_path.stat().st_size
+
+            # Tier 3: Huge Log -> Truncate
+            if log_size > max_size_bytes:
+                print(
+                    f"  [*] {label} is huge ({log_size / (1024 * 1024):.1f} MB), truncating...",
+                    file=sys.stderr,
+                )
+                return self.truncate_huge_log(log_path, log_size)
+
+            # Tier 2: Large Log -> Compress
+            elif log_size > TIMEOUT_LOG_COMPRESSION_THRESHOLD:
+                print(f"  [*] {label} is large, compressing with zstd...", file=sys.stderr)
+                return self.compress_log_stream(log_path)
+
+            # Tier 1: Small Log -> Keep as is
+            return log_path
+
+        except Exception as e:
+            print(f"  [!] Warning: Error processing {label.lower()}: {e}", file=sys.stderr)
+            return log_path
+
+    def handle_timeout(
+        self, child_source_path: Path, child_log_path: Path, parent_path: Path
+    ) -> None:
+        """
+        Handle a standard timeout by saving the test case and processing the log.
+
+        Args:
+            child_source_path: Path to the child script that timed out
+            child_log_path: Path to the log file from the timed out execution
+            parent_path: Path to the parent script
+
+        Returns:
+            None (stat key: "timeouts_found")
+        """
+        print("  [!!!] TIMEOUT DETECTED! Saving test case.", file=sys.stderr)
+
+        # Use the centralized processor with timeout-specific limits
+        log_to_save = self.process_log_file(
+            child_log_path, self.max_timeout_log_bytes, "Timeout log"
+        )
+
+        timeout_source_path = (
+            self.timeouts_dir / f"timeout_{child_source_path.stem}_{parent_path.name}"
+        )
+
+        # Calculate destination log path, explicitly preserving truncation marker or compression
+        if log_to_save.name.endswith("_truncated.log"):
+            timeout_log_path = timeout_source_path.with_name(
+                f"{timeout_source_path.stem}_truncated.log"
+            )
+        elif log_to_save.name.endswith(".log.zst"):
+            timeout_log_path = timeout_source_path.with_name(f"{timeout_source_path.stem}.log.zst")
+        else:
+            timeout_log_path = timeout_source_path.with_suffix(log_to_save.suffix)
+
+        if log_to_save.exists():
+            shutil.copy(child_source_path, timeout_source_path)
+            shutil.copy(log_to_save, timeout_log_path)
+
+            if log_to_save != child_log_path:
+                log_to_save.unlink()
+
+    def save_regression_timeout(self, source_path: Path, parent_path: Path) -> None:
+        """
+        Save a test case that timed out with the JIT but not without.
+
+        Args:
+            source_path: Path to the script that caused the regression timeout
+            parent_path: Path to the parent script
+
+        Returns:
+            None (stat key: "regression_timeouts_found")
+        """
+        print("  [!!!] JIT-INDUCED TIMEOUT DETECTED! Saving test case.", file=sys.stderr)
+
+        dest_dir = self.regressions_dir / "timeouts"
+        dest_dir.mkdir(parents=True, exist_ok=True)
+
+        dest_path = dest_dir / f"timeout_{source_path.stem}_{parent_path.name}.py"
+        try:
+            shutil.copy(source_path, dest_path)
+            print(f"  [+] Regression timeout saved to {dest_path}", file=sys.stderr)
+        except IOError as e:
+            print(f"  [!] CRITICAL: Could not save regression timeout file: {e}", file=sys.stderr)
+
+    def save_jit_hang(self, source_path: Path, parent_path: Path) -> None:
+        """
+        Save a test case that timed out with the JIT enabled but not disabled.
+
+        Args:
+            source_path: Path to the script that caused the JIT hang
+            parent_path: Path to the parent script
+
+        Returns:
+            None (stat key: "jit_hangs_found")
+        """
+        print("  [!!!] JIT-INDUCED HANG DETECTED! Saving test case.", file=sys.stderr)
+
+        dest_dir = self.divergences_dir / "jit_hangs"
+        dest_dir.mkdir(parents=True, exist_ok=True)
+
+        dest_path = dest_dir / f"hang_{source_path.stem}_{parent_path.name}.py"
+        try:
+            shutil.copy(source_path, dest_path)
+            print(f"  [+] JIT hang saved to {dest_path}", file=sys.stderr)
+        except IOError as e:
+            print(f"  [!] CRITICAL: Could not save JIT hang file: {e}", file=sys.stderr)
+
+    def save_session_crash(
+        self, scripts: list[Path], exit_code: int, crash_signature: CrashSignature | None = None
+    ) -> Path:
+        """
+        Save a session crash bundle containing all scripts in the sequence.
+
+        In session fuzzing mode, crashes may depend on JIT state built by earlier
+        scripts in the sequence. This method creates a crash directory containing
+        all scripts with sequential prefixes, plus a reproduce.sh script.
+
+        Args:
+            scripts: List of script paths in execution order (e.g., [parent, child])
+            exit_code: The exit code from the crashed execution
+            crash_signature: Optional crash fingerprint metadata
+
+        Returns:
+            Path to the created crash directory (stat key: "crashes_found" handled by caller)
+        """
+        # Generate unique directory name with timestamp
+        timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+        random_suffix = random.randint(1000, 9999)
+        crash_dir = self.crashes_dir / f"session_crash_{timestamp}_{random_suffix}"
+
+        # Create the crash directory
+        crash_dir.mkdir(parents=True, exist_ok=True)
+
+        # Write metadata.json if signature is provided
+        if crash_signature:
+            metadata_path = crash_dir / "metadata.json"
+            metadata = crash_signature.to_dict()
+            metadata["timestamp"] = timestamp
+            metadata_path.write_text(json.dumps(metadata, indent=2))
+
+        # Copy scripts with sequential prefixes
+        script_names = []
+        for i, script_path in enumerate(scripts):
+            if i == 0:
+                dest_name = f"{i:02d}_warmup.py"
+            elif i == len(scripts) - 1:
+                dest_name = f"{i:02d}_attack.py"
+            else:
+                dest_name = f"{i:02d}_script.py"
+
+            dest_path = crash_dir / dest_name
+            shutil.copy2(script_path, dest_path)
+            script_names.append(dest_name)
+
+        # Create reproduce.sh script
+        reproduce_script = crash_dir / "reproduce.sh"
+        reproduce_content = dedent(f"""
+            #!/bin/bash
+            # Session crash reproducer
+            # Exit code: {exit_code}
+            # Generated: {timestamp}
+
+            python3 -m lafleur.driver {" ".join(script_names)}
+        """).strip()
+
+        reproduce_script.write_text(reproduce_content)
+        reproduce_script.chmod(0o755)  # Make executable
+
+        return crash_dir
+
+    def check_for_crash(
+        self,
+        return_code: int,
+        log_content: str,
+        source_path: Path,
+        log_path: Path,
+        parent_path: Path | None = None,
+        session_files: list[Path] | None = None,
+    ) -> bool:
+        """
+        Check for crashes, determine the cause (Signal/Retcode/Keyword), and save artifacts.
+
+        Args:
+            return_code: Exit code from the child process
+            log_content: Content of the log file
+            source_path: Path to the script that was executed
+            log_path: Path to the log file
+            parent_path: Path to the parent script (for session mode)
+            session_files: List of all scripts in the session (for session mode)
+
+        Returns:
+            True if a crash was detected and saved (stat key: "crashes_found" handled by caller)
+        """
+        crash_signature = None
+        crash_reason = None
+
+        # 1. Analyze with Fingerprinter
+        if return_code != 0:
+            # Ignore standard termination signals (SIGKILL=-9, SIGTERM=-15)
+            # These are usually caused by timeouts or OOM killers, not JIT bugs.
+            if return_code in (-9, -15):
+                print(f"  [~] Ignoring signal {return_code} (SIGKILL/SIGTERM).", file=sys.stderr)
+                return False
+
+            crash_signature = self.fingerprinter.analyze(return_code, log_content)
+
+            # Filter out crashes marked as IGNORE (OOM, allocation failures, etc.)
+            if crash_signature.crash_type == CrashType.IGNORE:
+                print(
+                    f"  [~] Ignoring uninteresting crash: {crash_signature.fingerprint}",
+                    file=sys.stderr,
+                )
+                return False
+
+            # Filter out SyntaxErrors and IndentationErrors early (applies to all crash types)
+            # These are just invalid mutations, not real bugs. The driver may output them in
+            # a format that the fingerprinter doesn't recognize as PYTHON_UNCAUGHT.
+            if "SyntaxError:" in log_content or "IndentationError:" in log_content:
+                print(
+                    "  [~] Ignoring SyntaxError/IndentationError from invalid mutation.",
+                    file=sys.stderr,
+                )
+                return False
+
+            # Filter out mundane Python errors (Exit Code 1)
+            if crash_signature.crash_type == CrashType.PYTHON_UNCAUGHT:
+                # If it's just a Python exception without other signals, ignore it
+                return False
+
+            crash_reason = crash_signature.fingerprint
+
+        # 2. Check Keywords (Fallback if return code was 0 but log indicates panic)
+        if not crash_reason:
+            for keyword in CRASH_KEYWORDS:
+                if keyword.lower() in log_content.lower():
+                    # Sanitize keyword: lowercase, spaces to underscores, remove non-alphanumeric
+                    safe_kw = re.sub(r"[^a-z0-9_]", "", keyword.lower().replace(" ", "_"))
+                    crash_reason = f"keyword_{safe_kw}"
+                    # Retroactively create a signature
+                    crash_signature = CrashSignature(
+                        type="KEYWORD",
+                        crash_type=CrashType.UNKNOWN,
+                        returncode=return_code,
+                        signal_name=None,
+                        fingerprint=crash_reason,
+                    )
+                    break
+
+        # 3. Save Artifacts if Crash Detected
+        if crash_reason:
+            print(f"  [!!!] CRASH DETECTED! ({crash_reason}). Saving...", file=sys.stderr)
+
+            # Process the log (truncate/compress) using the crash-specific limit
+            log_to_save = self.process_log_file(log_path, self.max_crash_log_bytes, "Crash log")
+
+            # Branch based on session fuzzing mode
+            if self.session_fuzz and parent_path is not None:
+                # Session mode: save crash bundle with all scripts
+                # Use session_files if available (includes polluters), otherwise use parent+child
+                scripts_to_save = session_files if session_files else [parent_path, source_path]
+                num_scripts = len(scripts_to_save)
+                print(
+                    f"  [SESSION] Saving crash bundle with {num_scripts} script(s).",
+                    file=sys.stderr,
+                )
+                crash_dir = self.save_session_crash(scripts_to_save, return_code, crash_signature)
+
+                # Determine log destination name
+                if log_to_save.name.endswith("_truncated.log"):
+                    crash_log_name = "session_crash_truncated.log"
+                elif log_to_save.name.endswith(".log.zst"):
+                    crash_log_name = "session_crash.log.zst"
+                else:
+                    crash_log_name = "session_crash.log"
+
+                crash_log_path = crash_dir / crash_log_name
+
+                try:
+                    shutil.copy(log_to_save, crash_log_path)
+                    if log_to_save != log_path:
+                        log_to_save.unlink()
+                    print(f"  [!!!] Session crash bundle saved to: {crash_dir}", file=sys.stderr)
+                except IOError as e:
+                    print(f"  [!] Error saving session crash log: {e}", file=sys.stderr)
+
+            else:
+                # Standard mode: save single child file
+                # Use sanitization for filename
+                safe_reason = re.sub(r"[^a-zA-Z0-9_.-]", "_", crash_reason[:50])
+                crash_base_name = f"crash_{safe_reason}_{source_path.name}"
+                crash_source_path = self.crashes_dir / crash_base_name
+
+                # Determine destination log name, preserving extensions/markers
+                if log_to_save.name.endswith("_truncated.log"):
+                    crash_log_path = (
+                        self.crashes_dir / f"{Path(crash_base_name).stem}_truncated.log"
+                    )
+                elif log_to_save.name.endswith(".log.zst"):
+                    crash_log_path = self.crashes_dir / f"{Path(crash_base_name).stem}.log.zst"
+                else:
+                    crash_log_path = self.crashes_dir / f"{Path(crash_base_name).stem}.log"
+
+                try:
+                    shutil.copy(source_path, crash_source_path)
+                    shutil.copy(log_to_save, crash_log_path)
+
+                    # Clean up the processed temp log if we created one
+                    if log_to_save != log_path:
+                        log_to_save.unlink()
+                except IOError as e:
+                    print(f"  [!] Error saving crash artifacts: {e}", file=sys.stderr)
+
+            return True
+
+        return False
+
+    def save_divergence(
+        self, source_path: Path, jit_output: str, nojit_output: str, reason: str
+    ) -> None:
+        """
+        Save artifacts from a JIT divergence for a given reason.
+
+        Args:
+            source_path: Path to the script that caused the divergence
+            jit_output: Output from JIT-enabled execution
+            nojit_output: Output from JIT-disabled execution
+            reason: Reason/category for the divergence
+
+        Returns:
+            None (stat key: "divergences_found")
+        """
+        print(f"  [!!!] JIT DIVERGENCE DETECTED ({reason})! Saving test case.", file=sys.stderr)
+
+        # Create a subdirectory for this type of divergence
+        dest_dir = self.divergences_dir / reason
+        dest_dir.mkdir(parents=True, exist_ok=True)
+
+        base_filename = f"divergence_{source_path.stem}"
+        dest_source_path = dest_dir / f"{base_filename}.py"
+
+        # Create a .diff file to show the difference
+        diff_path = dest_dir / f"{base_filename}.diff"
+
+        try:
+            shutil.copy(source_path, dest_source_path)
+
+            # Use difflib to create a clear diff of the outputs
+            diff = difflib.unified_diff(
+                nojit_output.splitlines(keepends=True),
+                jit_output.splitlines(keepends=True),
+                fromfile="nojit_output",
+                tofile="jit_output",
+            )
+            diff_path.write_text("".join(diff))
+
+            print(f"  [+] Divergence artifacts saved to {dest_dir}", file=sys.stderr)
+
+        except IOError as e:
+            print(f"  [!] CRITICAL: Could not save divergence files: {e}", file=sys.stderr)
+
+    def save_regression(self, source_path: Path, jit_time: float, nojit_time: float) -> None:
+        """
+        Save a test case that causes a significant JIT performance regression.
+
+        Args:
+            source_path: Path to the script that caused the regression
+            jit_time: Execution time with JIT in milliseconds
+            nojit_time: Execution time without JIT in milliseconds
+
+        Returns:
+            None (stat key: "regressions_found")
+        """
+        print("  [!!!] JIT PERFORMANCE REGRESSION DETECTED! Saving test case.", file=sys.stderr)
+
+        # Create a descriptive filename with the timing data
+        filename = f"regression_jit_{jit_time:.0f}ms_nojit_{nojit_time:.0f}ms_{source_path.name}"
+        dest_path = self.regressions_dir / filename
+
+        try:
+            shutil.copy(source_path, dest_path)
+            print(f"  [+] Regression saved to {dest_path}", file=sys.stderr)
+        except IOError as e:
+            print(f"  [!] CRITICAL: Could not save regression file: {e}", file=sys.stderr)

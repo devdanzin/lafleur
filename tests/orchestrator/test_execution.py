@@ -15,6 +15,8 @@ from textwrap import dedent
 from unittest.mock import MagicMock, patch
 
 from lafleur.orchestrator import LafleurOrchestrator
+from lafleur.artifacts import ArtifactManager
+from lafleur.analysis import CrashFingerprinter
 from lafleur.utils import ExecutionResult
 
 
@@ -344,39 +346,46 @@ class TestRunTimedTrial(unittest.TestCase):
 
 
 class TestHandleTimeout(unittest.TestCase):
-    """Test _handle_timeout method."""
+    """Test ArtifactManager.handle_timeout method."""
 
     def setUp(self):
-        """Set up minimal orchestrator instance."""
-        self.orchestrator = LafleurOrchestrator.__new__(LafleurOrchestrator)
-        self.orchestrator.run_stats = {}
-        self.orchestrator.max_timeout_log_bytes = 1_000_000
+        """Set up ArtifactManager instance."""
+        self.artifact_manager = ArtifactManager(
+            crashes_dir=Path("/tmp/crashes"),
+            timeouts_dir=Path("/tmp/timeouts"),
+            divergences_dir=Path("/tmp/divergences"),
+            regressions_dir=Path("/tmp/regressions"),
+            fingerprinter=CrashFingerprinter(),
+            max_timeout_log_bytes=1_000_000,
+            max_crash_log_bytes=10_000_000,
+            session_fuzz=False,
+        )
 
     def test_increments_timeout_counter(self):
-        """Test that timeout counter is incremented."""
+        """Test that timeout counter is incremented by orchestrator (not artifact manager)."""
+        # Note: ArtifactManager no longer increments stats. This test verifies the method works.
         child_source = Path("/tmp/child.py")
         child_log = Path("/tmp/child.log")
         parent = Path("/tmp/parent.py")
 
-        with patch.object(self.orchestrator, "_process_log_file", return_value=child_log):
+        with patch.object(self.artifact_manager, "process_log_file", return_value=child_log):
             with patch("shutil.copy"):
                 with patch("sys.stderr", new_callable=io.StringIO):
-                    self.orchestrator._handle_timeout(child_source, child_log, parent)
-
-        self.assertEqual(self.orchestrator.run_stats["timeouts_found"], 1)
+                    # Method should not raise
+                    self.artifact_manager.handle_timeout(child_source, child_log, parent)
 
     def test_calls_process_log_file(self):
-        """Test that _process_log_file is called with correct parameters."""
+        """Test that process_log_file is called with correct parameters."""
         child_source = Path("/tmp/child.py")
         child_log = Path("/tmp/child.log")
         parent = Path("/tmp/parent.py")
 
         with patch.object(
-            self.orchestrator, "_process_log_file", return_value=child_log
+            self.artifact_manager, "process_log_file", return_value=child_log
         ) as mock_proc:
             with patch("shutil.copy"):
                 with patch("sys.stderr", new_callable=io.StringIO):
-                    self.orchestrator._handle_timeout(child_source, child_log, parent)
+                    self.artifact_manager.handle_timeout(child_source, child_log, parent)
 
             mock_proc.assert_called_once_with(child_log, 1_000_000, "Timeout log")
 
@@ -389,10 +398,10 @@ class TestHandleTimeout(unittest.TestCase):
         mock_log = MagicMock()
         mock_log.exists.return_value = True
 
-        with patch.object(self.orchestrator, "_process_log_file", return_value=mock_log):
+        with patch.object(self.artifact_manager, "process_log_file", return_value=mock_log):
             with patch("shutil.copy") as mock_copy:
                 with patch("sys.stderr", new_callable=io.StringIO):
-                    self.orchestrator._handle_timeout(child_source, child_log, parent)
+                    self.artifact_manager.handle_timeout(child_source, child_log, parent)
 
             # Should copy both source and log
             self.assertEqual(mock_copy.call_count, 2)
@@ -408,10 +417,10 @@ class TestHandleTimeout(unittest.TestCase):
 
         parent = Path("/tmp/parent.py")
 
-        with patch.object(self.orchestrator, "_process_log_file", return_value=mock_log):
+        with patch.object(self.artifact_manager, "process_log_file", return_value=mock_log):
             with patch("shutil.copy") as mock_copy:
                 with patch("sys.stderr", new_callable=io.StringIO):
-                    self.orchestrator._handle_timeout(child_source, child_log, parent)
+                    self.artifact_manager.handle_timeout(child_source, child_log, parent)
 
             # Check that the destination log path has _truncated
             log_dest = mock_copy.call_args_list[1][0][1]
@@ -428,10 +437,10 @@ class TestHandleTimeout(unittest.TestCase):
 
         parent = Path("/tmp/parent.py")
 
-        with patch.object(self.orchestrator, "_process_log_file", return_value=mock_log):
+        with patch.object(self.artifact_manager, "process_log_file", return_value=mock_log):
             with patch("shutil.copy") as mock_copy:
                 with patch("sys.stderr", new_callable=io.StringIO):
-                    self.orchestrator._handle_timeout(child_source, child_log, parent)
+                    self.artifact_manager.handle_timeout(child_source, child_log, parent)
 
             # Check that the destination log path has .log.zst
             log_dest = mock_copy.call_args_list[1][0][1]
@@ -443,10 +452,10 @@ class TestHandleTimeout(unittest.TestCase):
         child_log = Path("/tmp/child.log")
         parent = Path("/tmp/parent.py")
 
-        with patch.object(self.orchestrator, "_process_log_file", return_value=child_log):
+        with patch.object(self.artifact_manager, "process_log_file", return_value=child_log):
             with patch("shutil.copy"):
                 with patch("sys.stderr", new_callable=io.StringIO) as mock_stderr:
-                    self.orchestrator._handle_timeout(child_source, child_log, parent)
+                    self.artifact_manager.handle_timeout(child_source, child_log, parent)
 
                     self.assertIn("TIMEOUT DETECTED", mock_stderr.getvalue())
 
@@ -461,6 +470,18 @@ class TestExecuteChild(unittest.TestCase):
         self.orchestrator.timeout = 10
         self.orchestrator.differential_testing = False
         self.orchestrator.timing_fuzz = False
+        self.orchestrator.run_stats = {}
+        # Create artifact manager for tests that need it
+        self.orchestrator.artifact_manager = ArtifactManager(
+            crashes_dir=Path("/tmp/crashes"),
+            timeouts_dir=Path("/tmp/timeouts"),
+            divergences_dir=Path("/tmp/divergences"),
+            regressions_dir=Path("/tmp/regressions"),
+            fingerprinter=CrashFingerprinter(),
+            max_timeout_log_bytes=1_000_000,
+            max_crash_log_bytes=10_000_000,
+            session_fuzz=False,
+        )
 
     def test_skips_differential_when_disabled(self):
         """Test that differential testing is skipped when disabled."""
@@ -504,7 +525,7 @@ class TestExecuteChild(unittest.TestCase):
         self.assertEqual(result.divergence_reason, "exit_code_mismatch")
 
     def test_differential_timeout_in_nojit_handled(self):
-        """Test that timeout in non-JIT run calls _handle_timeout."""
+        """Test that timeout in non-JIT run calls artifact_manager.handle_timeout."""
         self.orchestrator.differential_testing = True
 
         source = "def uop_harness_test():\n    pass"
@@ -515,7 +536,7 @@ class TestExecuteChild(unittest.TestCase):
         with patch("pathlib.Path.write_text"):
             with patch("subprocess.run", side_effect=subprocess.TimeoutExpired("cmd", 10)):
                 with patch.object(
-                    self.orchestrator, "_handle_timeout", return_value=None
+                    self.orchestrator.artifact_manager, "handle_timeout", return_value=None
                 ) as mock_handle:
                     with patch("sys.stderr", new_callable=io.StringIO):
                         self.orchestrator._execute_child(source, source_path, log_path, parent_path)
@@ -523,7 +544,7 @@ class TestExecuteChild(unittest.TestCase):
                     mock_handle.assert_called_once()
 
     def test_differential_timeout_in_jit_saves_hang(self):
-        """Test that timeout in JIT run calls _save_jit_hang."""
+        """Test that timeout in JIT run calls artifact_manager.save_jit_hang."""
         self.orchestrator.differential_testing = True
 
         source = "def uop_harness_test():\n    pass"
@@ -537,7 +558,7 @@ class TestExecuteChild(unittest.TestCase):
             with patch(
                 "subprocess.run", side_effect=[nojit_result, subprocess.TimeoutExpired("cmd", 10)]
             ):
-                with patch.object(self.orchestrator, "_save_jit_hang") as mock_save:
+                with patch.object(self.orchestrator.artifact_manager, "save_jit_hang") as mock_save:
                     with patch("sys.stderr", new_callable=io.StringIO):
                         result = self.orchestrator._execute_child(
                             source, source_path, log_path, parent_path

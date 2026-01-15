@@ -10,7 +10,6 @@ results for new and interesting JIT behavior.
 import argparse
 import ast
 import copy
-import difflib
 import hashlib
 import json
 import math
@@ -27,7 +26,6 @@ import time
 from collections import defaultdict
 
 import psutil
-from compression import zstd
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -42,7 +40,8 @@ from lafleur.coverage import (
     PROTO_TRACE_REGEX,
     OPTIMIZED_TRACE_REGEX,
 )
-from lafleur.analysis import CrashFingerprinter, CrashType, CrashSignature
+from lafleur.analysis import CrashFingerprinter
+from lafleur.artifacts import ArtifactManager
 from lafleur.learning import MutatorScoreTracker
 from lafleur.mutators import (
     ASTMutator,
@@ -115,28 +114,12 @@ DIVERGENCES_DIR = Path("divergences")
 LOGS_DIR = Path("logs")
 RUN_LOGS_DIR = LOGS_DIR / "run_logs"
 
-TIMEOUT_LOG_COMPRESSION_THRESHOLD = 1_048_576  # 1 MB
-DEFAULT_MAX_LOG_SIZE = 400 * 1024 * 1024  # 400 MB
-TRUNCATE_HEAD_SIZE = 50 * 1024  # 50 KB
-TRUNCATE_TAIL_SIZE = 300 * 1024  # 300 KB
-
 # Session fuzzing: The Mixer strategy
 MIXER_PROBABILITY = 0.3  # 30% chance to prepend polluter scripts
 
 # Tachycardia (instability) tracking: decay factor to prevent local optima
 # By decaying the saved density, persistent instability remains interesting over generations
 TACHYCARDIA_DECAY_FACTOR = 0.95
-
-CRASH_KEYWORDS = [
-    "Segmentation fault",
-    # "Traceback (most recent call last):",
-    "JITCorrectnessError",
-    "Assertion ",
-    "Abort ",
-    "Fatal Python error",
-    "panic",
-    "AddressSanitizer",
-]
 
 BOILERPLATE_START_MARKER = "# FUSIL_BOILERPLATE_START"
 BOILERPLATE_END_MARKER = "# FUSIL_BOILERPLATE_END"
@@ -351,6 +334,18 @@ class LafleurOrchestrator:
 
         self.fingerprinter = CrashFingerprinter()
 
+        # Initialize the artifact manager for handling crashes, timeouts, and divergences
+        self.artifact_manager = ArtifactManager(
+            crashes_dir=CRASHES_DIR,
+            timeouts_dir=TIMEOUTS_DIR,
+            divergences_dir=DIVERGENCES_DIR,
+            regressions_dir=REGRESSIONS_DIR,
+            fingerprinter=self.fingerprinter,
+            max_timeout_log_bytes=self.max_timeout_log_bytes,
+            max_crash_log_bytes=self.max_crash_log_bytes,
+            session_fuzz=self.session_fuzz,
+        )
+
         # Synchronize the corpus and state at startup.
         self.corpus_manager.synchronize(self.analyze_run, self._build_lineage_profile)
 
@@ -362,12 +357,8 @@ class LafleurOrchestrator:
         self.mutations_since_last_find = 0
         self.global_seed_counter = self.run_stats.get("global_seed_counter", 0)
 
-        # Ensure temporary and corpus directories exist
+        # Ensure temporary and log directories exist (artifact dirs handled by ArtifactManager)
         TMP_DIR.mkdir(exist_ok=True)
-        CRASHES_DIR.mkdir(exist_ok=True)
-        REGRESSIONS_DIR.mkdir(exist_ok=True)
-        TIMEOUTS_DIR.mkdir(exist_ok=True)
-        DIVERGENCES_DIR.mkdir(exist_ok=True)
         LOGS_DIR.mkdir(exist_ok=True)
         if self.keep_tmp_logs:
             RUN_LOGS_DIR.mkdir(exist_ok=True)
@@ -1006,146 +997,6 @@ class LafleurOrchestrator:
 
         return mean, False, cv
 
-    def _truncate_huge_log(self, log_path: Path, original_size: int) -> Path:
-        """
-        Truncate a huge log file by keeping only the head and tail.
-        Returns the path to the new truncated file.
-        """
-        truncated_path = log_path.with_name(f"{log_path.stem}_truncated{log_path.suffix}")
-        try:
-            with open(log_path, "rb") as src, open(truncated_path, "wb") as dst:
-                # Write Head
-                dst.write(src.read(TRUNCATE_HEAD_SIZE))
-
-                # Write Marker
-                mb_size = original_size / (1024 * 1024)
-                msg = f"\n\n... [Log Truncated by Lafleur: Original size {mb_size:.2f} MB] ...\n\n"
-                dst.write(msg.encode("utf-8", errors="replace"))
-
-                # Write Tail
-                src.seek(original_size - TRUNCATE_TAIL_SIZE)
-                dst.write(src.read(TRUNCATE_TAIL_SIZE))
-
-            log_path.unlink()  # Delete the original huge file
-            return truncated_path
-        except Exception as e:
-            print(f"  [!] Warning: Could not truncate huge log: {e}", file=sys.stderr)
-            return log_path  # Fallback to keeping the original
-
-    def _compress_log_stream(self, log_path: Path) -> Path:
-        """
-        Compress a log file using streaming to avoid high memory usage.
-        Returns the path to the new compressed file.
-        """
-        compressed_path = log_path.with_suffix(".log.zst")
-        try:
-            # Use zstd.open for streaming compression (Python 3.14+ feature)
-            with open(log_path, "rb") as src, zstd.open(compressed_path, "wb") as dst:
-                shutil.copyfileobj(src, dst)
-
-            log_path.unlink()  # Delete the original file
-            return compressed_path
-        except Exception as e:
-            print(f"  [!] Warning: Could not compress log stream: {e}", file=sys.stderr)
-            if compressed_path.exists():
-                compressed_path.unlink()
-            return log_path  # Fallback to keeping the original
-
-    def _process_log_file(self, log_path: Path, max_size_bytes: int, label: str = "Log") -> Path:
-        """
-        Apply size policies to a log file: Truncate if huge, Compress if large, Keep if small.
-        Returns the path to the processed file.
-        """
-        try:
-            if not log_path.exists():
-                return log_path
-
-            log_size = log_path.stat().st_size
-
-            # Tier 3: Huge Log -> Truncate
-            if log_size > max_size_bytes:
-                print(
-                    f"  [*] {label} is huge ({log_size / (1024 * 1024):.1f} MB), truncating...",
-                    file=sys.stderr,
-                )
-                return self._truncate_huge_log(log_path, log_size)
-
-            # Tier 2: Large Log -> Compress
-            elif log_size > TIMEOUT_LOG_COMPRESSION_THRESHOLD:
-                print(f"  [*] {label} is large, compressing with zstd...", file=sys.stderr)
-                return self._compress_log_stream(log_path)
-
-            # Tier 1: Small Log -> Keep as is
-            return log_path
-
-        except Exception as e:
-            print(f"  [!] Warning: Error processing {label.lower()}: {e}", file=sys.stderr)
-            return log_path
-
-    def _handle_timeout(
-        self, child_source_path: Path, child_log_path: Path, parent_path: Path
-    ) -> None:
-        """Handles a standard timeout by saving the test case and processing the log."""
-        self.run_stats["timeouts_found"] = self.run_stats.get("timeouts_found", 0) + 1
-        print("  [!!!] TIMEOUT DETECTED! Saving test case.", file=sys.stderr)
-
-        # Use the centralized processor with timeout-specific limits
-        log_to_save = self._process_log_file(
-            child_log_path, self.max_timeout_log_bytes, "Timeout log"
-        )
-
-        timeout_source_path = TIMEOUTS_DIR / f"timeout_{child_source_path.stem}_{parent_path.name}"
-
-        # Calculate destination log path, explicitly preserving truncation marker or compression extension
-        if log_to_save.name.endswith("_truncated.log"):
-            timeout_log_path = timeout_source_path.with_name(
-                f"{timeout_source_path.stem}_truncated.log"
-            )
-        elif log_to_save.name.endswith(".log.zst"):
-            timeout_log_path = timeout_source_path.with_name(f"{timeout_source_path.stem}.log.zst")
-        else:
-            timeout_log_path = timeout_source_path.with_suffix(log_to_save.suffix)
-
-        if log_to_save.exists():
-            shutil.copy(child_source_path, timeout_source_path)
-            shutil.copy(log_to_save, timeout_log_path)
-
-            if log_to_save != child_log_path:
-                log_to_save.unlink()
-        return None
-
-    def _save_regression_timeout(self, source_path: Path, parent_path: Path):
-        """Saves a test case that timed out with the JIT but not without."""
-        self.run_stats["regression_timeouts_found"] = (
-            self.run_stats.get("regression_timeouts_found", 0) + 1
-        )
-        print("  [!!!] JIT-INDUCED TIMEOUT DETECTED! Saving test case.", file=sys.stderr)
-
-        dest_dir = REGRESSIONS_DIR / "timeouts"
-        dest_dir.mkdir(parents=True, exist_ok=True)
-
-        dest_path = dest_dir / f"timeout_{source_path.stem}_{parent_path.name}.py"
-        try:
-            shutil.copy(source_path, dest_path)
-            print(f"  [+] Regression timeout saved to {dest_path}", file=sys.stderr)
-        except IOError as e:
-            print(f"  [!] CRITICAL: Could not save regression timeout file: {e}", file=sys.stderr)
-
-    def _save_jit_hang(self, source_path: Path, parent_path: Path):
-        """Saves a test case that timed out with the JIT enabled but not disabled."""
-        self.run_stats["jit_hangs_found"] = self.run_stats.get("jit_hangs_found", 0) + 1
-        print("  [!!!] JIT-INDUCED HANG DETECTED! Saving test case.", file=sys.stderr)
-
-        dest_dir = DIVERGENCES_DIR / "jit_hangs"
-        dest_dir.mkdir(parents=True, exist_ok=True)
-
-        dest_path = dest_dir / f"hang_{source_path.stem}_{parent_path.name}.py"
-        try:
-            shutil.copy(source_path, dest_path)
-            print(f"  [+] JIT hang saved to {dest_path}", file=sys.stderr)
-        except IOError as e:
-            print(f"  [!] CRITICAL: Could not save JIT hang file: {e}", file=sys.stderr)
-
     def _filter_jit_stderr(self, stderr_content: str) -> str:
         """Removes known, benign JIT debug messages from stderr output."""
         lines = stderr_content.splitlines()
@@ -1192,7 +1043,8 @@ class LafleurOrchestrator:
                     env=nojit_env,
                 )
             except subprocess.TimeoutExpired:
-                self._handle_timeout(child_source_path, child_log_path, parent_path)
+                self.artifact_manager.handle_timeout(child_source_path, child_log_path, parent_path)
+                self.run_stats["timeouts_found"] = self.run_stats.get("timeouts_found", 0) + 1
                 return None
 
             # Run JIT
@@ -1211,7 +1063,8 @@ class LafleurOrchestrator:
                     env=jit_env,
                 )
             except subprocess.TimeoutExpired:
-                self._save_jit_hang(child_source_path, parent_path)
+                self.artifact_manager.save_jit_hang(child_source_path, parent_path)
+                self.run_stats["jit_hangs_found"] = self.run_stats.get("jit_hangs_found", 0) + 1
                 return None
 
             # If both runs completed, compare their results sequentially.
@@ -1271,14 +1124,18 @@ class LafleurOrchestrator:
                 child_source_path, num_timing_runs, jit_enabled=False
             )
             if timed_out:
-                self._handle_timeout(child_source_path, child_log_path, parent_path)
+                self.artifact_manager.handle_timeout(child_source_path, child_log_path, parent_path)
+                self.run_stats["timeouts_found"] = self.run_stats.get("timeouts_found", 0) + 1
                 return None
 
             jit_avg_ms, timed_out, _ = self._run_timed_trial(
                 child_source_path, num_timing_runs, jit_enabled=True
             )
             if timed_out:
-                self._save_regression_timeout(child_source_path, parent_path)
+                self.artifact_manager.save_regression_timeout(child_source_path, parent_path)
+                self.run_stats["regression_timeouts_found"] = (
+                    self.run_stats.get("regression_timeouts_found", 0) + 1
+                )
                 return None
 
         # --- Stage 3: Normal Coverage-Gathering Run ---
@@ -1355,7 +1212,8 @@ class LafleurOrchestrator:
                 session_files=session_files if getattr(self, "session_fuzz", False) else None,
             )
         except subprocess.TimeoutExpired:
-            self._handle_timeout(child_source_path, child_log_path, parent_path)
+            self.artifact_manager.handle_timeout(child_source_path, child_log_path, parent_path)
+            self.run_stats["timeouts_found"] = self.run_stats.get("timeouts_found", 0) + 1
             return None
         except Exception as e:
             # Instead of letting the exception propagate, we create a "failure"
@@ -1423,7 +1281,12 @@ class LafleurOrchestrator:
                         dynamic_threshold = 1.2  # Fallback to a 20% slowdown threshold
 
                     if slowdown_ratio > dynamic_threshold:
-                        self._save_regression(CORPUS_DIR / new_filename, jit_time, nojit_time)
+                        self.artifact_manager.save_regression(
+                            CORPUS_DIR / new_filename, jit_time, nojit_time
+                        )
+                        self.run_stats["regressions_found"] = (
+                            self.run_stats.get("regressions_found", 0) + 1
+                        )
 
             analysis_data["new_filename"] = new_filename
             return "BREAK"
@@ -1720,200 +1583,6 @@ class LafleurOrchestrator:
             if not is_deepening_session or not found_new_coverage_in_cycle:
                 break
 
-    def _save_session_crash(
-        self, scripts: list[Path], exit_code: int, crash_signature: CrashSignature | None = None
-    ) -> Path:
-        """
-        Save a session crash bundle containing all scripts in the sequence.
-
-        In session fuzzing mode, crashes may depend on JIT state built by earlier
-        scripts in the sequence. This method creates a crash directory containing
-        all scripts with sequential prefixes, plus a reproduce.sh script.
-
-        Args:
-            scripts: List of script paths in execution order (e.g., [parent, child])
-            exit_code: The exit code from the crashed execution
-            crash_signature: Optional crash fingerprint metadata
-
-        Returns:
-            Path to the created crash directory
-        """
-        # Generate unique directory name with timestamp
-        timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
-        random_suffix = random.randint(1000, 9999)
-        crash_dir = CRASHES_DIR / f"session_crash_{timestamp}_{random_suffix}"
-
-        # Create the crash directory
-        crash_dir.mkdir(parents=True, exist_ok=True)
-
-        # Write metadata.json if signature is provided
-        if crash_signature:
-            metadata_path = crash_dir / "metadata.json"
-            metadata = crash_signature.to_dict()
-            metadata["timestamp"] = timestamp
-            metadata_path.write_text(json.dumps(metadata, indent=2))
-
-        # Copy scripts with sequential prefixes
-        script_names = []
-        for i, script_path in enumerate(scripts):
-            if i == 0:
-                dest_name = f"{i:02d}_warmup.py"
-            elif i == len(scripts) - 1:
-                dest_name = f"{i:02d}_attack.py"
-            else:
-                dest_name = f"{i:02d}_script.py"
-
-            dest_path = crash_dir / dest_name
-            shutil.copy2(script_path, dest_path)
-            script_names.append(dest_name)
-
-        # Create reproduce.sh script
-        reproduce_script = crash_dir / "reproduce.sh"
-        reproduce_content = dedent(f"""
-            #!/bin/bash
-            # Session crash reproducer
-            # Exit code: {exit_code}
-            # Generated: {timestamp}
-
-            python3 -m lafleur.driver {" ".join(script_names)}
-        """).strip()
-
-        reproduce_script.write_text(reproduce_content)
-        reproduce_script.chmod(0o755)  # Make executable
-
-        return crash_dir
-
-    def _check_for_crash(
-        self,
-        return_code: int,
-        log_content: str,
-        source_path: Path,
-        log_path: Path,
-        parent_path: Path | None = None,
-        session_files: list[Path] | None = None,
-    ) -> bool:
-        """Check for crashes, determine the cause (Signal/Retcode/Keyword), and save artifacts."""
-        crash_signature = None
-        crash_reason = None
-
-        # 1. Analyze with Fingerprinter
-        if return_code != 0:
-            # Ignore standard termination signals (SIGKILL=-9, SIGTERM=-15)
-            # These are usually caused by timeouts or OOM killers, not JIT bugs.
-            if return_code in (-9, -15):
-                print(f"  [~] Ignoring signal {return_code} (SIGKILL/SIGTERM).", file=sys.stderr)
-                return False
-
-            crash_signature = self.fingerprinter.analyze(return_code, log_content)
-
-            # Filter out crashes marked as IGNORE (OOM, allocation failures, etc.)
-            if crash_signature.crash_type == CrashType.IGNORE:
-                print(
-                    f"  [~] Ignoring uninteresting crash: {crash_signature.fingerprint}",
-                    file=sys.stderr,
-                )
-                return False
-
-            # Filter out SyntaxErrors and IndentationErrors early (applies to all crash types)
-            # These are just invalid mutations, not real bugs. The driver may output them in
-            # a format that the fingerprinter doesn't recognize as PYTHON_UNCAUGHT.
-            if "SyntaxError:" in log_content or "IndentationError:" in log_content:
-                print(
-                    "  [~] Ignoring SyntaxError/IndentationError from invalid mutation.",
-                    file=sys.stderr,
-                )
-                return False
-
-            # Filter out mundane Python errors (Exit Code 1)
-            if crash_signature.crash_type == CrashType.PYTHON_UNCAUGHT:
-                # If it's just a Python exception without other signals, ignore it
-                return False
-
-            crash_reason = crash_signature.fingerprint
-
-        # 2. Check Keywords (Fallback if return code was 0 but log indicates panic)
-        if not crash_reason:
-            for keyword in CRASH_KEYWORDS:
-                if keyword.lower() in log_content.lower():
-                    # Sanitize keyword: lowercase, spaces to underscores, remove non-alphanumeric
-                    safe_kw = re.sub(r"[^a-z0-9_]", "", keyword.lower().replace(" ", "_"))
-                    crash_reason = f"keyword_{safe_kw}"
-                    # Retroactively create a signature
-                    crash_signature = CrashSignature(
-                        type="KEYWORD",
-                        crash_type=CrashType.UNKNOWN,
-                        returncode=return_code,
-                        signal_name=None,
-                        fingerprint=crash_reason,
-                    )
-                    break
-
-        # 3. Save Artifacts if Crash Detected
-        if crash_reason:
-            print(f"  [!!!] CRASH DETECTED! ({crash_reason}). Saving...", file=sys.stderr)
-
-            # Process the log (truncate/compress) using the crash-specific limit
-            log_to_save = self._process_log_file(log_path, self.max_crash_log_bytes, "Crash log")
-
-            # Branch based on session fuzzing mode
-            if getattr(self, "session_fuzz", False) and parent_path is not None:
-                # Session mode: save crash bundle with all scripts
-                # Use session_files if available (includes polluters), otherwise use parent+child
-                scripts_to_save = session_files if session_files else [parent_path, source_path]
-                num_scripts = len(scripts_to_save)
-                print(
-                    f"  [SESSION] Saving crash bundle with {num_scripts} script(s).",
-                    file=sys.stderr,
-                )
-                crash_dir = self._save_session_crash(scripts_to_save, return_code, crash_signature)
-
-                # Determine log destination name
-                if log_to_save.name.endswith("_truncated.log"):
-                    crash_log_name = "session_crash_truncated.log"
-                elif log_to_save.name.endswith(".log.zst"):
-                    crash_log_name = "session_crash.log.zst"
-                else:
-                    crash_log_name = "session_crash.log"
-
-                crash_log_path = crash_dir / crash_log_name
-
-                try:
-                    shutil.copy(log_to_save, crash_log_path)
-                    if log_to_save != log_path:
-                        log_to_save.unlink()
-                    print(f"  [!!!] Session crash bundle saved to: {crash_dir}", file=sys.stderr)
-                except IOError as e:
-                    print(f"  [!] Error saving session crash log: {e}", file=sys.stderr)
-
-            else:
-                # Standard mode: save single child file
-                # Use sanitization for filename
-                safe_reason = re.sub(r"[^a-zA-Z0-9_.-]", "_", crash_reason[:50])
-                crash_base_name = f"crash_{safe_reason}_{source_path.name}"
-                crash_source_path = CRASHES_DIR / crash_base_name
-
-                # Determine destination log name, preserving extensions/markers
-                if log_to_save.name.endswith("_truncated.log"):
-                    crash_log_path = CRASHES_DIR / f"{Path(crash_base_name).stem}_truncated.log"
-                elif log_to_save.name.endswith(".log.zst"):
-                    crash_log_path = CRASHES_DIR / f"{Path(crash_base_name).stem}.log.zst"
-                else:
-                    crash_log_path = CRASHES_DIR / f"{Path(crash_base_name).stem}.log"
-
-                try:
-                    shutil.copy(source_path, crash_source_path)
-                    shutil.copy(log_to_save, crash_log_path)
-
-                    # Clean up the processed temp log if we created one
-                    if log_to_save != log_path:
-                        log_to_save.unlink()
-                except IOError as e:
-                    print(f"  [!] Error saving crash artifacts: {e}", file=sys.stderr)
-
-            return True
-
-        return False
-
     def _find_new_coverage(
         self,
         child_coverage: dict,
@@ -2199,12 +1868,13 @@ class LafleurOrchestrator:
         """Orchestrate the analysis of a run and return a dictionary of findings."""
 
         if exec_result.is_divergence:
-            self._save_divergence(
+            self.artifact_manager.save_divergence(
                 exec_result.source_path,
                 exec_result.jit_output or "",
                 exec_result.nojit_output or "",
                 exec_result.divergence_reason or "unknown",
             )
+            self.run_stats["divergences_found"] = self.run_stats.get("divergences_found", 0) + 1
             return {"status": "DIVERGENCE"}
 
         log_content = ""
@@ -2213,7 +1883,7 @@ class LafleurOrchestrator:
         except IOError as e:
             print(f"  [!] Warning: Could not read log file for analysis: {e}", file=sys.stderr)
 
-        if self._check_for_crash(
+        if self.artifact_manager.check_for_crash(
             exec_result.returncode,
             log_content,
             exec_result.source_path,
@@ -2310,55 +1980,6 @@ class LafleurOrchestrator:
 
         return {"status": "NO_CHANGE"}
 
-    def _save_divergence(self, source_path: Path, jit_output: str, nojit_output: str, reason: str):
-        """Saves artifacts from a JIT divergence for a given reason."""
-        self.run_stats["divergences_found"] = self.run_stats.get("divergences_found", 0) + 1
-        print(f"  [!!!] JIT DIVERGENCE DETECTED ({reason})! Saving test case.", file=sys.stderr)
-
-        # Create a subdirectory for this type of divergence
-        dest_dir = DIVERGENCES_DIR / reason
-        dest_dir.mkdir(parents=True, exist_ok=True)
-
-        base_filename = f"divergence_{source_path.stem}"
-        dest_source_path = dest_dir / f"{base_filename}.py"
-
-        # Create a .diff file to show the difference
-        diff_path = dest_dir / f"{base_filename}.diff"
-
-        try:
-            shutil.copy(source_path, dest_source_path)
-
-            # Use difflib to create a clear diff of the outputs
-            diff = difflib.unified_diff(
-                nojit_output.splitlines(keepends=True),
-                jit_output.splitlines(keepends=True),
-                fromfile="nojit_output",
-                tofile="jit_output",
-            )
-            diff_path.write_text("".join(diff))
-
-            print(f"  [+] Divergence artifacts saved to {dest_dir}", file=sys.stderr)
-
-        except IOError as e:
-            print(f"  [!] CRITICAL: Could not save divergence files: {e}", file=sys.stderr)
-
-    def _save_regression(self, source_path: Path, jit_time: float, nojit_time: float):
-        """Saves a test case that causes a significant JIT performance regression."""
-        self.run_stats["regressions_found"] = self.run_stats.get("regressions_found", 0) + 1
-        print("  [!!!] JIT PERFORMANCE REGRESSION DETECTED! Saving test case.", file=sys.stderr)
-
-        REGRESSIONS_DIR.mkdir(parents=True, exist_ok=True)
-
-        # Create a descriptive filename with the timing data
-        filename = f"regression_jit_{jit_time:.0f}ms_nojit_{nojit_time:.0f}ms_{source_path.name}"
-        dest_path = REGRESSIONS_DIR / filename
-
-        try:
-            shutil.copy(source_path, dest_path)
-            print(f"  [+] Regression saved to {dest_path}", file=sys.stderr)
-        except IOError as e:
-            print(f"  [!] CRITICAL: Could not save regression file: {e}", file=sys.stderr)
-
     def _log_timeseries_datapoint(self) -> None:
         """Append a snapshot of the current run statistics to the time-series log."""
         # Create a snapshot of the current stats for logging.
@@ -2429,69 +2050,6 @@ class LafleurOrchestrator:
             )
 
         return lineage
-
-    def debug_mutation_differences(self, original_ast: ast.AST, mutated_ast: ast.AST, seed: int):
-        """Verify that mutations are producing different code."""
-        original_str = ast.unparse(original_ast)
-        mutated_str = ast.unparse(mutated_ast)
-
-        if original_str == mutated_str:
-            print(f"  [WARNING] Mutation with seed {seed} produced identical code!")
-            return False
-
-        # Compute hashes to see if different ASTs produce same unparsed code
-        original_hash = hashlib.sha256(original_str.encode("utf-8")).hexdigest()[:10]
-        mutated_hash = hashlib.sha256(mutated_str.encode("utf-8")).hexdigest()[:10]
-
-        print(
-            f"  [DEBUG] Seed {seed}: Original hash: {original_hash}, Mutated hash: {mutated_hash}"
-        )
-
-        # Show a diff summary (just line counts for brevity)
-        original_lines = original_str.count("\n")
-        mutated_lines = mutated_str.count("\n")
-        print(f"  [DEBUG] Line count change: {original_lines} -> {mutated_lines}")
-
-        return True
-
-    def verify_jit_determinism(self, test_file_path: Path, num_runs: int = 5):
-        """Run the same file multiple times to check if coverage is deterministic."""
-        print(f"\n[*] Testing JIT determinism for {test_file_path.name}...")
-
-        coverage_sets = []
-        for run in range(num_runs):
-            log_path = TMP_DIR / f"determinism_test_run_{run}.log"
-
-            with open(log_path, "w") as log_file:
-                subprocess.run(
-                    [self.target_python, str(test_file_path)],
-                    stdout=log_file,
-                    stderr=subprocess.STDOUT,
-                    timeout=self.timeout,  # Use the configurable timeout here
-                    env=ENV,
-                )
-
-            coverage = parse_log_for_edge_coverage(log_path, self.coverage_manager)
-
-            # Collect all edges from all harnesses
-            all_edges: set[int] = set()
-            for harness_data in coverage.values():
-                all_edges.update(harness_data.get("edges", {}).keys())
-
-            coverage_sets.append(all_edges)
-            print(f"  Run {run + 1}: {len(all_edges)} unique edges")
-
-        # Check if all runs produced identical coverage
-        if all(s == coverage_sets[0] for s in coverage_sets):
-            print("  [✓] Coverage is deterministic across all runs")
-        else:
-            print("  [!] Coverage is NON-DETERMINISTIC!")
-            # Show which edges are inconsistent
-            all_edges_union = set().union(*coverage_sets)
-            for edge in all_edges_union:
-                appearances = sum(1 for s in coverage_sets if edge in s)
-                if appearances != num_runs:
-                    print(f"    Edge '{edge}' appeared in {appearances}/{num_runs} runs")
 
 
 def main():

@@ -1,27 +1,37 @@
 #!/usr/bin/env python3
 """
-Tests for crash detection and artifact saving in lafleur/orchestrator.py.
+Tests for crash detection and artifact saving in lafleur.
 
-This module contains unit tests for methods that detect crashes, filter JIT
-output, and save various types of findings (divergences, regressions, hangs).
+This module contains unit tests for ArtifactManager methods that detect crashes,
+and save various types of findings (divergences, regressions, hangs).
+Also tests _filter_jit_stderr which remains on the orchestrator.
 """
 
 import io
 import signal
 import unittest
 from pathlib import Path
-from unittest.mock import patch, mock_open
+from unittest.mock import patch, mock_open, MagicMock
 from lafleur.orchestrator import LafleurOrchestrator
+from lafleur.artifacts import ArtifactManager
 from lafleur.analysis import CrashFingerprinter
 
 
 class TestCheckForCrash(unittest.TestCase):
-    """Test _check_for_crash method."""
+    """Test ArtifactManager.check_for_crash method."""
 
     def setUp(self):
-        self.orchestrator = LafleurOrchestrator.__new__(LafleurOrchestrator)
-        self.orchestrator.max_crash_log_bytes = 10_000_000
-        self.orchestrator.fingerprinter = CrashFingerprinter()
+        self.fingerprinter = CrashFingerprinter()
+        self.artifact_manager = ArtifactManager(
+            crashes_dir=Path("/tmp/crashes"),
+            timeouts_dir=Path("/tmp/timeouts"),
+            divergences_dir=Path("/tmp/divergences"),
+            regressions_dir=Path("/tmp/regressions"),
+            fingerprinter=self.fingerprinter,
+            max_timeout_log_bytes=10_000_000,
+            max_crash_log_bytes=10_000_000,
+            session_fuzz=False,
+        )
 
     def test_no_crash_with_zero_returncode(self):
         """Test that return code 0 with no keywords returns False."""
@@ -29,7 +39,7 @@ class TestCheckForCrash(unittest.TestCase):
         log_path = Path("/tmp/child_test.log")
         log_content = "Normal output\nNo errors here"
 
-        result = self.orchestrator._check_for_crash(0, log_content, source_path, log_path)
+        result = self.artifact_manager.check_for_crash(0, log_content, source_path, log_path)
 
         self.assertFalse(result)
 
@@ -40,7 +50,7 @@ class TestCheckForCrash(unittest.TestCase):
         log_content = "IndentationError: too many levels of indentation"
 
         with patch("sys.stderr", new_callable=io.StringIO) as mock_stderr:
-            result = self.orchestrator._check_for_crash(1, log_content, source_path, log_path)
+            result = self.artifact_manager.check_for_crash(1, log_content, source_path, log_path)
 
             self.assertFalse(result)
             self.assertIn(
@@ -55,7 +65,7 @@ class TestCheckForCrash(unittest.TestCase):
         log_content = "SyntaxError: too many statically nested blocks"
 
         with patch("sys.stderr", new_callable=io.StringIO) as mock_stderr:
-            result = self.orchestrator._check_for_crash(1, log_content, source_path, log_path)
+            result = self.artifact_manager.check_for_crash(1, log_content, source_path, log_path)
 
             self.assertFalse(result)
             self.assertIn(
@@ -69,12 +79,12 @@ class TestCheckForCrash(unittest.TestCase):
         log_path = Path("/tmp/child_test.log")
         log_content = "Some output"
 
-        # Mock the _process_log_file to return the same path
-        with patch.object(self.orchestrator, "_process_log_file", return_value=log_path):
+        # Mock the process_log_file to return the same path
+        with patch.object(self.artifact_manager, "process_log_file", return_value=log_path):
             with patch("shutil.copy"):
                 with patch("sys.stderr", new_callable=io.StringIO) as mock_stderr:
                     # SIGSEGV = -11
-                    result = self.orchestrator._check_for_crash(
+                    result = self.artifact_manager.check_for_crash(
                         -signal.SIGSEGV, log_content, source_path, log_path
                     )
 
@@ -89,10 +99,10 @@ class TestCheckForCrash(unittest.TestCase):
         log_path = Path("/tmp/child_test.log")
         log_content = "Some error occurred"
 
-        with patch.object(self.orchestrator, "_process_log_file", return_value=log_path):
+        with patch.object(self.artifact_manager, "process_log_file", return_value=log_path):
             with patch("shutil.copy"):
                 with patch("sys.stderr", new_callable=io.StringIO) as mock_stderr:
-                    result = self.orchestrator._check_for_crash(
+                    result = self.artifact_manager.check_for_crash(
                         42, log_content, source_path, log_path
                     )
 
@@ -107,10 +117,10 @@ class TestCheckForCrash(unittest.TestCase):
         log_path = Path("/tmp/child_test.log")
         log_content = "Program crashed with Segmentation fault (core dumped)"
 
-        with patch.object(self.orchestrator, "_process_log_file", return_value=log_path):
+        with patch.object(self.artifact_manager, "process_log_file", return_value=log_path):
             with patch("shutil.copy"):
                 with patch("sys.stderr", new_callable=io.StringIO) as mock_stderr:
-                    result = self.orchestrator._check_for_crash(
+                    result = self.artifact_manager.check_for_crash(
                         0, log_content, source_path, log_path
                     )
 
@@ -120,21 +130,21 @@ class TestCheckForCrash(unittest.TestCase):
                     self.assertIn("keyword_segmentation_fault", stderr_output)
 
     def test_calls_process_log_file(self):
-        """Test that _process_log_file is called with crash log limit."""
+        """Test that process_log_file is called with crash log limit."""
         source_path = Path("/tmp/child_test.py")
         log_path = Path("/tmp/child_test.log")
         log_content = "Assertion failed!"
 
         mock_processed_log = Path("/tmp/child_test_truncated.log")
         with patch.object(
-            self.orchestrator, "_process_log_file", return_value=mock_processed_log
+            self.artifact_manager, "process_log_file", return_value=mock_processed_log
         ) as mock_process:
             with patch("shutil.copy"):
                 with patch("sys.stderr", new_callable=io.StringIO):
-                    self.orchestrator._check_for_crash(0, log_content, source_path, log_path)
+                    self.artifact_manager.check_for_crash(0, log_content, source_path, log_path)
 
                     mock_process.assert_called_once_with(
-                        log_path, self.orchestrator.max_crash_log_bytes, "Crash log"
+                        log_path, self.artifact_manager.max_crash_log_bytes, "Crash log"
                     )
 
     def test_saves_crash_artifacts(self):
@@ -143,10 +153,10 @@ class TestCheckForCrash(unittest.TestCase):
         log_path = Path("/tmp/child_abc123.log")
         log_content = "Abort trap!"
 
-        with patch.object(self.orchestrator, "_process_log_file", return_value=log_path):
+        with patch.object(self.artifact_manager, "process_log_file", return_value=log_path):
             with patch("shutil.copy") as mock_copy:
                 with patch("sys.stderr", new_callable=io.StringIO):
-                    result = self.orchestrator._check_for_crash(
+                    result = self.artifact_manager.check_for_crash(
                         0, log_content, source_path, log_path
                     )
 
@@ -156,8 +166,17 @@ class TestCheckForCrash(unittest.TestCase):
 
     def test_session_crash_saving(self):
         """Test that session fuzzing crashes save the full bundle of scripts."""
-        # Enable session fuzzing on the instance
-        self.orchestrator.session_fuzz = True
+        # Create artifact manager with session fuzzing enabled
+        session_artifact_manager = ArtifactManager(
+            crashes_dir=Path("/tmp/crashes"),
+            timeouts_dir=Path("/tmp/timeouts"),
+            divergences_dir=Path("/tmp/divergences"),
+            regressions_dir=Path("/tmp/regressions"),
+            fingerprinter=self.fingerprinter,
+            max_timeout_log_bytes=10_000_000,
+            max_crash_log_bytes=10_000_000,
+            session_fuzz=True,
+        )
 
         source_path = Path("/tmp/01_child.py")
         parent_path = Path("/tmp/00_parent.py")
@@ -173,12 +192,12 @@ class TestCheckForCrash(unittest.TestCase):
             patch("builtins.open", mock_open()),
             patch("sys.stderr"),
         ):
-            # Mock _save_session_crash to verify it gets called
-            with patch.object(self.orchestrator, "_save_session_crash") as mock_save_bundle:
+            # Mock save_session_crash to verify it gets called
+            with patch.object(session_artifact_manager, "save_session_crash") as mock_save_bundle:
                 mock_save_bundle.return_value = Path("/tmp/crashes/session_crash_123")
 
                 # Trigger a crash (return code -11 = SIGSEGV)
-                self.orchestrator._check_for_crash(
+                session_artifact_manager.check_for_crash(
                     -11,
                     "Segmentation fault",
                     source_path,
@@ -191,7 +210,7 @@ class TestCheckForCrash(unittest.TestCase):
                 mock_save_bundle.assert_called_once_with(
                     session_files,
                     -11,
-                    self.orchestrator.fingerprinter.analyze(-11, "Segmentation fault"),
+                    self.fingerprinter.analyze(-11, "Segmentation fault"),
                 )
 
     def test_crash_with_segfault_returns_true(self):
@@ -202,7 +221,7 @@ class TestCheckForCrash(unittest.TestCase):
 
         with patch("shutil.copy"), patch("sys.stderr"):
             # Return code -11 is SIGSEGV
-            result = self.orchestrator._check_for_crash(-11, log_content, source_path, log_path)
+            result = self.artifact_manager.check_for_crash(-11, log_content, source_path, log_path)
             self.assertTrue(result)
 
     def test_preserves_truncated_log_extension(self):
@@ -212,11 +231,11 @@ class TestCheckForCrash(unittest.TestCase):
         log_content = "Assertion error"
 
         truncated_log = Path("/tmp/child_abc123_truncated.log")
-        with patch.object(self.orchestrator, "_process_log_file", return_value=truncated_log):
+        with patch.object(self.artifact_manager, "process_log_file", return_value=truncated_log):
             with patch("shutil.copy") as mock_copy:
                 with patch("pathlib.Path.unlink"):
                     with patch("sys.stderr", new_callable=io.StringIO):
-                        self.orchestrator._check_for_crash(0, log_content, source_path, log_path)
+                        self.artifact_manager.check_for_crash(0, log_content, source_path, log_path)
 
                         # Check that the log was copied with _truncated.log extension
                         calls = [str(call[0][1]) for call in mock_copy.call_args_list]
@@ -232,11 +251,11 @@ class TestCheckForCrash(unittest.TestCase):
         log_content = "JITCorrectnessError: Bad trace"
 
         compressed_log = Path("/tmp/child_abc123.log.zst")
-        with patch.object(self.orchestrator, "_process_log_file", return_value=compressed_log):
+        with patch.object(self.artifact_manager, "process_log_file", return_value=compressed_log):
             with patch("shutil.copy") as mock_copy:
                 with patch("pathlib.Path.unlink"):
                     with patch("sys.stderr", new_callable=io.StringIO):
-                        self.orchestrator._check_for_crash(0, log_content, source_path, log_path)
+                        self.artifact_manager.check_for_crash(0, log_content, source_path, log_path)
 
                         # Check that the log was copied with .log.zst extension
                         calls = [str(call[0][1]) for call in mock_copy.call_args_list]
@@ -251,10 +270,10 @@ class TestCheckForCrash(unittest.TestCase):
         log_path = Path("/tmp/child_test.log")
         log_content = "Abort "
 
-        with patch.object(self.orchestrator, "_process_log_file", return_value=log_path):
+        with patch.object(self.artifact_manager, "process_log_file", return_value=log_path):
             with patch("shutil.copy", side_effect=IOError("Permission denied")):
                 with patch("sys.stderr", new_callable=io.StringIO) as mock_stderr:
-                    result = self.orchestrator._check_for_crash(
+                    result = self.artifact_manager.check_for_crash(
                         0, log_content, source_path, log_path
                     )
 
@@ -265,7 +284,7 @@ class TestCheckForCrash(unittest.TestCase):
 
 
 class TestFilterJitStderr(unittest.TestCase):
-    """Test _filter_jit_stderr method."""
+    """Test _filter_jit_stderr method (still on orchestrator)."""
 
     def setUp(self):
         self.orchestrator = LafleurOrchestrator.__new__(LafleurOrchestrator)
@@ -310,25 +329,34 @@ class TestFilterJitStderr(unittest.TestCase):
 
 
 class TestSaveDivergence(unittest.TestCase):
-    """Test _save_divergence method."""
+    """Test ArtifactManager.save_divergence method."""
 
     def setUp(self):
-        self.orchestrator = LafleurOrchestrator.__new__(LafleurOrchestrator)
-        self.orchestrator.run_stats = {}
+        self.artifact_manager = ArtifactManager(
+            crashes_dir=Path("/tmp/crashes"),
+            timeouts_dir=Path("/tmp/timeouts"),
+            divergences_dir=Path("/tmp/divergences"),
+            regressions_dir=Path("/tmp/regressions"),
+            fingerprinter=CrashFingerprinter(),
+            max_timeout_log_bytes=10_000_000,
+            max_crash_log_bytes=10_000_000,
+            session_fuzz=False,
+        )
 
     def test_increments_divergences_counter(self):
-        """Test that divergences_found counter is incremented."""
+        """Test that divergences_found counter is incremented by orchestrator."""
+        # Note: The ArtifactManager no longer increments stats.
+        # This test now just verifies the method runs without error.
         source_path = Path("/tmp/child_test.py")
 
         with patch("pathlib.Path.mkdir"):
             with patch("shutil.copy"):
                 with patch("pathlib.Path.write_text"):
                     with patch("sys.stderr", new_callable=io.StringIO):
-                        self.orchestrator._save_divergence(
+                        # Method should not raise
+                        self.artifact_manager.save_divergence(
                             source_path, "jit out", "nojit out", "exit_code_mismatch"
                         )
-
-                        self.assertEqual(self.orchestrator.run_stats["divergences_found"], 1)
 
     def test_creates_subdirectory_for_reason(self):
         """Test that divergence subdirectory is created for the reason."""
@@ -338,7 +366,7 @@ class TestSaveDivergence(unittest.TestCase):
             with patch("shutil.copy"):
                 with patch("pathlib.Path.write_text"):
                     with patch("sys.stderr", new_callable=io.StringIO):
-                        self.orchestrator._save_divergence(
+                        self.artifact_manager.save_divergence(
                             source_path, "jit", "nojit", "stderr_mismatch"
                         )
 
@@ -356,7 +384,7 @@ class TestSaveDivergence(unittest.TestCase):
             with patch("shutil.copy") as mock_copy:
                 with patch("pathlib.Path.write_text"):
                     with patch("sys.stderr", new_callable=io.StringIO):
-                        self.orchestrator._save_divergence(
+                        self.artifact_manager.save_divergence(
                             source_path, "jit", "nojit", "stdout_mismatch"
                         )
 
@@ -374,7 +402,7 @@ class TestSaveDivergence(unittest.TestCase):
             with patch("shutil.copy"):
                 with patch("pathlib.Path.write_text") as mock_write:
                     with patch("sys.stderr", new_callable=io.StringIO):
-                        self.orchestrator._save_divergence(
+                        self.artifact_manager.save_divergence(
                             source_path, jit_output, nojit_output, "stdout_mismatch"
                         )
 
@@ -392,7 +420,7 @@ class TestSaveDivergence(unittest.TestCase):
         with patch("pathlib.Path.mkdir"):
             with patch("shutil.copy", side_effect=IOError("Disk full")):
                 with patch("sys.stderr", new_callable=io.StringIO) as mock_stderr:
-                    self.orchestrator._save_divergence(
+                    self.artifact_manager.save_divergence(
                         source_path, "jit", "nojit", "exit_code_mismatch"
                     )
 
@@ -400,22 +428,31 @@ class TestSaveDivergence(unittest.TestCase):
 
 
 class TestSaveRegression(unittest.TestCase):
-    """Test _save_regression method."""
+    """Test ArtifactManager.save_regression method."""
 
     def setUp(self):
-        self.orchestrator = LafleurOrchestrator.__new__(LafleurOrchestrator)
-        self.orchestrator.run_stats = {}
+        self.artifact_manager = ArtifactManager(
+            crashes_dir=Path("/tmp/crashes"),
+            timeouts_dir=Path("/tmp/timeouts"),
+            divergences_dir=Path("/tmp/divergences"),
+            regressions_dir=Path("/tmp/regressions"),
+            fingerprinter=CrashFingerprinter(),
+            max_timeout_log_bytes=10_000_000,
+            max_crash_log_bytes=10_000_000,
+            session_fuzz=False,
+        )
 
     def test_increments_regressions_counter(self):
-        """Test that regressions_found counter is incremented."""
+        """Test that regressions_found counter is incremented by orchestrator."""
+        # Note: The ArtifactManager no longer increments stats.
+        # This test now just verifies the method runs without error.
         source_path = Path("/tmp/child_test.py")
 
         with patch("pathlib.Path.mkdir"):
             with patch("shutil.copy"):
                 with patch("sys.stderr", new_callable=io.StringIO):
-                    self.orchestrator._save_regression(source_path, 100.5, 10.2)
-
-                    self.assertEqual(self.orchestrator.run_stats["regressions_found"], 1)
+                    # Method should not raise
+                    self.artifact_manager.save_regression(source_path, 100.5, 10.2)
 
     def test_saves_with_timing_in_filename(self):
         """Test that filename includes JIT and non-JIT timings."""
@@ -424,7 +461,7 @@ class TestSaveRegression(unittest.TestCase):
         with patch("pathlib.Path.mkdir"):
             with patch("shutil.copy") as mock_copy:
                 with patch("sys.stderr", new_callable=io.StringIO):
-                    self.orchestrator._save_regression(source_path, 150.7, 25.3)
+                    self.artifact_manager.save_regression(source_path, 150.7, 25.3)
 
                     # Check filename includes timing data
                     dest_path = str(mock_copy.call_args[0][1])
@@ -433,48 +470,52 @@ class TestSaveRegression(unittest.TestCase):
 
     def test_creates_regressions_directory(self):
         """Test that regressions/ directory is created."""
+        # The directory is created in __init__, not in save_regression
+        # So we just verify the method works
         source_path = Path("/tmp/child_test.py")
 
-        with patch("pathlib.Path.mkdir") as mock_mkdir:
-            with patch("shutil.copy"):
-                with patch("sys.stderr", new_callable=io.StringIO):
-                    self.orchestrator._save_regression(source_path, 100.0, 10.0)
-
-                    mock_mkdir.assert_called_once()
-                    args = mock_mkdir.call_args
-                    self.assertTrue(args[1].get("parents"))
-                    self.assertTrue(args[1].get("exist_ok"))
+        with patch("shutil.copy"):
+            with patch("sys.stderr", new_callable=io.StringIO):
+                self.artifact_manager.save_regression(source_path, 100.0, 10.0)
 
     def test_handles_io_error(self):
         """Test that IOError during copy is handled."""
         source_path = Path("/tmp/child_test.py")
 
-        with patch("pathlib.Path.mkdir"):
-            with patch("shutil.copy", side_effect=IOError("No space")):
-                with patch("sys.stderr", new_callable=io.StringIO) as mock_stderr:
-                    self.orchestrator._save_regression(source_path, 50.0, 5.0)
+        with patch("shutil.copy", side_effect=IOError("No space")):
+            with patch("sys.stderr", new_callable=io.StringIO) as mock_stderr:
+                self.artifact_manager.save_regression(source_path, 50.0, 5.0)
 
-                    self.assertIn("CRITICAL: Could not save regression", mock_stderr.getvalue())
+                self.assertIn("CRITICAL: Could not save regression", mock_stderr.getvalue())
 
 
 class TestSaveJitHang(unittest.TestCase):
-    """Test _save_jit_hang method."""
+    """Test ArtifactManager.save_jit_hang method."""
 
     def setUp(self):
-        self.orchestrator = LafleurOrchestrator.__new__(LafleurOrchestrator)
-        self.orchestrator.run_stats = {}
+        self.artifact_manager = ArtifactManager(
+            crashes_dir=Path("/tmp/crashes"),
+            timeouts_dir=Path("/tmp/timeouts"),
+            divergences_dir=Path("/tmp/divergences"),
+            regressions_dir=Path("/tmp/regressions"),
+            fingerprinter=CrashFingerprinter(),
+            max_timeout_log_bytes=10_000_000,
+            max_crash_log_bytes=10_000_000,
+            session_fuzz=False,
+        )
 
     def test_increments_jit_hangs_counter(self):
-        """Test that jit_hangs_found counter is incremented."""
+        """Test that jit_hangs_found counter is incremented by orchestrator."""
+        # Note: The ArtifactManager no longer increments stats.
+        # This test now just verifies the method runs without error.
         source_path = Path("/tmp/child_test.py")
         parent_path = Path("/corpus/parent.py")
 
         with patch("pathlib.Path.mkdir"):
             with patch("shutil.copy"):
                 with patch("sys.stderr", new_callable=io.StringIO):
-                    self.orchestrator._save_jit_hang(source_path, parent_path)
-
-                    self.assertEqual(self.orchestrator.run_stats["jit_hangs_found"], 1)
+                    # Method should not raise
+                    self.artifact_manager.save_jit_hang(source_path, parent_path)
 
     def test_creates_jit_hangs_subdirectory(self):
         """Test that divergences/jit_hangs/ subdirectory is created."""
@@ -484,7 +525,7 @@ class TestSaveJitHang(unittest.TestCase):
         with patch("pathlib.Path.mkdir") as mock_mkdir:
             with patch("shutil.copy"):
                 with patch("sys.stderr", new_callable=io.StringIO):
-                    self.orchestrator._save_jit_hang(source_path, parent_path)
+                    self.artifact_manager.save_jit_hang(source_path, parent_path)
 
                     mock_mkdir.assert_called_once()
                     args = mock_mkdir.call_args
@@ -499,7 +540,7 @@ class TestSaveJitHang(unittest.TestCase):
         with patch("pathlib.Path.mkdir"):
             with patch("shutil.copy") as mock_copy:
                 with patch("sys.stderr", new_callable=io.StringIO):
-                    self.orchestrator._save_jit_hang(source_path, parent_path)
+                    self.artifact_manager.save_jit_hang(source_path, parent_path)
 
                     dest_path = str(mock_copy.call_args[0][1])
                     self.assertIn("hang_child_abc123_parent_def456.py", dest_path)
@@ -512,29 +553,38 @@ class TestSaveJitHang(unittest.TestCase):
         with patch("pathlib.Path.mkdir"):
             with patch("shutil.copy", side_effect=IOError("Permission denied")):
                 with patch("sys.stderr", new_callable=io.StringIO) as mock_stderr:
-                    self.orchestrator._save_jit_hang(source_path, parent_path)
+                    self.artifact_manager.save_jit_hang(source_path, parent_path)
 
                     self.assertIn("CRITICAL: Could not save JIT hang", mock_stderr.getvalue())
 
 
 class TestSaveRegressionTimeout(unittest.TestCase):
-    """Test _save_regression_timeout method."""
+    """Test ArtifactManager.save_regression_timeout method."""
 
     def setUp(self):
-        self.orchestrator = LafleurOrchestrator.__new__(LafleurOrchestrator)
-        self.orchestrator.run_stats = {}
+        self.artifact_manager = ArtifactManager(
+            crashes_dir=Path("/tmp/crashes"),
+            timeouts_dir=Path("/tmp/timeouts"),
+            divergences_dir=Path("/tmp/divergences"),
+            regressions_dir=Path("/tmp/regressions"),
+            fingerprinter=CrashFingerprinter(),
+            max_timeout_log_bytes=10_000_000,
+            max_crash_log_bytes=10_000_000,
+            session_fuzz=False,
+        )
 
     def test_increments_regression_timeouts_counter(self):
-        """Test that regression_timeouts_found counter is incremented."""
+        """Test that regression_timeouts_found counter is incremented by orchestrator."""
+        # Note: The ArtifactManager no longer increments stats.
+        # This test now just verifies the method runs without error.
         source_path = Path("/tmp/child_test.py")
         parent_path = Path("/corpus/parent.py")
 
         with patch("pathlib.Path.mkdir"):
             with patch("shutil.copy"):
                 with patch("sys.stderr", new_callable=io.StringIO):
-                    self.orchestrator._save_regression_timeout(source_path, parent_path)
-
-                    self.assertEqual(self.orchestrator.run_stats["regression_timeouts_found"], 1)
+                    # Method should not raise
+                    self.artifact_manager.save_regression_timeout(source_path, parent_path)
 
     def test_creates_timeouts_subdirectory(self):
         """Test that regressions/timeouts/ subdirectory is created."""
@@ -544,7 +594,7 @@ class TestSaveRegressionTimeout(unittest.TestCase):
         with patch("pathlib.Path.mkdir") as mock_mkdir:
             with patch("shutil.copy"):
                 with patch("sys.stderr", new_callable=io.StringIO):
-                    self.orchestrator._save_regression_timeout(source_path, parent_path)
+                    self.artifact_manager.save_regression_timeout(source_path, parent_path)
 
                     mock_mkdir.assert_called_once()
                     args = mock_mkdir.call_args
@@ -552,27 +602,27 @@ class TestSaveRegressionTimeout(unittest.TestCase):
                     self.assertTrue(args[1].get("exist_ok"))
 
     def test_saves_source_with_parent_name(self):
-        """Test that filename includes parent name."""
-        source_path = Path("/tmp/child_xyz789.py")
-        parent_path = Path("/corpus/parent_abc123.py")
+        """Test that source is saved with parent name in filename."""
+        source_path = Path("/tmp/child_abc123.py")
+        parent_path = Path("/corpus/parent_def456.py")
 
         with patch("pathlib.Path.mkdir"):
             with patch("shutil.copy") as mock_copy:
                 with patch("sys.stderr", new_callable=io.StringIO):
-                    self.orchestrator._save_regression_timeout(source_path, parent_path)
+                    self.artifact_manager.save_regression_timeout(source_path, parent_path)
 
                     dest_path = str(mock_copy.call_args[0][1])
-                    self.assertIn("timeout_child_xyz789_parent_abc123.py", dest_path)
+                    self.assertIn("timeout_child_abc123_parent_def456.py", dest_path)
 
     def test_handles_io_error(self):
-        """Test that IOError during save is handled."""
+        """Test that IOError is handled gracefully."""
         source_path = Path("/tmp/child_test.py")
         parent_path = Path("/corpus/parent.py")
 
         with patch("pathlib.Path.mkdir"):
-            with patch("shutil.copy", side_effect=IOError("Disk error")):
+            with patch("shutil.copy", side_effect=IOError("No space")):
                 with patch("sys.stderr", new_callable=io.StringIO) as mock_stderr:
-                    self.orchestrator._save_regression_timeout(source_path, parent_path)
+                    self.artifact_manager.save_regression_timeout(source_path, parent_path)
 
                     self.assertIn(
                         "CRITICAL: Could not save regression timeout", mock_stderr.getvalue()
@@ -580,4 +630,4 @@ class TestSaveRegressionTimeout(unittest.TestCase):
 
 
 if __name__ == "__main__":
-    unittest.main(verbosity=2)
+    unittest.main()

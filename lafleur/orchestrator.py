@@ -32,7 +32,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from textwrap import dedent, indent
-from typing import Any
+from typing import Any, Callable, cast
 
 from lafleur.corpus_manager import CORPUS_DIR, CorpusManager
 from lafleur.coverage import (
@@ -219,7 +219,8 @@ class InterestingnessScorer:
                 # Only reward if the slowdown is statistically significant
                 # relative to the noise of the baseline measurement.
                 # We require the slowdown to be at least 3x the noise.
-                dynamic_threshold = 1.0 + (3 * self.nojit_cv)
+                nojit_cv = self.nojit_cv if self.nojit_cv is not None else 0.0
+                dynamic_threshold = 1.0 + (3 * nojit_cv)
 
                 print(
                     f"  [~] Timing slowdown ratio (JIT/non-JIT) is {slowdown_ratio:.3f} (minimum: {dynamic_threshold:.3f}).",
@@ -319,7 +320,7 @@ class LafleurOrchestrator:
         self.keep_tmp_logs = keep_tmp_logs
         self.deepening_probability = 0.2
         self.ast_mutator = ASTMutator()
-        self.boilerplate_code = None
+        self.boilerplate_code: str | None = None
         self.timeout = timeout
         self.max_timeout_log_bytes = max_timeout_log_size * 1024 * 1024
         self.max_crash_log_bytes = max_crash_log_size * 1024 * 1024
@@ -382,7 +383,7 @@ class LafleurOrchestrator:
 
     def get_boilerplate(self) -> str:
         """Return the cached boilerplate code."""
-        return self.boilerplate_code
+        return self.boilerplate_code or ""
 
     def _extract_and_cache_boilerplate(self, source_code: str) -> None:
         """Parse a source file to find, extract, and cache the boilerplate code."""
@@ -535,7 +536,7 @@ class LafleurOrchestrator:
             print(f"[!] Warning: Could not save corpus stats: {e}", file=sys.stderr)
 
     def _run_slicing(
-        self, base_ast: ast.AST, stage_name: str, len_body: int, seed: int = None
+        self, base_ast: ast.AST, stage_name: str, len_body: int, seed: int | None = None
     ) -> tuple[ast.AST, dict[str, Any]]:
         """A helper to apply a mutation pipeline to a slice of a large AST."""
         print(
@@ -571,9 +572,10 @@ class LafleurOrchestrator:
         self, base_ast: ast.AST, seed: int, **kwargs
     ) -> tuple[ast.AST, dict[str, Any]]:
         """Apply a single, seeded, deterministic mutation."""
-        harness_node = base_ast
-        len_harness = len(harness_node.body) if harness_node else 0
-        if harness_node and len_harness > SlicingMutator.MIN_STATEMENTS_FOR_SLICE:
+        len_harness = (
+            len(base_ast.body) if isinstance(base_ast, (ast.Module, ast.FunctionDef)) else 0
+        )
+        if len_harness > SlicingMutator.MIN_STATEMENTS_FOR_SLICE:
             return self._run_slicing(base_ast, "deterministic", len_harness, seed=seed)
 
         print(f"  [~] Running DETERMINISTIC stage ({len_harness} statements)...", file=sys.stderr)
@@ -586,9 +588,10 @@ class LafleurOrchestrator:
 
     def _run_havoc_stage(self, base_ast: ast.AST, **kwargs) -> tuple[ast.AST, dict[str, Any]]:
         """Apply a random stack of many different mutations to the AST."""
-        harness_node = base_ast
-        len_harness = len(harness_node.body) if harness_node else 0
-        if harness_node and len_harness > SlicingMutator.MIN_STATEMENTS_FOR_SLICE:
+        len_harness = (
+            len(base_ast.body) if isinstance(base_ast, (ast.Module, ast.FunctionDef)) else 0
+        )
+        if len_harness > SlicingMutator.MIN_STATEMENTS_FOR_SLICE:
             return self._run_slicing(base_ast, "havoc", len_harness)
 
         print(f"  [~] Running HAVOC stage ({len_harness} statements)...", file=sys.stderr)
@@ -615,9 +618,10 @@ class LafleurOrchestrator:
 
     def _run_spam_stage(self, base_ast: ast.AST, **kwargs) -> tuple[ast.AST, dict[str, Any]]:
         """Repeatedly apply the same type of mutation to the AST."""
-        harness_node = base_ast
-        len_harness = len(harness_node.body) if harness_node else 0
-        if harness_node and len_harness > SlicingMutator.MIN_STATEMENTS_FOR_SLICE:
+        len_harness = (
+            len(base_ast.body) if isinstance(base_ast, (ast.Module, ast.FunctionDef)) else 0
+        )
+        if len_harness > SlicingMutator.MIN_STATEMENTS_FOR_SLICE:
             return self._run_slicing(base_ast, "spam", len_harness)
 
         print(f"  [~] Running SPAM stage ({len_harness} statements)...", file=sys.stderr)
@@ -663,6 +667,10 @@ class LafleurOrchestrator:
         """Perform a crossover by splicing the harness from a second parent."""
         print("  [~] Attempting SPLICING stage...", file=sys.stderr)
 
+        # Ensure we have a Module with a body to iterate over
+        if not isinstance(base_core_ast, ast.Module):
+            return base_core_ast
+
         selection = self.corpus_manager.select_parent()
         if not selection:
             return base_core_ast
@@ -676,7 +684,7 @@ class LafleurOrchestrator:
             return base_core_ast
 
         # --- Analysis ---
-        setup_nodes_a = [n for n in base_core_ast if not isinstance(n, ast.FunctionDef)]
+        setup_nodes_a = [n for n in base_core_ast.body if not isinstance(n, ast.FunctionDef)]
         provided_vars_a = self._analyze_setup_ast(setup_nodes_a)
 
         setup_nodes_b = [n for n in parent_b_tree.body if not isinstance(n, ast.FunctionDef)]
@@ -820,7 +828,8 @@ class LafleurOrchestrator:
         normalizer = FuzzerSetupNormalizer()
         tree_copy = normalizer.visit(tree_copy)
 
-        strategy_candidates = [
+        MutationStrategy = Callable[..., tuple[ast.AST, dict[str, Any]]]
+        strategy_candidates: list[MutationStrategy] = [
             self._run_deterministic_stage,
             self._run_havoc_stage,
             self._run_spam_stage,
@@ -906,6 +915,9 @@ class LafleurOrchestrator:
             """)
 
             child_core_tree = copy.deepcopy(parent_core_tree)
+            # The mutated harness should be a FunctionDef
+            if not isinstance(mutated_harness_node, ast.FunctionDef):
+                return None
             for i, node in enumerate(child_core_tree.body):
                 if isinstance(node, ast.FunctionDef) and node.name == mutated_harness_node.name:
                     child_core_tree.body[i] = mutated_harness_node
@@ -1174,7 +1186,8 @@ class LafleurOrchestrator:
                     env=nojit_env,
                 )
             except subprocess.TimeoutExpired:
-                return self._handle_timeout(child_source_path, child_log_path, parent_path)
+                self._handle_timeout(child_source_path, child_log_path, parent_path)
+                return None
 
             # Run JIT
             jit_run = None
@@ -1252,7 +1265,8 @@ class LafleurOrchestrator:
                 child_source_path, num_timing_runs, jit_enabled=False
             )
             if timed_out:
-                return self._handle_timeout(child_source_path, child_log_path, parent_path)
+                self._handle_timeout(child_source_path, child_log_path, parent_path)
+                return None
 
             jit_avg_ms, timed_out, _ = self._run_timed_trial(
                 child_source_path, num_timing_runs, jit_enabled=True
@@ -1283,11 +1297,11 @@ class LafleurOrchestrator:
                     # Try to get polluters from corpus (handle empty corpus gracefully)
                     try:
                         for _ in range(num_polluters):
-                            polluter_path = self.corpus_manager.get_random_parent()
-                            if polluter_path:
-                                polluters.append(CORPUS_DIR / polluter_path)
+                            selection = self.corpus_manager.select_parent()
+                            if selection:
+                                polluters.append(selection[0])
                     except (AttributeError, IndexError):
-                        # Corpus empty or get_random_parent not available
+                        # Corpus empty or select_parent not available
                         pass
 
                     if polluters:
@@ -1335,7 +1349,8 @@ class LafleurOrchestrator:
                 session_files=session_files if getattr(self, "session_fuzz", False) else None,
             )
         except subprocess.TimeoutExpired:
-            return self._handle_timeout(child_source_path, child_log_path, parent_path)
+            self._handle_timeout(child_source_path, child_log_path, parent_path)
+            return None
         except Exception as e:
             # Instead of letting the exception propagate, we create a "failure"
             # result so the analyzer can inspect the log and non-zero exit code.
@@ -1416,7 +1431,7 @@ class LafleurOrchestrator:
 
     def _get_nodes_from_parent(
         self, parent_path: Path
-    ) -> tuple[ast.FunctionDef, ast.AST, list[ast.stmt]] | tuple[None, None, None]:
+    ) -> tuple[ast.FunctionDef, ast.Module, list[ast.stmt]] | tuple[None, None, None]:
         """Parse a parent file and extract its setup and harness AST nodes."""
         try:
             parent_source = parent_path.read_text()
@@ -1426,7 +1441,8 @@ class LafleurOrchestrator:
             parent_core_tree = ast.parse(parent_core_code)
 
             normalizer = FuzzerSetupNormalizer()
-            parent_core_tree = normalizer.visit(parent_core_tree)
+            # The normalizer preserves Module structure, so cast to maintain type
+            parent_core_tree = cast(ast.Module, normalizer.visit(parent_core_tree))
             ast.fix_missing_locations(parent_core_tree)
 
         except (IOError, SyntaxError) as e:
@@ -1503,7 +1519,7 @@ class LafleurOrchestrator:
             base_harness_node, parent_core_tree, setup_nodes = self._get_nodes_from_parent(
                 current_parent_path
             )
-            if base_harness_node is None:
+            if base_harness_node is None or parent_core_tree is None:
                 return  # Abort if parent is invalid
 
             core_logic_to_mutate = base_harness_node
@@ -1553,11 +1569,11 @@ class LafleurOrchestrator:
                 mutated_harness_node, mutation_info = self._get_mutated_harness(
                     core_logic_to_mutate, mutation_seed, watched_keys=watched_keys
                 )
-                if not mutated_harness_node:
+                if not mutated_harness_node or mutation_info is None:
                     continue
 
                 # --- Inner Multi-Run Loop ---
-                flow_control = ""
+                flow_control: str | None = ""
                 for run_num in range(num_runs):
                     child_source_path = (
                         TMP_DIR / f"child_{session_id}_{mutation_id}_{run_num + 1}.py"
@@ -2143,9 +2159,14 @@ class LafleurOrchestrator:
 
         if score >= scorer.MIN_INTERESTING_SCORE:
             valid_timings = (
-                scorer.jit_avg_time_ms and scorer.nojit_avg_time_ms and scorer.nojit_avg_time_ms > 0
+                scorer.jit_avg_time_ms is not None
+                and scorer.nojit_avg_time_ms is not None
+                and scorer.nojit_avg_time_ms > 0
             )
             if self.timing_fuzz and valid_timings:
+                # Both values are guaranteed non-None by valid_timings check
+                assert scorer.jit_avg_time_ms is not None
+                assert scorer.nojit_avg_time_ms is not None
                 slowdown_ratio = scorer.jit_avg_time_ms / scorer.nojit_avg_time_ms
                 print(
                     f"  [+] Child is interesting with score: {score:.2f} (JIT slowdown: {slowdown_ratio:.2f}x)",
@@ -2174,9 +2195,9 @@ class LafleurOrchestrator:
         if exec_result.is_divergence:
             self._save_divergence(
                 exec_result.source_path,
-                exec_result.jit_output,
-                exec_result.nojit_output,
-                exec_result.divergence_reason,
+                exec_result.jit_output or "",
+                exec_result.nojit_output or "",
+                exec_result.divergence_reason or "unknown",
             )
             return {"status": "DIVERGENCE"}
 
@@ -2447,7 +2468,7 @@ class LafleurOrchestrator:
             coverage = parse_log_for_edge_coverage(log_path, self.coverage_manager)
 
             # Collect all edges from all harnesses
-            all_edges = set()
+            all_edges: set[int] = set()
             for harness_data in coverage.values():
                 all_edges.update(harness_data.get("edges", {}).keys())
 

@@ -217,7 +217,7 @@ class ASTMutator:
         # via orchestrator._run_sniper_stage() with Bloom-detected watched_keys
 
     def mutate_ast(
-        self, tree: ast.AST, seed: int = None, mutations: int | None = None
+        self, tree: ast.AST, seed: int | None = None, mutations: int | None = None
     ) -> tuple[ast.AST, list[type]]:
         """
         Apply a random pipeline of AST mutations directly to an AST object.
@@ -241,9 +241,6 @@ class ASTMutator:
         num_mutations = mutations if mutations is not None else random.randint(1, 3)
         chosen_transformers = random.choices(self.transformers, k=num_mutations)
 
-        if isinstance(tree, list):
-            tree = ast.Module(body=tree, type_ignores=[])
-
         for transformer_class in chosen_transformers:
             transformer_instance = transformer_class()
             tree = transformer_instance.visit(tree)
@@ -251,7 +248,9 @@ class ASTMutator:
         ast.fix_missing_locations(tree)
         return tree, chosen_transformers
 
-    def mutate(self, code_string: str, seed: int = None, mutations: int | None = None) -> str:
+    def mutate(
+        self, code_string: str, seed: int | None = None, mutations: int | None = None
+    ) -> str:
         """
         Parse code, apply a random pipeline of AST mutations, and unparse.
 

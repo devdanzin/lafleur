@@ -17,10 +17,11 @@ import sys
 from collections import defaultdict, Counter
 from enum import Enum, auto
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable, TypedDict
 
 from lafleur.uop_names import UOP_NAMES
 
+migrate_state_to_integers: Callable[[dict[str, Any]], dict[str, Any]] | None
 try:
     from lafleur.state_tool import migrate_state_to_integers
 except ImportError:
@@ -112,14 +113,24 @@ class CoverageManager:
         return new_id
 
 
-def _create_empty_harness_coverage() -> dict[str, int | Counter[int]]:
+class HarnessCoverage(TypedDict, total=False):
+    """Type for harness coverage data."""
+
+    uops: Counter[int]
+    edges: Counter[int]
+    rare_events: Counter[int]
+    trace_length: int
+    side_exits: int
+
+
+def _create_empty_harness_coverage() -> HarnessCoverage:
     """Create a factory for an empty harness coverage dictionary (using int IDs)."""
     return {"uops": Counter(), "edges": Counter(), "rare_events": Counter()}
 
 
 def parse_log_for_edge_coverage(
     log_path: Path, coverage_manager: CoverageManager
-) -> dict[str, dict[str, Any]]:
+) -> dict[str, HarnessCoverage]:
     """
     Read a JIT log file and extract hit counts and structural metrics.
     Requires a CoverageManager to convert coverage items to integer IDs.
@@ -134,7 +145,9 @@ def parse_log_for_edge_coverage(
         print(f"Error: Log file not found at {log_path}", file=sys.stderr)
         return {}
 
-    coverage_by_harness = defaultdict(_create_empty_harness_coverage)
+    coverage_by_harness: defaultdict[str, HarnessCoverage] = defaultdict(
+        _create_empty_harness_coverage
+    )
     current_harness_id = None
     previous_uop = None
 

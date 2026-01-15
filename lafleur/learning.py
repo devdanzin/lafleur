@@ -32,8 +32,8 @@ class MutatorScoreTracker:
         self.min_attempts = min_attempts
 
         # Initialize scores and attempts from a saved state or fresh.
-        self.scores = defaultdict(float)
-        self.attempts = defaultdict(int)
+        self.scores: defaultdict[str, float] = defaultdict(float)
+        self.attempts: defaultdict[str, int] = defaultdict(int)
         self.load_state()
 
     def load_state(self):

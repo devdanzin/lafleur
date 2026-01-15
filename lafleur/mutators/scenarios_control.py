@@ -14,6 +14,7 @@ import ast
 import random
 import sys
 from textwrap import dedent, indent
+from typing import cast
 
 
 class TraceBreaker(ast.NodeTransformer):
@@ -361,8 +362,10 @@ def _create_exception_maze_classes_ast(meta_name: str, exception_name: str) -> l
     """
     Builds the AST for the metaclass and custom exception used in the maze.
     """
-    return ast.parse(
-        dedent(f"""
+    return cast(
+        list[ast.ClassDef],
+        ast.parse(
+            dedent(f"""
     class {meta_name}(type):
         def __instancecheck__(cls, instance):
             # This makes exception matching unpredictable for the JIT.
@@ -372,7 +375,8 @@ def _create_exception_maze_classes_ast(meta_name: str, exception_name: str) -> l
     class {exception_name}(Exception, metaclass={meta_name}):
         pass
     """)
-    ).body
+        ).body,
+    )
 
 
 class ExceptionHandlerMaze(ast.NodeTransformer):
@@ -438,8 +442,10 @@ def _create_evil_frame_corruptor_ast(func_name: str, target_var: str) -> ast.Fun
     Builds the AST for a function that uses sys._getframe() to modify a
     local variable in its caller's frame.
     """
-    return ast.parse(
-        dedent(f"""
+    return cast(
+        ast.FunctionDef,
+        ast.parse(
+            dedent(f"""
     def {func_name}(value):
         try:
             # Get the frame of the caller (the coroutine)
@@ -449,7 +455,8 @@ def _create_evil_frame_corruptor_ast(func_name: str, target_var: str) -> ast.Fun
         except (ValueError, KeyError):
             pass
     """)
-    ).body[0]
+        ).body[0],
+    )
 
 
 class CoroutineStateCorruptor(ast.NodeTransformer):
@@ -578,7 +585,7 @@ class ContextManagerInjector(ast.NodeTransformer):
                     args=[],
                     keywords=[],
                 )
-                with_node = ast.With(
+                with_node: ast.stmt = ast.With(
                     items=[ast.withitem(context_expr=context_expr, optional_vars=None)],
                     body=statements_to_wrap,
                 )
@@ -759,7 +766,7 @@ class YieldFromInjector(ast.NodeTransformer):
             finally:
                 pass
         """
-        try_body = [
+        try_body: list[ast.stmt] = [
             ast.Expr(
                 value=ast.YieldFrom(
                     value=ast.Call(
@@ -771,7 +778,7 @@ class YieldFromInjector(ast.NodeTransformer):
             )
         ]
 
-        finally_body = [ast.Pass()]
+        finally_body: list[ast.stmt] = [ast.Pass()]
 
         try_finally = ast.Try(body=try_body, handlers=[], orelse=[], finalbody=finally_body)
 
@@ -912,7 +919,7 @@ class MaxOperandMutator(ast.NodeTransformer):
         )
 
         # Create a padding block of 200 statements
-        padding_block = []
+        padding_block: list[ast.stmt] = []
         for i in range(200):
             assign = ast.Assign(
                 targets=[ast.Name(id="_pad_jump", ctx=ast.Store())],

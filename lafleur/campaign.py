@@ -16,7 +16,19 @@ from collections import Counter
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, TypedDict
+
+
+class GlobalCorpusData(TypedDict):
+    """Type definition for global corpus aggregation data."""
+
+    total_files: int
+    total_sterile: int
+    sum_depth: float
+    sum_size: float
+    file_count_for_avg: int
+    strategy_counter: Counter[str]
+    mutator_counter: Counter[str]
 
 
 def load_json_file(path: Path) -> dict[str, Any] | None:
@@ -111,7 +123,7 @@ class CampaignAggregator:
         self.instance_paths = instance_paths
         self.instances: list[InstanceData] = []
         self.global_crashes: dict[str, CrashInfo] = {}
-        self.global_corpus = {
+        self.global_corpus: GlobalCorpusData = {
             "total_files": 0,
             "total_sterile": 0,
             "sum_depth": 0.0,
@@ -855,7 +867,7 @@ def discover_instances(root_dir: Path) -> list[Path]:
     Returns:
         List of paths to valid instance directories.
     """
-    instances = []
+    instances: list[Path] = []
 
     if not root_dir.exists():
         return instances

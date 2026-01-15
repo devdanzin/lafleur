@@ -118,7 +118,7 @@ class RedundantStatementSanitizer(ast.NodeTransformer):
         if not statements:
             return statements
 
-        new_list = []
+        new_list: list[ast.stmt] = []
         for node in statements:
             # If the list is empty, always add the first node
             if not new_list:

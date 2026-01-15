@@ -313,7 +313,7 @@ export ASAN_OPTIONS=detect_leaks=0
         "--timeout",
         str(dynamic_timeout),
         "--parallelism",
-        str(os.cpu_count() // 2),
+        str((os.cpu_count() or 1) // 2),
         str(check_script_path.resolve()),
         str(target_file.resolve()),
     ]

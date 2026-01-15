@@ -66,7 +66,7 @@ def parse_iso_timestamp(timestamp_str: str) -> int | None:
 
 def discover_instances(root_dir: Path) -> list[Path]:
     """Discover lafleur instance directories under a root directory."""
-    instances = []
+    instances: list[Path] = []
 
     if not root_dir.exists():
         return instances

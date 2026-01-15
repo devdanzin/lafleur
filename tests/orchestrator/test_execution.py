@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """
-Tests for execution methods in lafleur/orchestrator.py.
+Tests for execution methods.
 
-This module contains unit tests for child process execution, timing,
-and verification methods in the LafleurOrchestrator class.
+This module contains unit tests for:
+- ExecutionManager methods (run_timed_trial, execute_child) in lafleur/execution.py
+- Orchestrator methods (_prepare_child_script, verify_target_capabilities) in lafleur/orchestrator.py
 """
 
 import ast
@@ -15,6 +16,7 @@ from textwrap import dedent
 from unittest.mock import MagicMock, patch
 
 from lafleur.orchestrator import LafleurOrchestrator
+from lafleur.execution import ExecutionManager
 from lafleur.artifacts import ArtifactManager
 from lafleur.analysis import CrashFingerprinter
 from lafleur.utils import ExecutionResult
@@ -157,13 +159,21 @@ class TestPrepareChildScript(unittest.TestCase):
 
 
 class TestRunTimedTrial(unittest.TestCase):
-    """Test _run_timed_trial method."""
+    """Test ExecutionManager._run_timed_trial method."""
 
     def setUp(self):
-        """Set up minimal orchestrator instance."""
-        self.orchestrator = LafleurOrchestrator.__new__(LafleurOrchestrator)
-        self.orchestrator.target_python = "/usr/bin/python3"
-        self.orchestrator.timeout = 10
+        """Set up ExecutionManager with mocks."""
+        self.artifact_manager = MagicMock()
+        self.corpus_manager = MagicMock()
+        self.execution_manager = ExecutionManager(
+            target_python="/usr/bin/python3",
+            timeout=10,
+            artifact_manager=self.artifact_manager,
+            corpus_manager=self.corpus_manager,
+            differential_testing=False,
+            timing_fuzz=False,
+            session_fuzz=False,
+        )
 
     def test_successful_timing_returns_average(self):
         """Test that successful runs return average time in milliseconds."""
@@ -187,7 +197,7 @@ class TestRunTimedTrial(unittest.TestCase):
                 ],
             ):
                 with patch("sys.stderr", new_callable=io.StringIO):
-                    avg_ms, did_timeout, cv = self.orchestrator._run_timed_trial(
+                    avg_ms, did_timeout, cv = self.execution_manager._run_timed_trial(
                         mock_path, num_runs=3, jit_enabled=True
                     )
 
@@ -201,7 +211,7 @@ class TestRunTimedTrial(unittest.TestCase):
 
         with patch("subprocess.run", side_effect=subprocess.TimeoutExpired("cmd", 10)):
             with patch("sys.stderr", new_callable=io.StringIO):
-                avg_ms, did_timeout, cv = self.orchestrator._run_timed_trial(
+                avg_ms, did_timeout, cv = self.execution_manager._run_timed_trial(
                     mock_path, num_runs=3, jit_enabled=True
                 )
 
@@ -215,7 +225,7 @@ class TestRunTimedTrial(unittest.TestCase):
 
         with patch("subprocess.run", side_effect=subprocess.CalledProcessError(1, "cmd")):
             with patch("sys.stderr", new_callable=io.StringIO) as mock_stderr:
-                avg_ms, did_timeout, cv = self.orchestrator._run_timed_trial(
+                avg_ms, did_timeout, cv = self.execution_manager._run_timed_trial(
                     mock_path, num_runs=3, jit_enabled=True
                 )
 
@@ -230,10 +240,6 @@ class TestRunTimedTrial(unittest.TestCase):
         mock_path = Path("/tmp/test.py")
 
         # Simulate runs with high variation even after discarding min/max
-        # After discarding 10ms (min) and 100ms (max), we have [50ms, 60ms, 70ms]
-        # Mean=60ms, stdev≈10ms, CV≈16.7% - still need higher variation
-        # Let's use: [10ms, 30ms, 60ms, 90ms, 120ms] -> discard 10, 120 -> [30, 60, 90]
-        # Mean=60ms, stdev≈30ms, CV=50% > 20%
         with patch("subprocess.run"):
             with patch(
                 "time.monotonic",
@@ -251,7 +257,7 @@ class TestRunTimedTrial(unittest.TestCase):
                 ],
             ):
                 with patch("sys.stderr", new_callable=io.StringIO) as mock_stderr:
-                    avg_ms, did_timeout, cv = self.orchestrator._run_timed_trial(
+                    avg_ms, did_timeout, cv = self.execution_manager._run_timed_trial(
                         mock_path, num_runs=3, jit_enabled=True
                     )
 
@@ -268,7 +274,7 @@ class TestRunTimedTrial(unittest.TestCase):
         with patch("subprocess.run") as mock_run:
             with patch("time.monotonic", side_effect=[i * 0.1 for i in range(10)]):
                 with patch("sys.stderr", new_callable=io.StringIO):
-                    self.orchestrator._run_timed_trial(mock_path, num_runs=3, jit_enabled=True)
+                    self.execution_manager._run_timed_trial(mock_path, num_runs=3, jit_enabled=True)
 
                     # Check that env has PYTHON_JIT=1
                     env_arg = mock_run.call_args[1]["env"]
@@ -281,7 +287,9 @@ class TestRunTimedTrial(unittest.TestCase):
         with patch("subprocess.run") as mock_run:
             with patch("time.monotonic", side_effect=[i * 0.1 for i in range(10)]):
                 with patch("sys.stderr", new_callable=io.StringIO):
-                    self.orchestrator._run_timed_trial(mock_path, num_runs=3, jit_enabled=False)
+                    self.execution_manager._run_timed_trial(
+                        mock_path, num_runs=3, jit_enabled=False
+                    )
 
                     env_arg = mock_run.call_args[1]["env"]
                     self.assertEqual(env_arg["PYTHON_JIT"], "0")
@@ -293,7 +301,7 @@ class TestRunTimedTrial(unittest.TestCase):
         with patch("subprocess.run") as mock_run:
             with patch("time.monotonic", side_effect=[i * 0.1 for i in range(10)]):
                 with patch("sys.stderr", new_callable=io.StringIO):
-                    self.orchestrator._run_timed_trial(mock_path, num_runs=3, jit_enabled=True)
+                    self.execution_manager._run_timed_trial(mock_path, num_runs=3, jit_enabled=True)
 
                     env_arg = mock_run.call_args[1]["env"]
                     self.assertEqual(env_arg["PYTHON_LLTRACE"], "0")
@@ -306,7 +314,7 @@ class TestRunTimedTrial(unittest.TestCase):
         with patch("subprocess.run"):
             with patch("time.monotonic", side_effect=[i * 0.0 for i in range(10)]):
                 with patch("sys.stderr", new_callable=io.StringIO):
-                    avg_ms, did_timeout, cv = self.orchestrator._run_timed_trial(
+                    avg_ms, did_timeout, cv = self.execution_manager._run_timed_trial(
                         mock_path, num_runs=3, jit_enabled=True
                     )
 
@@ -338,7 +346,7 @@ class TestRunTimedTrial(unittest.TestCase):
                 ],
             ):
                 with patch("sys.stderr", new_callable=io.StringIO):
-                    avg_ms, _, _ = self.orchestrator._run_timed_trial(
+                    avg_ms, _, _ = self.execution_manager._run_timed_trial(
                         mock_path, num_runs=3, jit_enabled=True
                     )
 
@@ -461,18 +469,11 @@ class TestHandleTimeout(unittest.TestCase):
 
 
 class TestExecuteChild(unittest.TestCase):
-    """Test _execute_child method."""
+    """Test ExecutionManager.execute_child method."""
 
     def setUp(self):
-        """Set up minimal orchestrator instance."""
-        self.orchestrator = LafleurOrchestrator.__new__(LafleurOrchestrator)
-        self.orchestrator.target_python = "/usr/bin/python3"
-        self.orchestrator.timeout = 10
-        self.orchestrator.differential_testing = False
-        self.orchestrator.timing_fuzz = False
-        self.orchestrator.run_stats = {}
-        # Create artifact manager for tests that need it
-        self.orchestrator.artifact_manager = ArtifactManager(
+        """Set up ExecutionManager with mocks."""
+        self.artifact_manager = ArtifactManager(
             crashes_dir=Path("/tmp/crashes"),
             timeouts_dir=Path("/tmp/timeouts"),
             divergences_dir=Path("/tmp/divergences"),
@@ -480,6 +481,16 @@ class TestExecuteChild(unittest.TestCase):
             fingerprinter=CrashFingerprinter(),
             max_timeout_log_bytes=1_000_000,
             max_crash_log_bytes=10_000_000,
+            session_fuzz=False,
+        )
+        self.corpus_manager = MagicMock()
+        self.execution_manager = ExecutionManager(
+            target_python="/usr/bin/python3",
+            timeout=10,
+            artifact_manager=self.artifact_manager,
+            corpus_manager=self.corpus_manager,
+            differential_testing=False,
+            timing_fuzz=False,
             session_fuzz=False,
         )
 
@@ -496,14 +507,16 @@ class TestExecuteChild(unittest.TestCase):
                     args=[], returncode=0, stdout="", stderr="Coverage: edges={}"
                 )
                 with patch("sys.stderr", new_callable=io.StringIO):
-                    self.orchestrator._execute_child(source, source_path, log_path, parent_path)
+                    self.execution_manager.execute_child(
+                        source, source_path, log_path, parent_path
+                    )
 
         # Should only run once for coverage (no differential runs)
         self.assertEqual(mock_run.call_count, 1)
 
     def test_differential_detects_exit_code_mismatch(self):
         """Test that differential testing detects exit code mismatches."""
-        self.orchestrator.differential_testing = True
+        self.execution_manager.differential_testing = True
 
         source = "def uop_harness_test():\n    pass"
         source_path = Path("/tmp/child.py")
@@ -516,17 +529,18 @@ class TestExecuteChild(unittest.TestCase):
         with patch("pathlib.Path.write_text"):
             with patch("subprocess.run", side_effect=[nojit_result, jit_result]):
                 with patch("sys.stderr", new_callable=io.StringIO):
-                    result = self.orchestrator._execute_child(
+                    result, stat_key = self.execution_manager.execute_child(
                         source, source_path, log_path, parent_path
                     )
 
         self.assertIsInstance(result, ExecutionResult)
         self.assertTrue(result.is_divergence)
         self.assertEqual(result.divergence_reason, "exit_code_mismatch")
+        self.assertIsNone(stat_key)
 
     def test_differential_timeout_in_nojit_handled(self):
         """Test that timeout in non-JIT run calls artifact_manager.handle_timeout."""
-        self.orchestrator.differential_testing = True
+        self.execution_manager.differential_testing = True
 
         source = "def uop_harness_test():\n    pass"
         source_path = Path("/tmp/child.py")
@@ -536,16 +550,20 @@ class TestExecuteChild(unittest.TestCase):
         with patch("pathlib.Path.write_text"):
             with patch("subprocess.run", side_effect=subprocess.TimeoutExpired("cmd", 10)):
                 with patch.object(
-                    self.orchestrator.artifact_manager, "handle_timeout", return_value=None
+                    self.artifact_manager, "handle_timeout", return_value=None
                 ) as mock_handle:
                     with patch("sys.stderr", new_callable=io.StringIO):
-                        self.orchestrator._execute_child(source, source_path, log_path, parent_path)
+                        result, stat_key = self.execution_manager.execute_child(
+                            source, source_path, log_path, parent_path
+                        )
 
                     mock_handle.assert_called_once()
+        self.assertIsNone(result)
+        self.assertEqual(stat_key, "timeouts_found")
 
     def test_differential_timeout_in_jit_saves_hang(self):
         """Test that timeout in JIT run calls artifact_manager.save_jit_hang."""
-        self.orchestrator.differential_testing = True
+        self.execution_manager.differential_testing = True
 
         source = "def uop_harness_test():\n    pass"
         source_path = Path("/tmp/child.py")
@@ -558,14 +576,15 @@ class TestExecuteChild(unittest.TestCase):
             with patch(
                 "subprocess.run", side_effect=[nojit_result, subprocess.TimeoutExpired("cmd", 10)]
             ):
-                with patch.object(self.orchestrator.artifact_manager, "save_jit_hang") as mock_save:
+                with patch.object(self.artifact_manager, "save_jit_hang") as mock_save:
                     with patch("sys.stderr", new_callable=io.StringIO):
-                        result = self.orchestrator._execute_child(
+                        result, stat_key = self.execution_manager.execute_child(
                             source, source_path, log_path, parent_path
                         )
 
                     mock_save.assert_called_once()
         self.assertIsNone(result)
+        self.assertEqual(stat_key, "jit_hangs_found")
 
     def test_returns_execution_result_on_success(self):
         """Test that successful execution returns ExecutionResult."""
@@ -580,13 +599,14 @@ class TestExecuteChild(unittest.TestCase):
                     args=[], returncode=0, stdout="", stderr=""
                 )
                 with patch("sys.stderr", new_callable=io.StringIO):
-                    result = self.orchestrator._execute_child(
+                    result, stat_key = self.execution_manager.execute_child(
                         source, source_path, log_path, parent_path
                     )
 
         self.assertIsInstance(result, ExecutionResult)
         self.assertEqual(result.source_path, source_path)
         self.assertEqual(result.log_path, log_path)
+        self.assertIsNone(stat_key)
 
 
 class TestVerifyTargetCapabilities(unittest.TestCase):

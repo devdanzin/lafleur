@@ -312,6 +312,7 @@ class TestExecuteMutationAndAnalysisCycle(unittest.TestCase):
         self.orchestrator.use_dynamic_runs = False
         self.orchestrator.base_runs = 3
         self.orchestrator.corpus_manager = MagicMock()
+        self.orchestrator.execution_manager = MagicMock()
 
     def test_calculates_max_mutations(self):
         """Test that _calculate_mutations is called."""
@@ -433,6 +434,9 @@ class TestExecuteMutationAndAnalysisCycle(unittest.TestCase):
         mock_harness = MagicMock()
         mock_harness.name = "uop_harness_test"
 
+        # Configure execution_manager.execute_child to return (None, None) tuple
+        self.orchestrator.execution_manager.execute_child.return_value = (None, None)
+
         with patch.object(self.orchestrator, "_calculate_mutations", return_value=1):
             with patch.object(
                 self.orchestrator,
@@ -445,18 +449,17 @@ class TestExecuteMutationAndAnalysisCycle(unittest.TestCase):
                     with patch.object(
                         self.orchestrator, "_prepare_child_script", return_value="code"
                     ):
-                        with patch.object(
-                            self.orchestrator, "_execute_child", return_value=None
-                        ) as mock_exec:
-                            with patch("sys.stderr", new_callable=io.StringIO):
-                                self.orchestrator.execute_mutation_and_analysis_cycle(
-                                    parent_path, 100.0, 1, False
-                                )
+                        with patch("sys.stderr", new_callable=io.StringIO):
+                            self.orchestrator.execute_mutation_and_analysis_cycle(
+                                parent_path, 100.0, 1, False
+                            )
 
-                                # Should attempt 5 runs (base_runs), but _execute_child returns None
-                                # so analyze_run won't be called
-                                # The loop will run 5 times per mutation
-                                self.assertEqual(mock_exec.call_count, 5)
+                            # Should attempt 5 runs (base_runs), but execute_child returns (None, None)
+                            # so analyze_run won't be called
+                            # The loop will run 5 times per mutation
+                            self.assertEqual(
+                                self.orchestrator.execution_manager.execute_child.call_count, 5
+                            )
 
 
 if __name__ == "__main__":

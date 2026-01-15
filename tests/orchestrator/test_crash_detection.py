@@ -4,7 +4,7 @@ Tests for crash detection and artifact saving in lafleur.
 
 This module contains unit tests for ArtifactManager methods that detect crashes,
 and save various types of findings (divergences, regressions, hangs).
-Also tests _filter_jit_stderr which remains on the orchestrator.
+Also tests _filter_jit_stderr on ExecutionManager.
 """
 
 import io
@@ -12,9 +12,9 @@ import signal
 import unittest
 from pathlib import Path
 from unittest.mock import patch, mock_open, MagicMock
-from lafleur.orchestrator import LafleurOrchestrator
 from lafleur.artifacts import ArtifactManager
 from lafleur.analysis import CrashFingerprinter
+from lafleur.execution import ExecutionManager
 
 
 class TestCheckForCrash(unittest.TestCase):
@@ -284,16 +284,17 @@ class TestCheckForCrash(unittest.TestCase):
 
 
 class TestFilterJitStderr(unittest.TestCase):
-    """Test _filter_jit_stderr method (still on orchestrator)."""
+    """Test ExecutionManager._filter_jit_stderr method."""
 
     def setUp(self):
-        self.orchestrator = LafleurOrchestrator.__new__(LafleurOrchestrator)
+        # Create ExecutionManager with minimal dependencies
+        self.execution_manager = ExecutionManager.__new__(ExecutionManager)
 
     def test_filters_proto_trace_lines(self):
         """Test that proto-trace lines are removed."""
         stderr = "Normal output\nCreated a proto-trace for function foo\nMore output"
 
-        result = self.orchestrator._filter_jit_stderr(stderr)
+        result = self.execution_manager._filter_jit_stderr(stderr)
 
         self.assertNotIn("Created a proto-trace", result)
         self.assertIn("Normal output", result)
@@ -303,7 +304,7 @@ class TestFilterJitStderr(unittest.TestCase):
         """Test that optimized trace lines are removed."""
         stderr = "Before\nOptimized trace (length 42): foo\nAfter"
 
-        result = self.orchestrator._filter_jit_stderr(stderr)
+        result = self.execution_manager._filter_jit_stderr(stderr)
 
         self.assertNotIn("Optimized trace", result)
         self.assertIn("Before", result)
@@ -313,7 +314,7 @@ class TestFilterJitStderr(unittest.TestCase):
         """Test that SIDE EXIT lines are removed."""
         stderr = "Start\nSIDE EXIT: Deoptimizing\nEnd"
 
-        result = self.orchestrator._filter_jit_stderr(stderr)
+        result = self.execution_manager._filter_jit_stderr(stderr)
 
         self.assertNotIn("SIDE EXIT", result)
         self.assertIn("Start", result)
@@ -323,7 +324,7 @@ class TestFilterJitStderr(unittest.TestCase):
         """Test that non-JIT stderr content is preserved."""
         stderr = "ValueError: invalid value\nTypeError: bad type\nRuntimeError: oops"
 
-        result = self.orchestrator._filter_jit_stderr(stderr)
+        result = self.execution_manager._filter_jit_stderr(stderr)
 
         self.assertEqual(result, stderr)
 

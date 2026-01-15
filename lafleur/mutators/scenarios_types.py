@@ -14,6 +14,7 @@ import ast
 import random
 import sys
 from textwrap import dedent
+from typing import cast
 
 
 class TypeInstabilityInjector(ast.NodeTransformer):
@@ -393,7 +394,7 @@ def _create_evil_descriptor_ast(class_name: str) -> ast.ClassDef:
             return type_options[index]
     """)
     # ast.parse() returns a Module node; the class definition is in its body.
-    return ast.parse(source_code).body[0]
+    return cast(ast.ClassDef, ast.parse(source_code).body[0])
 
 
 class DescriptorChaosGenerator(ast.NodeTransformer):
@@ -607,7 +608,7 @@ def _create_super_attack_hierarchy_ast(base_name: str, subclass_name: str) -> li
     """)
 
     # ast.parse() returns a Module node; the class definitions are in its body.
-    return ast.parse(source_code).body
+    return cast(list[ast.ClassDef], ast.parse(source_code).body)
 
 
 class SuperResolutionAttacker(ast.NodeTransformer):
@@ -678,15 +679,18 @@ def _create_code_swap_functions_ast(
     original_name: str, replacement_name: str
 ) -> list[ast.FunctionDef]:
     """Builds the AST for the original and replacement functions."""
-    return ast.parse(
-        dedent(f"""
+    return cast(
+        list[ast.FunctionDef],
+        ast.parse(
+            dedent(f"""
     def {original_name}():
         return 1
 
     def {replacement_name}():
         return "a_string"
     """)
-    ).body
+        ).body,
+    )
 
 
 class CodeObjectSwapper(ast.NodeTransformer):

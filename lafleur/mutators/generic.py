@@ -39,7 +39,7 @@ class OperatorSwapper(ast.NodeTransformer):
         ast.BitXor: [ast.BitAnd, ast.BitOr, ast.RShift],
     }
 
-    def visit_BinOp(self, node: ast.AST) -> ast.AST:
+    def visit_BinOp(self, node: ast.BinOp) -> ast.BinOp:
         op_type = type(node.op)
         if op_type in self.OP_MAP and random.random() < 0.3:
             new_op_class = random.choice(self.OP_MAP[op_type])
@@ -61,7 +61,7 @@ class ComparisonSwapper(ast.NodeTransformer):
         ast.IsNot: ast.Is,
     }
 
-    def visit_Compare(self, node: ast.AST) -> ast.AST:
+    def visit_Compare(self, node: ast.Compare) -> ast.Compare:
         if random.random() < 0.5:
             new_ops = [self.OP_MAP.get(type(op), type(op))() for op in node.ops]
             node.ops = new_ops
@@ -99,6 +99,7 @@ class ComparisonChainerMutator(ast.NodeTransformer):
             # Add one random comparator
             comparator_choice = random.choice(["constant", "recycle", "collection"])
 
+            new_comparator: ast.expr
             if comparator_choice == "constant":
                 # Choose a constant: 0, 1, None, True, ""
                 constant_value = random.choice([0, 1, None, True, ""])
@@ -122,7 +123,7 @@ class ComparisonChainerMutator(ast.NodeTransformer):
 class ConstantPerturbator(ast.NodeTransformer):
     """Slightly modify numeric and string constants."""
 
-    def visit_Constant(self, node: ast.AST) -> ast.AST:
+    def visit_Constant(self, node: ast.Constant) -> ast.Constant:
         if isinstance(node.value, int) and random.random() < 0.3:
             node.value += random.choice([-1, 1, 2])
         elif isinstance(node.value, str) and node.value and random.random() < 0.3:
@@ -195,7 +196,7 @@ class LiteralTypeSwapMutator(ast.NodeTransformer):
 
         # Select and apply a random replacement
         if replacements:
-            node.value = random.choice(replacements)
+            node.value = random.choice(replacements)  # type: ignore[assignment]
 
         return node
 
@@ -232,7 +233,7 @@ class LiteralTypeSwapMutator(ast.NodeTransformer):
             strings for ast.unparse to work correctly. This method visits only the
             Interpolation nodes, skipping Constant nodes to prevent conversion to bytes.
             """
-            new_values = []
+            new_values: list[ast.expr] = []
             for child in node.values:
                 if isinstance(child, ast.Constant):
                     # Skip mutation for literal parts of t-strings to prevent
@@ -240,7 +241,11 @@ class LiteralTypeSwapMutator(ast.NodeTransformer):
                     new_values.append(child)
                 else:
                     # Visit interpolations (e.g., {x})
-                    new_values.append(self.visit(child))
+                    visited = self.visit(child)
+                    if isinstance(visited, ast.expr):
+                        new_values.append(visited)
+                    else:
+                        new_values.append(child)  # Keep original if type changed unexpectedly
             node.values = new_values
             return node
 
@@ -331,12 +336,11 @@ class BoundaryValuesMutator(ast.NodeTransformer):
 class GuardInjector(ast.NodeTransformer):
     """Wrap a random statement in a seeded, reproducible 'if' block."""
 
-    def visit(self, node: ast.AST) -> ast.AST | None:
-        node = super().visit(node)
+    def visit(self, node: ast.AST) -> ast.AST:
+        visited = super().visit(node)
 
-        # If a child visitor removed the node, propagate the deletion.
-        if node is None:
-            return ast.Pass()
+        # super().visit() returns AST, so visited is never None
+        node = visited
 
         if isinstance(node, ast.stmt) and not isinstance(node, ast.FunctionDef):
             # The test uses our fuzzer-provided, seeded RNG instance.
@@ -360,14 +364,14 @@ class GuardInjector(ast.NodeTransformer):
 class ContainerChanger(ast.NodeTransformer):
     """Change container types, e.g., from a list to a tuple or set."""
 
-    def visit_List(self, node: ast.AST) -> ast.AST:
+    def visit_List(self, node: ast.List) -> ast.expr:
         if random.random() < 0.5:
             return ast.Set(elts=node.elts)
         elif random.random() < 0.5:
             return ast.Tuple(elts=node.elts, ctx=node.ctx)
         return node
 
-    def visit_ListComp(self, node: ast.AST) -> ast.AST:
+    def visit_ListComp(self, node: ast.ListComp) -> ast.expr:
         if random.random() < 0.5:
             return ast.SetComp(elt=node.elt, generators=node.generators)
         return node
@@ -419,7 +423,7 @@ class VariableSwapper(ast.NodeTransformer):
         self.generic_visit(node)
         return node
 
-    def visit_Name(self, node: ast.AST) -> ast.AST:
+    def visit_Name(self, node: ast.Name) -> ast.Name:
         node.id = self.var_map.get(node.id, node.id)
         return node
 
@@ -427,15 +431,15 @@ class VariableSwapper(ast.NodeTransformer):
 class StatementDuplicator(ast.NodeTransformer):
     """Duplicate a statement."""
 
-    def visit(self, node: ast.AST) -> ast.AST:
-        node = super().visit(node)
+    def visit(self, node: ast.AST) -> ast.AST | list[ast.stmt]:
+        visited = super().visit(node)
         if (
-            isinstance(node, ast.stmt)
-            and not isinstance(node, (ast.FunctionDef, ast.ClassDef, ast.Module))
+            isinstance(visited, ast.stmt)
+            and not isinstance(visited, (ast.FunctionDef, ast.ClassDef, ast.Module))
             and random.random() < 0.1
         ):
-            return [node, copy.deepcopy(node)]
-        return node
+            return [visited, copy.deepcopy(visited)]
+        return visited
 
 
 class VariableRenamer(ast.NodeTransformer):
@@ -475,6 +479,7 @@ class ForLoopInjector(ast.NodeTransformer):
             # Choose between range(), a list, or a tuple
             iterable_type = random.choice(["range", "list", "tuple"])
 
+            iterator_node: ast.expr
             if iterable_type == "range":
                 iterator_node = ast.Call(
                     func=ast.Name(id="range", ctx=ast.Load()),
@@ -482,7 +487,9 @@ class ForLoopInjector(ast.NodeTransformer):
                     keywords=[],
                 )
             else:  # list or tuple
-                elements = [ast.Constant(value=i) for i in range(random.randint(5, 20))]
+                elements: list[ast.expr] = [
+                    ast.Constant(value=i) for i in range(random.randint(5, 20))
+                ]
                 if iterable_type == "list":
                     iterator_node = ast.List(elts=elements, ctx=ast.Load())
                 else:  # tuple
@@ -501,14 +508,16 @@ class ForLoopInjector(ast.NodeTransformer):
     def visit_Assign(self, node: ast.Assign) -> ast.stmt | None:
         # The call to generic_visit might return None if a child visitor
         # removes the node. We must respect this.
-        node = self.generic_visit(node)
-        return self._try_inject_loop(node)
+        visited = self.generic_visit(node)
+        if isinstance(visited, ast.Assign):
+            return self._try_inject_loop(visited)
+        return visited  # type: ignore[return-value]
 
     def visit_Expr(self, node: ast.Expr) -> ast.stmt | None:
-        node = self.generic_visit(node)
-        if node and isinstance(node.value, ast.Call):
-            return self._try_inject_loop(node)
-        return node
+        visited = self.generic_visit(node)
+        if isinstance(visited, ast.Expr) and isinstance(visited.value, ast.Call):
+            return self._try_inject_loop(visited)
+        return visited  # type: ignore[return-value]
 
 
 class GuardRemover(ast.NodeTransformer):
@@ -527,7 +536,7 @@ class GuardRemover(ast.NodeTransformer):
             and node.func.value.id == "fuzzer_rng"
         )
 
-    def visit_If(self, node: ast.If) -> ast.AST:
+    def visit_If(self, node: ast.If) -> ast.AST | list[ast.stmt]:
         # First, visit children to allow nested removals.
         self.generic_visit(node)
 

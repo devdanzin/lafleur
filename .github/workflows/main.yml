@@ -30,8 +30,8 @@ jobs:
       - name: Run Ruff Format (Check)
         run: ruff format --check .
 
-#      - name: Run Mypy
-#        run: mypy .
+      - name: Run Mypy
+        run: mypy lafleur
 
   # JOB 2: Build CPython JIT and run Tests
   jit-tests:

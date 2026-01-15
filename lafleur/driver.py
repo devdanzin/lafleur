@@ -122,7 +122,8 @@ def check_bloom(bloom_filter: _PyBloomFilter, obj_address: int, debug_name: str 
 
 
 def scan_watched_variables(
-    executor_ptr: ctypes.POINTER(PyExecutorObject), namespace: dict
+    executor_ptr: ctypes.POINTER(PyExecutorObject),  # type: ignore[valid-type]
+    namespace: dict,
 ) -> list[str]:
     """Identify which globals/builtins are watched by this executor."""
     watched = []

@@ -9,7 +9,7 @@ import json
 import pickle
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 
 def migrate_state_to_integers(old_state: dict[str, Any]) -> dict[str, Any]:
@@ -29,22 +29,26 @@ def migrate_state_to_integers(old_state: dict[str, Any]) -> dict[str, Any]:
     # Helper to create mappings and get IDs
     def get_or_create_id(item_type: str, item_string: str) -> int:
         map_name = f"{item_type}_map"
-        if item_string in new_state[map_name]:
-            return new_state[map_name][item_string]
+        item_map = cast(dict[str, int], new_state[map_name])
+        if item_string in item_map:
+            return item_map[item_string]
 
-        new_id = new_state["next_id_map"][item_type]
-        new_state[map_name][item_string] = new_id
-        new_state["next_id_map"][item_type] += 1
+        next_id_map = cast(dict[str, int], new_state["next_id_map"])
+        new_id = next_id_map[item_type]
+        item_map[item_string] = new_id
+        next_id_map[item_type] += 1
         return new_id
 
     # 1. Migrate global_coverage
+    global_cov = cast(dict[str, dict[int, int]], new_state["global_coverage"])
     for cov_type in ["uops", "edges", "rare_events"]:
         id_type = cov_type.rstrip("s")
         for item_str, count in old_state.get("global_coverage", {}).get(cov_type, {}).items():
             item_id = get_or_create_id(id_type, str(item_str))
-            new_state["global_coverage"][cov_type][item_id] = count
+            global_cov[cov_type][item_id] = count
 
     # 2. Migrate per_file_coverage
+    per_file_cov = cast(dict[str, Any], new_state["per_file_coverage"])
     for filename, metadata in old_state.get("per_file_coverage", {}).items():
         new_metadata = metadata.copy()
 
@@ -74,7 +78,7 @@ def migrate_state_to_integers(old_state: dict[str, Any]) -> dict[str, Any]:
             new_lineage[harness] = new_harness_data
         new_metadata["lineage_coverage_profile"] = new_lineage
 
-        new_state["per_file_coverage"][filename] = new_metadata
+        per_file_cov[filename] = new_metadata
 
     print("[+] Migration complete.")
     return new_state
@@ -120,13 +124,13 @@ def main() -> None:
         print(json.dumps(migrated_state, indent=2, default=set_to_list))
 
     elif args.output_file.suffix == ".json":
-        with open(args.output_file, "w") as f:
-            json.dump(migrated_state, f, indent=2, default=set_to_list)
+        with open(args.output_file, "w") as json_f:
+            json.dump(migrated_state, json_f, indent=2, default=set_to_list)
         print(f"State saved as JSON to {args.output_file}")
 
     elif args.output_file.suffix == ".pkl":
-        with open(args.output_file, "wb") as f:
-            pickle.dump(migrated_state, f)
+        with open(args.output_file, "wb") as pkl_f:
+            pickle.dump(migrated_state, pkl_f)
         print(f"Migrated state saved as pickle to {args.output_file}")
 
 

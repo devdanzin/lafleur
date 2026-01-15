@@ -1,6 +1,9 @@
 import ast
 import random
 from textwrap import dedent
+from typing import TypeVar
+
+_LoopT = TypeVar("_LoopT", ast.For, ast.While)
 
 
 class SniperMutator(ast.NodeTransformer):
@@ -137,7 +140,7 @@ class SniperMutator(ast.NodeTransformer):
         self.generic_visit(node)
         return self._snipe_loop(node)
 
-    def _snipe_loop(self, node: ast.AST) -> ast.AST:
+    def _snipe_loop(self, node: _LoopT) -> _LoopT:
         """Injects invalidation logic into the loop body."""
         # Prioritize helper targets (injected by HelperFunctionInjector)
         # Fall back to generic watched keys if no helpers found

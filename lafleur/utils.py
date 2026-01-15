@@ -8,9 +8,8 @@ import json
 import sys
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from io import TextIOWrapper
 from pathlib import Path
-from typing import Any
+from typing import Any, TextIO
 
 RUN_STATS_FILE = Path("fuzz_run_stats.json")
 
@@ -68,7 +67,7 @@ class TeeLogger:
     (like the original stdout), and flushes immediately.
     """
 
-    def __init__(self, file_path: str | Path, original_stream: TextIOWrapper) -> None:
+    def __init__(self, file_path: str | Path, original_stream: TextIO) -> None:
         """Initialize the logger with a file path and an existing stream."""
         self.original_stream = original_stream
         self.log_file = open(file_path, "w", encoding="utf-8")

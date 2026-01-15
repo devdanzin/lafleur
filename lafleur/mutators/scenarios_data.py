@@ -14,6 +14,7 @@ import ast
 import random
 import sys
 from textwrap import dedent, indent
+from typing import Any, Callable, cast
 
 from lafleur.mutators.utils import (
     genStatefulIterObject,
@@ -94,7 +95,7 @@ class MagicMethodMutator(ast.NodeTransformer):
                 p_prefix = f"iter_{random.randint(1000, 9999)}"
                 # 1. Get the evil class definition
                 class_def_str = genStatefulIterObject(p_prefix)
-                class_def_node = ast.parse(class_def_str).body[0]
+                class_def_node = cast(ast.ClassDef, ast.parse(class_def_str).body[0])
                 # 2. Prepend the class definition to the function
                 node.body.insert(0, class_def_node)
                 # 3. Replace the loop's iterable
@@ -111,7 +112,7 @@ class MagicMethodMutator(ast.NodeTransformer):
             return node
 
         if random.random() < 0.15:  # Low probability for these attacks
-            attack_functions = [
+            attack_functions: list[Callable[..., Any]] = [
                 _create_len_attack,
                 _create_hash_attack,
                 _create_pow_attack,
@@ -174,7 +175,7 @@ class NumericMutator(ast.NodeTransformer):
     def _mutate_ord_args(self, node: ast.Call) -> ast.Call:
         """Replace the argument to ord() with values that test error handling."""
         print("    -> Mutating ord() arguments", file=sys.stderr)
-        tricky_values = ["", "ab", b"c"]  # TypeError, TypeError, TypeError
+        tricky_values: list[str | bytes] = ["", "ab", b"c"]  # TypeError, TypeError, TypeError
         node.args = [ast.Constant(value=random.choice(tricky_values))]
         node.keywords = []
         return node
@@ -353,7 +354,7 @@ except Exception:
             print(f"    -> Mutating for loop iterator in '{func_node.name}'", file=sys.stderr)
             prefix = f"iter_{random.randint(1000, 9999)}"
             class_def_str = genStatefulIterObject(prefix)
-            class_def_node = ast.parse(class_def_str).body[0]
+            class_def_node = cast(ast.ClassDef, ast.parse(class_def_str).body[0])
             # Prepend the class definition to the function
             func_node.body.insert(0, class_def_node)
             # Replace the loop's iterable
@@ -370,7 +371,7 @@ except Exception:
             return node
 
         if random.random() < 0.15:  # Low probability for these attacks
-            attack_functions = [
+            attack_functions: list[Callable[..., Any]] = [
                 _create_len_attack,
                 _create_hash_attack,
                 _create_pow_attack,
@@ -594,7 +595,7 @@ def _create_chaotic_iterator_ast(class_name: str) -> ast.ClassDef:
             self._index += 1
             return item
     """)
-    return ast.parse(source_code).body[0]
+    return cast(ast.ClassDef, ast.parse(source_code).body[0])
 
 
 class ComprehensionBomb(ast.NodeTransformer):
@@ -737,7 +738,7 @@ class ReentrantSideEffectMutator(ast.NodeTransformer):
                         return True
             """)
 
-        return ast.parse(code).body[0]
+        return cast(ast.ClassDef, ast.parse(code).body[0])
 
     def _create_trigger_statement(
         self, var_name: str, type_name: str, class_name: str
@@ -866,7 +867,7 @@ class LatticeSurfingMutator(ast.NodeTransformer):
                     var_name = stmt.targets[0].id
                     if isinstance(stmt.value, ast.Constant):
                         val = stmt.value.value
-                        if isinstance(val, (int, bool)) and not isinstance(val, type(None)):
+                        if isinstance(val, int):  # bool is subclass of int
                             targets.append((var_name, val))
 
         return targets

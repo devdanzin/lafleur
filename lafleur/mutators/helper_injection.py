@@ -68,8 +68,8 @@ class HelperFunctionInjector(ast.NodeTransformer):
             probability: Chance of applying the mutation (default 30%)
         """
         self.probability = probability
-        self.helpers_injected = []
-        self.current_harness = None
+        self.helpers_injected: list[str] = []
+        self.current_harness: ast.FunctionDef | None = None
 
     def visit_Module(self, node: ast.Module) -> ast.Module:
         """Inject helpers at module level and modify harness functions."""
@@ -105,13 +105,14 @@ class HelperFunctionInjector(ast.NodeTransformer):
         selected_templates = random.sample(self.HELPER_TEMPLATES, num_helpers)
 
         # Parse helper functions
-        helper_nodes = []
+        helper_nodes: list[ast.FunctionDef] = []
         for template in selected_templates:
             try:
                 helper_ast = ast.parse(template)
                 helper_func = helper_ast.body[0]
-                self.helpers_injected.append(helper_func.name)
-                helper_nodes.append(helper_func)
+                if isinstance(helper_func, ast.FunctionDef):
+                    self.helpers_injected.append(helper_func.name)
+                    helper_nodes.append(helper_func)
             except SyntaxError:
                 continue
 

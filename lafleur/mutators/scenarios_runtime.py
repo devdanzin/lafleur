@@ -14,6 +14,7 @@ import ast
 import random
 import sys
 from textwrap import dedent
+from typing import cast
 
 
 class GCInjector(ast.NodeTransformer):
@@ -118,8 +119,10 @@ def _create_evil_frame_modifier_ast(func_name: str, target_var: str) -> ast.Func
     Builds the AST for a function that uses sys._getframe() to modify a
     local variable in its caller's frame.
     """
-    return ast.parse(
-        dedent(f"""
+    return cast(
+        ast.FunctionDef,
+        ast.parse(
+            dedent(f"""
     def {func_name}():
         try:
             # Get the frame of the caller (the uop_harness)
@@ -130,7 +133,8 @@ def _create_evil_frame_modifier_ast(func_name: str, target_var: str) -> ast.Func
             # Fail gracefully if frame inspection is not possible
             pass
     """)
-    ).body[0]
+        ).body[0],
+    )
 
 
 class FrameManipulator(ast.NodeTransformer):
@@ -206,24 +210,30 @@ class FrameManipulator(ast.NodeTransformer):
 
 def _create_gc_callback_ast(func_name: str) -> ast.FunctionDef:
     """Builds the AST for the weakref callback function."""
-    return ast.parse(
-        dedent(f"""
+    return cast(
+        ast.FunctionDef,
+        ast.parse(
+            dedent(f"""
     def {func_name}(ref, var_name):
         # This function is triggered by the GC when the weakref's
         # target is collected. It modifies a global variable.
         globals()[var_name] = "modified_by_gc"
     """)
-    ).body[0]
+        ).body[0],
+    )
 
 
 def _create_target_object_ast(class_name: str) -> ast.ClassDef:
     """Builds the AST for a simple, empty class to be garbage collected."""
-    return ast.parse(
-        dedent(f"""
+    return cast(
+        ast.ClassDef,
+        ast.parse(
+            dedent(f"""
     class {class_name}:
         pass
     """)
-    ).body[0]
+        ).body[0],
+    )
 
 
 class WeakRefCallbackChaos(ast.NodeTransformer):
@@ -573,9 +583,9 @@ class StressPatternInjector(ast.NodeTransformer):
             # 3. Generate the evil snippet's AST nodes.
             if action == _create_dict_swap_node:
                 var1, var2 = random.sample(list(local_vars), 2)
-                snippet_nodes = action(var1_name=var1, var2_name=var2)
+                snippet_nodes = _create_dict_swap_node(var1_name=var1, var2_name=var2)
             else:
-                snippet_nodes = action(target_var=target_var)
+                snippet_nodes = action(target_var=target_var)  # type: ignore[call-arg]
 
             # 4. Insert the snippet at a random point in the function body.
             if node.body:

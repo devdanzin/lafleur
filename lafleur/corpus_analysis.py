@@ -10,13 +10,14 @@ from __future__ import annotations
 
 import statistics
 from collections import Counter
+from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from lafleur.corpus_manager import CorpusManager
 
 
-def calculate_distribution(values: list[int | float]) -> dict[str, float | None]:
+def calculate_distribution(values: Sequence[int | float]) -> dict[str, float | None]:
     """
     Calculate descriptive statistics for a list of numeric values.
 

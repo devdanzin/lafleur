@@ -217,7 +217,10 @@ class ASTMutator:
         # via orchestrator._run_sniper_stage() with Bloom-detected watched_keys
 
     def mutate_ast(
-        self, tree: ast.AST, seed: int | None = None, mutations: int | None = None
+        self,
+        tree: ast.AST | list[ast.stmt],
+        seed: int | None = None,
+        mutations: int | None = None,
     ) -> tuple[ast.AST, list[type]]:
         """
         Apply a random pipeline of AST mutations directly to an AST object.
@@ -226,7 +229,7 @@ class ASTMutator:
         is already available, avoiding an unparse/re-parse cycle.
 
         Args:
-            tree: The AST object to be mutated.
+            tree: The AST object to be mutated, or a list of statements.
             seed: An optional integer to seed the random number generator.
             mutations: An optional integer to specify the number of mutations.
 
@@ -237,16 +240,23 @@ class ASTMutator:
         if seed is not None:
             random.seed(seed)
 
+        # If tree is a list of statements, wrap it in a Module
+        ast_tree: ast.AST
+        if isinstance(tree, list):
+            ast_tree = ast.Module(body=tree, type_ignores=[])
+        else:
+            ast_tree = tree
+
         # Randomly select 1 to 3 transformers to apply
         num_mutations = mutations if mutations is not None else random.randint(1, 3)
         chosen_transformers = random.choices(self.transformers, k=num_mutations)
 
         for transformer_class in chosen_transformers:
             transformer_instance = transformer_class()
-            tree = transformer_instance.visit(tree)
+            ast_tree = transformer_instance.visit(ast_tree)
 
-        ast.fix_missing_locations(tree)
-        return tree, chosen_transformers
+        ast.fix_missing_locations(ast_tree)
+        return ast_tree, chosen_transformers
 
     def mutate(
         self, code_string: str, seed: int | None = None, mutations: int | None = None

@@ -663,12 +663,18 @@ class LafleurOrchestrator:
                     variable_map[var_name] = inferred_type
         return variable_map
 
-    def _run_splicing_stage(self, base_core_ast: ast.AST, **kwargs) -> ast.AST:
+    def _run_splicing_stage(
+        self, base_core_ast: ast.AST | list[ast.stmt], **kwargs
+    ) -> ast.AST | list[ast.stmt]:
         """Perform a crossover by splicing the harness from a second parent."""
         print("  [~] Attempting SPLICING stage...", file=sys.stderr)
 
-        # Ensure we have a Module with a body to iterate over
-        if not isinstance(base_core_ast, ast.Module):
+        # Handle both Module and list inputs
+        if isinstance(base_core_ast, ast.Module):
+            base_body = base_core_ast.body
+        elif isinstance(base_core_ast, list):
+            base_body = base_core_ast
+        else:
             return base_core_ast
 
         selection = self.corpus_manager.select_parent()
@@ -684,7 +690,7 @@ class LafleurOrchestrator:
             return base_core_ast
 
         # --- Analysis ---
-        setup_nodes_a = [n for n in base_core_ast.body if not isinstance(n, ast.FunctionDef)]
+        setup_nodes_a = [n for n in base_body if not isinstance(n, ast.FunctionDef)]
         provided_vars_a = self._analyze_setup_ast(setup_nodes_a)
 
         setup_nodes_b = [n for n in parent_b_tree.body if not isinstance(n, ast.FunctionDef)]

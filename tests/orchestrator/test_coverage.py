@@ -12,7 +12,6 @@ import io
 import unittest
 from unittest.mock import MagicMock, patch
 
-from lafleur.orchestrator import LafleurOrchestrator
 from lafleur.scoring import ScoringManager, NewCoverageInfo
 
 
@@ -189,15 +188,15 @@ class TestFindNewCoverage(unittest.TestCase):
 
 
 class TestUpdateGlobalCoverage(unittest.TestCase):
-    """Test _update_global_coverage method."""
+    """Test ScoringManager._update_global_coverage method."""
 
     def setUp(self):
-        """Set up minimal orchestrator instance."""
-        self.orchestrator = LafleurOrchestrator.__new__(LafleurOrchestrator)
-        self.orchestrator.coverage_manager = MagicMock()
-        self.orchestrator.coverage_manager.state = {
+        """Set up ScoringManager instance."""
+        self.coverage_manager = MagicMock()
+        self.coverage_manager.state = {
             "global_coverage": {"uops": {}, "edges": {}, "rare_events": {}}
         }
+        self.scoring_manager = ScoringManager(self.coverage_manager)
 
     def test_update_global_coverage_new_items(self):
         """Test adding new coverage items."""
@@ -205,9 +204,9 @@ class TestUpdateGlobalCoverage(unittest.TestCase):
             "harness1": {"uops": {100: 5}, "edges": {200: 3}, "rare_events": {300: 1}}
         }
 
-        self.orchestrator._update_global_coverage(child_coverage)
+        self.scoring_manager._update_global_coverage(child_coverage)
 
-        global_cov = self.orchestrator.coverage_manager.state["global_coverage"]
+        global_cov = self.coverage_manager.state["global_coverage"]
         self.assertEqual(global_cov["uops"][100], 5)
         self.assertEqual(global_cov["edges"][200], 3)
         self.assertEqual(global_cov["rare_events"][300], 1)
@@ -215,13 +214,13 @@ class TestUpdateGlobalCoverage(unittest.TestCase):
     def test_update_global_coverage_increment_existing(self):
         """Test incrementing existing coverage counts."""
         # Pre-populate global coverage
-        global_cov = self.orchestrator.coverage_manager.state["global_coverage"]
+        global_cov = self.coverage_manager.state["global_coverage"]
         global_cov["uops"][100] = 10
         global_cov["edges"][200] = 5
 
         child_coverage = {"harness1": {"uops": {100: 5}, "edges": {200: 3}, "rare_events": {}}}
 
-        self.orchestrator._update_global_coverage(child_coverage)
+        self.scoring_manager._update_global_coverage(child_coverage)
 
         self.assertEqual(global_cov["uops"][100], 15)
         self.assertEqual(global_cov["edges"][200], 8)
@@ -233,9 +232,9 @@ class TestUpdateGlobalCoverage(unittest.TestCase):
             "harness2": {"uops": {101: 5}, "edges": {201: 2}, "rare_events": {}},
         }
 
-        self.orchestrator._update_global_coverage(child_coverage)
+        self.scoring_manager._update_global_coverage(child_coverage)
 
-        global_cov = self.orchestrator.coverage_manager.state["global_coverage"]
+        global_cov = self.coverage_manager.state["global_coverage"]
         self.assertEqual(global_cov["uops"][100], 3)
         self.assertEqual(global_cov["uops"][101], 5)
         self.assertEqual(global_cov["edges"][201], 2)
@@ -244,26 +243,27 @@ class TestUpdateGlobalCoverage(unittest.TestCase):
         """Test handling of empty child coverage."""
         child_coverage = {}
 
-        self.orchestrator._update_global_coverage(child_coverage)
+        self.scoring_manager._update_global_coverage(child_coverage)
 
-        global_cov = self.orchestrator.coverage_manager.state["global_coverage"]
+        global_cov = self.coverage_manager.state["global_coverage"]
         self.assertEqual(len(global_cov["uops"]), 0)
         self.assertEqual(len(global_cov["edges"]), 0)
 
 
 class TestCalculateCoverageHash(unittest.TestCase):
-    """Test _calculate_coverage_hash method."""
+    """Test ScoringManager._calculate_coverage_hash method."""
 
     def setUp(self):
-        """Set up minimal orchestrator instance."""
-        self.orchestrator = LafleurOrchestrator.__new__(LafleurOrchestrator)
+        """Set up ScoringManager instance."""
+        self.coverage_manager = MagicMock()
+        self.scoring_manager = ScoringManager(self.coverage_manager)
 
     def test_coverage_hash_deterministic(self):
         """Test that same coverage produces same hash."""
         coverage_profile = {"harness1": {"edges": {100: 1, 101: 2}}}
 
-        hash1 = self.orchestrator._calculate_coverage_hash(coverage_profile)
-        hash2 = self.orchestrator._calculate_coverage_hash(coverage_profile)
+        hash1 = self.scoring_manager._calculate_coverage_hash(coverage_profile)
+        hash2 = self.scoring_manager._calculate_coverage_hash(coverage_profile)
 
         self.assertEqual(hash1, hash2)
 
@@ -272,8 +272,8 @@ class TestCalculateCoverageHash(unittest.TestCase):
         coverage1 = {"harness1": {"edges": {100: 1, 101: 2, 102: 3}}}
         coverage2 = {"harness1": {"edges": {102: 3, 100: 1, 101: 2}}}
 
-        hash1 = self.orchestrator._calculate_coverage_hash(coverage1)
-        hash2 = self.orchestrator._calculate_coverage_hash(coverage2)
+        hash1 = self.scoring_manager._calculate_coverage_hash(coverage1)
+        hash2 = self.scoring_manager._calculate_coverage_hash(coverage2)
 
         self.assertEqual(hash1, hash2)
 
@@ -282,8 +282,8 @@ class TestCalculateCoverageHash(unittest.TestCase):
         coverage1 = {"harness1": {"edges": {100: 1}}}
         coverage2 = {"harness1": {"edges": {101: 1}}}
 
-        hash1 = self.orchestrator._calculate_coverage_hash(coverage1)
-        hash2 = self.orchestrator._calculate_coverage_hash(coverage2)
+        hash1 = self.scoring_manager._calculate_coverage_hash(coverage1)
+        hash2 = self.scoring_manager._calculate_coverage_hash(coverage2)
 
         self.assertNotEqual(hash1, hash2)
 
@@ -291,7 +291,7 @@ class TestCalculateCoverageHash(unittest.TestCase):
         """Test handling of empty profile."""
         coverage_profile = {}
 
-        hash_value = self.orchestrator._calculate_coverage_hash(coverage_profile)
+        hash_value = self.scoring_manager._calculate_coverage_hash(coverage_profile)
 
         # Should produce hash of empty string
         expected_hash = hashlib.sha256("".encode("utf-8")).hexdigest()
@@ -308,8 +308,8 @@ class TestCalculateCoverageHash(unittest.TestCase):
             }
         }
 
-        hash1 = self.orchestrator._calculate_coverage_hash(coverage1)
-        hash2 = self.orchestrator._calculate_coverage_hash(coverage2)
+        hash1 = self.scoring_manager._calculate_coverage_hash(coverage1)
+        hash2 = self.scoring_manager._calculate_coverage_hash(coverage2)
 
         self.assertEqual(hash1, hash2)
 
@@ -498,22 +498,18 @@ class TestCoverageWorkflow(unittest.TestCase):
     """Integration tests for coverage workflow."""
 
     def setUp(self):
-        """Set up minimal orchestrator instance and ScoringManager."""
-        self.orchestrator = LafleurOrchestrator.__new__(LafleurOrchestrator)
-
+        """Set up ScoringManager with mock coverage manager."""
         # Mock coverage manager
-        self.orchestrator.coverage_manager = MagicMock()
-        self.orchestrator.coverage_manager.state = {
+        self.coverage_manager = MagicMock()
+        self.coverage_manager.state = {
             "global_coverage": {"uops": {}, "edges": {}, "rare_events": {}}
         }
-        self.orchestrator.coverage_manager.reverse_uop_map = {100: "_BINARY_OP"}
-        self.orchestrator.coverage_manager.reverse_edge_map = {200: "edge_1->2"}
-        self.orchestrator.coverage_manager.reverse_rare_event_map = {300: "_DEOPT"}
+        self.coverage_manager.reverse_uop_map = {100: "_BINARY_OP"}
+        self.coverage_manager.reverse_edge_map = {200: "edge_1->2"}
+        self.coverage_manager.reverse_rare_event_map = {300: "_DEOPT"}
 
-        # Create ScoringManager with the same mock coverage_manager
-        self.scoring_manager = ScoringManager(
-            self.orchestrator.coverage_manager, timing_fuzz=False
-        )
+        # Create ScoringManager with the mock coverage_manager
+        self.scoring_manager = ScoringManager(self.coverage_manager, timing_fuzz=False)
 
     def test_workflow_new_global_coverage(self):
         """Test complete workflow with new global coverage."""
@@ -527,10 +523,10 @@ class TestCoverageWorkflow(unittest.TestCase):
             )
 
             # Update global
-            self.orchestrator._update_global_coverage(child_coverage)
+            self.scoring_manager._update_global_coverage(child_coverage)
 
             # Calculate hash
-            coverage_hash = self.orchestrator._calculate_coverage_hash(child_coverage)
+            coverage_hash = self.scoring_manager._calculate_coverage_hash(child_coverage)
 
             # Decide interestingness
             is_interesting = self.scoring_manager.score_and_decide_interestingness(
@@ -548,9 +544,7 @@ class TestCoverageWorkflow(unittest.TestCase):
         # Verify workflow
         self.assertEqual(info.global_uops, 1)
         self.assertEqual(info.global_edges, 1)
-        self.assertEqual(
-            self.orchestrator.coverage_manager.state["global_coverage"]["uops"][100], 5
-        )
+        self.assertEqual(self.coverage_manager.state["global_coverage"]["uops"][100], 5)
         self.assertTrue(is_interesting)
         self.assertIsInstance(coverage_hash, str)
         self.assertEqual(len(coverage_hash), 64)  # SHA256 hash length
@@ -558,7 +552,7 @@ class TestCoverageWorkflow(unittest.TestCase):
     def test_workflow_relative_coverage_only(self):
         """Test workflow with only relative coverage."""
         # Pre-populate global coverage
-        self.orchestrator.coverage_manager.state["global_coverage"]["edges"][200] = 10
+        self.coverage_manager.state["global_coverage"]["edges"][200] = 10
 
         child_coverage = {"harness1": {"uops": {}, "edges": {200: 3}, "rare_events": {}}}
         parent_lineage_profile = {
@@ -605,16 +599,16 @@ class TestCoverageWorkflow(unittest.TestCase):
                 child_coverage, parent_lineage_profile, parent_id="parent1"
             )
 
-            self.orchestrator._update_global_coverage(child_coverage)
+            self.scoring_manager._update_global_coverage(child_coverage)
 
-            coverage_hash = self.orchestrator._calculate_coverage_hash(child_coverage)
+            coverage_hash = self.scoring_manager._calculate_coverage_hash(child_coverage)
 
         # Verify multi-harness handling
         self.assertEqual(info.global_uops, 1)
         self.assertEqual(info.global_edges, 1)
         self.assertEqual(info.global_rare_events, 1)
 
-        global_cov = self.orchestrator.coverage_manager.state["global_coverage"]
+        global_cov = self.coverage_manager.state["global_coverage"]
         self.assertEqual(global_cov["uops"][100], 3)
         self.assertEqual(global_cov["rare_events"][300], 1)
 

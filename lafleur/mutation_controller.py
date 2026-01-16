@@ -5,14 +5,18 @@ This module provides the MutationController class ("The Alchemist") which handle
 - Applying various mutation strategies (deterministic, havoc, spam, sniper, etc.)
 - Managing the mutation pipeline and AST transformations
 - Preparing child scripts from mutated ASTs
+- Extracting boilerplate and core code from source files
 """
 
 import ast
 import copy
+import math
 import random
+import sys
 from collections import defaultdict
+from pathlib import Path
 from textwrap import dedent
-from typing import TYPE_CHECKING, Any, Callable
+from typing import TYPE_CHECKING, Any, Callable, cast
 
 from lafleur.mutators import (
     ASTMutator,
@@ -32,22 +36,25 @@ if TYPE_CHECKING:
 # Module-level RNG for mutation operations
 RANDOM = random.Random()
 
+# Boilerplate markers for extracting core code
+BOILERPLATE_START_MARKER = "# FUSIL_BOILERPLATE_START"
+BOILERPLATE_END_MARKER = "# FUSIL_BOILERPLATE_END"
+
 
 class MutationController:
     """
     Controls mutation strategy selection and application.
 
     This class handles applying various mutation strategies to ASTs,
-    managing the mutation pipeline, and preparing child scripts.
+    managing the mutation pipeline, preparing child scripts, and
+    extracting boilerplate/core code from source files.
     """
 
     def __init__(
         self,
-        ast_mutator: ASTMutator,
+        ast_mutator: "ASTMutator",
         score_tracker: "MutatorScoreTracker",
         corpus_manager: "CorpusManager",
-        get_core_code_func: Callable[[str], str],
-        get_boilerplate_func: Callable[[], str],
         differential_testing: bool = False,
     ):
         """
@@ -57,16 +64,97 @@ class MutationController:
             ast_mutator: ASTMutator instance for applying transformations
             score_tracker: MutatorScoreTracker for adaptive strategy selection
             corpus_manager: CorpusManager for parent selection in splicing
-            get_core_code_func: Function to extract core code from source
-            get_boilerplate_func: Function to get boilerplate code
             differential_testing: Whether differential testing mode is enabled
         """
         self.ast_mutator = ast_mutator
         self.score_tracker = score_tracker
         self.corpus_manager = corpus_manager
-        self._get_core_code = get_core_code_func
-        self._get_boilerplate = get_boilerplate_func
         self.differential_testing = differential_testing
+        self.boilerplate_code: str | None = None
+
+    def get_boilerplate(self) -> str:
+        """Return the cached boilerplate code."""
+        return self.boilerplate_code or ""
+
+    def _extract_and_cache_boilerplate(self, source_code: str) -> None:
+        """Parse a source file to find, extract, and cache the boilerplate code."""
+        try:
+            start_index = source_code.index(BOILERPLATE_START_MARKER)
+            end_index = source_code.index(BOILERPLATE_END_MARKER)
+            # The boilerplate includes the start marker itself.
+            self.boilerplate_code = source_code[start_index:end_index]
+            print("[+] Boilerplate code extracted and cached.")
+        except ValueError:
+            print(
+                "[!] Warning: Could not find boilerplate markers in the initial seed file.",
+                file=sys.stderr,
+            )
+            # Fallback to using an empty boilerplate
+            self.boilerplate_code = ""
+
+    def _get_core_code(self, source_code: str) -> str:
+        """Strip the boilerplate from a source file to get the dynamic core."""
+        try:
+            end_index = source_code.index(BOILERPLATE_END_MARKER)
+            # The core code starts right after the end marker and its newline.
+            return source_code[end_index + len(BOILERPLATE_END_MARKER) + 1 :]
+        except ValueError:
+            # If no marker, assume the whole file is the core (for minimized corpus files)
+            return source_code
+
+    def _calculate_mutations(self, parent_score: float) -> int:
+        """Dynamically calculate the number of mutations based on parent score."""
+        # --- Implement Dynamic Mutation Count ---
+        base_mutations = 100
+        # Normalize the score relative to a baseline of 100 to calculate a multiplier
+        score_multiplier = parent_score / 100.0
+        # Apply a gentle curve so that very high scores don't lead to extreme mutation counts
+        # and very low scores don't get starved completely.
+        # We use math.log to dampen the effect. Add 1 to avoid log(0).
+        dynamic_multiplier = 0.5 + (math.log(max(1.0, score_multiplier * 10)) / 2)
+        # Clamp the multiplier to a reasonable range (e.g., 0.25x to 3.0x)
+        final_multiplier = max(0.25, min(3.0, dynamic_multiplier))
+        max_mutations = int(base_mutations * final_multiplier)
+        print(
+            f"[+] Dynamically adjusting mutation count based on score. Base: {base_mutations}, "
+            f"Multiplier: {final_multiplier:.2f}, Final Count: {max_mutations}"
+        )
+        return max_mutations
+
+    def _get_nodes_from_parent(
+        self, parent_path: Path
+    ) -> tuple[ast.FunctionDef, ast.Module, list[ast.stmt]] | tuple[None, None, None]:
+        """Parse a parent file and extract its setup and harness AST nodes."""
+        try:
+            parent_source = parent_path.read_text()
+            if self.boilerplate_code is None:
+                self._extract_and_cache_boilerplate(parent_source)
+            parent_core_code = self._get_core_code(parent_source)
+            parent_core_tree = ast.parse(parent_core_code)
+
+            normalizer = FuzzerSetupNormalizer()
+            # The normalizer preserves Module structure, so cast to maintain type
+            parent_core_tree = cast(ast.Module, normalizer.visit(parent_core_tree))
+            ast.fix_missing_locations(parent_core_tree)
+
+        except (IOError, SyntaxError) as e:
+            print(f"[!] Error processing parent file {parent_path.name}: {e}", file=sys.stderr)
+            return None, None, None
+
+        base_harness_node = None
+        setup_nodes = []
+        for node in parent_core_tree.body:
+            if isinstance(node, ast.FunctionDef) and node.name.startswith("uop_harness_"):
+                base_harness_node = node
+            elif base_harness_node is None:
+                # Collect setup nodes that appear before the harness function
+                setup_nodes.append(node)
+        if not base_harness_node:
+            print(
+                f"[-] No harness function found in {parent_path.name}. Skipping.", file=sys.stderr
+            )
+            return None, None, None
+        return base_harness_node, parent_core_tree, setup_nodes
 
     def _run_slicing(
         self, base_ast: ast.AST, stage_name: str, len_body: int, seed: int | None = None
@@ -484,7 +572,7 @@ class MutationController:
                 instrumentor = HarnessInstrumentor()
                 child_core_tree = instrumentor.visit(child_core_tree)
 
-            boilerplate = self._get_boilerplate()
+            boilerplate = self.get_boilerplate()
             mutated_core_code = ast.unparse(child_core_tree)
             return f"{boilerplate}\n{gc_tuning_code}{rng_setup_code}\n{mutated_core_code}"
         except RecursionError:

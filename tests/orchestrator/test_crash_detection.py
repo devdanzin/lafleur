@@ -11,7 +11,7 @@ import io
 import signal
 import unittest
 from pathlib import Path
-from unittest.mock import patch, mock_open, MagicMock
+from unittest.mock import patch, mock_open
 from lafleur.artifacts import ArtifactManager
 from lafleur.analysis import CrashFingerprinter
 from lafleur.execution import ExecutionManager

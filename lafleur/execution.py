@@ -15,9 +15,10 @@ import subprocess
 import sys
 import time
 from pathlib import Path
-from textwrap import dedent
+from textwrap import dedent, indent
 from typing import TYPE_CHECKING
 
+from lafleur.coverage import PROTO_TRACE_REGEX, OPTIMIZED_TRACE_REGEX
 from lafleur.utils import ExecutionResult
 
 if TYPE_CHECKING:
@@ -273,9 +274,7 @@ class ExecutionManager:
                     env=nojit_env,
                 )
             except subprocess.TimeoutExpired:
-                self.artifact_manager.handle_timeout(
-                    child_source_path, child_log_path, parent_path
-                )
+                self.artifact_manager.handle_timeout(child_source_path, child_log_path, parent_path)
                 return None, "timeouts_found"
 
             # Run JIT
@@ -354,9 +353,7 @@ class ExecutionManager:
                 child_source_path, num_timing_runs, jit_enabled=False
             )
             if timed_out:
-                self.artifact_manager.handle_timeout(
-                    child_source_path, child_log_path, parent_path
-                )
+                self.artifact_manager.handle_timeout(child_source_path, child_log_path, parent_path)
                 return None, "timeouts_found"
 
             jit_avg_ms, timed_out, _ = self._run_timed_trial(
@@ -440,9 +437,7 @@ class ExecutionManager:
                 session_files=session_files if self.session_fuzz else None,
             ), None
         except subprocess.TimeoutExpired:
-            self.artifact_manager.handle_timeout(
-                child_source_path, child_log_path, parent_path
-            )
+            self.artifact_manager.handle_timeout(child_source_path, child_log_path, parent_path)
             return None, "timeouts_found"
         except Exception as e:
             # Instead of letting the exception propagate, we create a "failure"
@@ -461,3 +456,75 @@ class ExecutionManager:
                 parent_path=parent_path,
                 session_files=session_files if self.session_fuzz else None,
             ), None
+
+    def verify_target_capabilities(self) -> None:
+        """
+        Verify that the target Python interpreter produces the expected JIT debug output.
+
+        Raises a RuntimeError if the JIT does not appear to be active or logging correctly.
+        """
+        print(
+            f"[*] Verifying target interpreter capabilities: {self.target_python}...",
+            file=sys.stderr,
+        )
+
+        # A minimal script to trigger the JIT
+        stimulus_code = dedent("""
+            def workload():
+                for i in range(1000):
+                    x = i + 1
+            for x in range(100):
+                workload()
+        """)
+
+        # Use the exact environment we rely on for coverage
+        env = ENV.copy()
+
+        try:
+            # Run the stimulus
+            result = subprocess.run(
+                [self.target_python, "-c", stimulus_code],
+                capture_output=True,
+                text=True,
+                env=env,
+                timeout=15,
+            )
+
+            # Check for JIT signals in stderr
+            has_proto = PROTO_TRACE_REGEX.search(f"{result.stderr}\n{result.stdout}")
+            has_opt = OPTIMIZED_TRACE_REGEX.search(f"{result.stderr}\n{result.stdout}")
+
+            if not (has_proto or has_opt):
+                stderr_stdout = result.stderr + "\n" + result.stdout
+                output = indent(
+                    stderr_stdout[:500] + "..." if len(stderr_stdout) > 500 else stderr_stdout,
+                    "    ",
+                )
+                # If we don't see traces, the JIT likely isn't enabled or built correctly.
+                error_msg = dedent(f"""
+                    [!] CRITICAL: The target interpreter '{self.target_python}' did not produce JIT debug output.
+
+                    Lafleur requires a CPython build with the experimental JIT enabled and configured for debug logging.
+
+                    Troubleshooting:
+                    1. Ensure you built CPython with: ./configure --with-pydebug --enable-experimental-jit
+                    2. Ensure you ran: make -j$(nproc)
+                    3. Ensure the environment variables PYTHON_JIT=1, PYTHON_LLTRACE=4, and PYTHON_OPT_DEBUG=4 are respected.
+
+                    Output received from target (stderr +  stdout):
+                    {output}
+                """)
+                raise RuntimeError(error_msg)
+
+            print(
+                "  [+] Target interpreter validated successfully (JIT traces detected).",
+                file=sys.stderr,
+            )
+
+        except subprocess.TimeoutExpired:
+            raise RuntimeError(
+                f"Target interpreter '{self.target_python}' timed out during verification check."
+            )
+        except RuntimeError as e:
+            print(e)
+            sys.exit(1)

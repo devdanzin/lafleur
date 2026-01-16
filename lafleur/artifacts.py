@@ -6,6 +6,7 @@ This module provides the ArtifactManager class ("The Librarian") which handles:
 - Crash detection and artifact saving
 - Timeout and hang artifact saving
 - Divergence and regression artifact saving
+- Run statistics and timeseries logging
 """
 
 import difflib
@@ -17,10 +18,20 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from textwrap import dedent
+from typing import TYPE_CHECKING
 
+import psutil
 from compression import zstd
 
 from lafleur.analysis import CrashFingerprinter, CrashSignature, CrashType
+from lafleur.corpus_analysis import generate_corpus_stats
+from lafleur.corpus_manager import CORPUS_DIR
+from lafleur.utils import save_run_stats
+
+if TYPE_CHECKING:
+    from lafleur.corpus_manager import CorpusManager
+    from lafleur.coverage import CoverageManager
+    from lafleur.learning import MutatorScoreTracker
 
 # Log processing constants
 TIMEOUT_LOG_COMPRESSION_THRESHOLD = 1_048_576  # 1 MB
@@ -57,6 +68,11 @@ class ArtifactManager:
         max_timeout_log_bytes: int,
         max_crash_log_bytes: int,
         session_fuzz: bool = False,
+        run_stats: dict | None = None,
+        coverage_manager: "CoverageManager | None" = None,
+        corpus_manager: "CorpusManager | None" = None,
+        score_tracker: "MutatorScoreTracker | None" = None,
+        timeseries_log_path: Path | None = None,
     ):
         """
         Initialize the ArtifactManager.
@@ -70,6 +86,11 @@ class ArtifactManager:
             max_timeout_log_bytes: Maximum size for timeout logs before truncation
             max_crash_log_bytes: Maximum size for crash logs before truncation
             session_fuzz: Whether session fuzzing mode is enabled
+            run_stats: Run statistics dictionary for updating counters
+            coverage_manager: CoverageManager for coverage state access
+            corpus_manager: CorpusManager for corpus statistics
+            score_tracker: MutatorScoreTracker for telemetry saving
+            timeseries_log_path: Path for timeseries log file
         """
         self.crashes_dir = crashes_dir
         self.timeouts_dir = timeouts_dir
@@ -79,6 +100,11 @@ class ArtifactManager:
         self.max_timeout_log_bytes = max_timeout_log_bytes
         self.max_crash_log_bytes = max_crash_log_bytes
         self.session_fuzz = session_fuzz
+        self.run_stats = run_stats
+        self.coverage_manager = coverage_manager
+        self.corpus_manager = corpus_manager
+        self.score_tracker = score_tracker
+        self.timeseries_log_path = timeseries_log_path
 
         # Ensure directories exist
         self.crashes_dir.mkdir(parents=True, exist_ok=True)
@@ -544,3 +570,80 @@ class ArtifactManager:
             print(f"  [+] Regression saved to {dest_path}", file=sys.stderr)
         except IOError as e:
             print(f"  [!] CRITICAL: Could not save regression file: {e}", file=sys.stderr)
+
+    def update_and_save_run_stats(self, global_seed_counter: int) -> None:
+        """Update dynamic run statistics and save them to the stats file."""
+        if self.run_stats is None or self.coverage_manager is None or self.corpus_manager is None:
+            raise RuntimeError(
+                "ArtifactManager requires run_stats, coverage_manager, and corpus_manager"
+            )
+
+        self.run_stats["last_update_time"] = datetime.now(timezone.utc).isoformat()
+        self.run_stats["corpus_size"] = len(
+            self.coverage_manager.state.get("per_file_coverage", {})
+        )
+        global_cov = self.coverage_manager.state.get("global_coverage", {})
+        self.run_stats["global_uops"] = len(global_cov.get("uops", {}))
+        self.run_stats["global_edges"] = len(global_cov.get("edges", {}))
+        self.run_stats["global_rare_events"] = len(global_cov.get("rare_events", {}))
+        self.run_stats["global_seed_counter"] = global_seed_counter
+        self.run_stats["corpus_file_counter"] = self.corpus_manager.corpus_file_counter
+
+        total_finds = self.run_stats.get("new_coverage_finds", 0)
+        if total_finds > 0:
+            self.run_stats["average_mutations_per_find"] = (
+                self.run_stats.get("sum_of_mutations_per_find", 0) / total_finds
+            )
+
+        save_run_stats(self.run_stats)
+
+        # Generate and save corpus statistics
+        try:
+            corpus_stats = generate_corpus_stats(self.corpus_manager)
+            corpus_stats_path = Path("corpus_stats.json")
+            with open(corpus_stats_path, "w", encoding="utf-8") as f:
+                json.dump(corpus_stats, f, indent=2)
+        except Exception as e:
+            print(f"[!] Warning: Could not save corpus stats: {e}", file=sys.stderr)
+
+    def log_timeseries_datapoint(self) -> None:
+        """Append a snapshot of the current run statistics to the time-series log."""
+        if self.run_stats is None or self.timeseries_log_path is None:
+            raise RuntimeError("ArtifactManager requires run_stats and timeseries_log_path")
+        if self.score_tracker is None:
+            raise RuntimeError("ArtifactManager requires score_tracker")
+
+        # Create a snapshot of the current stats for logging.
+        datapoint = self.run_stats.copy()
+        datapoint["timestamp"] = datetime.now(timezone.utc).isoformat()
+
+        # Add system resource metrics
+        try:
+            datapoint["system_load_1min"] = psutil.getloadavg()[0]
+        except (OSError, AttributeError):
+            # getloadavg() may not be available on all platforms (e.g., Windows)
+            datapoint["system_load_1min"] = None
+
+        datapoint["process_rss_mb"] = round(psutil.Process().memory_info().rss / (1024 * 1024), 2)
+
+        # Calculate corpus directory size
+        try:
+            corpus_size_bytes = sum(f.stat().st_size for f in CORPUS_DIR.rglob("*") if f.is_file())
+            datapoint["corpus_size_mb"] = round(corpus_size_bytes / (1024 * 1024), 2)
+        except OSError:
+            datapoint["corpus_size_mb"] = None
+
+        # Get disk usage percentage for the current working directory
+        try:
+            datapoint["disk_usage_percent"] = psutil.disk_usage(Path.cwd()).percent
+        except OSError:
+            datapoint["disk_usage_percent"] = None
+
+        try:
+            # Open in append mode and write the JSON object as a single line.
+            with open(self.timeseries_log_path, "a", encoding="utf-8") as f:
+                f.write(json.dumps(datapoint) + "\n")
+        except IOError as e:
+            print(f"[!] Warning: Could not write to time-series log file: {e}", file=sys.stderr)
+
+        self.score_tracker.save_telemetry()

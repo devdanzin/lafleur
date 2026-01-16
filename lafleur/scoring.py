@@ -5,13 +5,26 @@ This module provides the ScoringManager class ("The Judge") which handles:
 - Analyzing coverage results from child executions
 - Parsing JIT statistics from log output
 - Scoring mutations to decide interestingness
+- Analyzing runs for new coverage and interestingness
 """
 
+import copy
+import hashlib
 import json
 import sys
 from dataclasses import dataclass
+from typing import TYPE_CHECKING, Callable
 
-from lafleur.coverage import CoverageManager
+from lafleur.coverage import CoverageManager, parse_log_for_edge_coverage
+from lafleur.utils import ExecutionResult
+
+if TYPE_CHECKING:
+    from lafleur.artifacts import ArtifactManager
+    from lafleur.corpus_manager import CorpusManager
+
+# Tachycardia (instability) tracking: decay factor to prevent local optima
+# By decaying the saved density, persistent instability remains interesting over generations
+TACHYCARDIA_DECAY_FACTOR = 0.95
 
 
 @dataclass
@@ -156,16 +169,32 @@ class ScoringManager:
     statistics, and deciding if mutations are interesting enough to keep.
     """
 
-    def __init__(self, coverage_manager: CoverageManager, timing_fuzz: bool = False):
+    def __init__(
+        self,
+        coverage_manager: CoverageManager,
+        timing_fuzz: bool = False,
+        artifact_manager: "ArtifactManager | None" = None,
+        corpus_manager: "CorpusManager | None" = None,
+        get_core_code_func: Callable[[str], str] | None = None,
+        run_stats: dict | None = None,
+    ):
         """
         Initialize the ScoringManager.
 
         Args:
             coverage_manager: CoverageManager instance for accessing coverage state
             timing_fuzz: Whether timing-based fuzzing mode is enabled
+            artifact_manager: ArtifactManager for crash/divergence detection
+            corpus_manager: CorpusManager for known_hashes lookup
+            get_core_code_func: Function to extract core code from source
+            run_stats: Run statistics dictionary for updating counters
         """
         self.coverage_manager = coverage_manager
         self.timing_fuzz = timing_fuzz
+        self.artifact_manager = artifact_manager
+        self.corpus_manager = corpus_manager
+        self._get_core_code = get_core_code_func
+        self.run_stats = run_stats
 
     def find_new_coverage(
         self,
@@ -372,3 +401,192 @@ class ScoringManager:
 
         print(f"  [+] Child IS NOT interesting with score: {score:.2f}", file=sys.stderr)
         return False
+
+    def _update_global_coverage(self, child_coverage: dict) -> None:
+        """Commit the coverage from a new, interesting child to the global state."""
+        global_coverage = self.coverage_manager.state["global_coverage"]
+        for harness_id, data in child_coverage.items():
+            for cov_type in ["uops", "edges", "rare_events"]:
+                # The data already contains integer IDs from the parser.
+                for item_id, count in data.get(cov_type, {}).items():
+                    global_coverage[cov_type].setdefault(item_id, 0)
+                    global_coverage[cov_type][item_id] += count
+
+    def _calculate_coverage_hash(self, coverage_profile: dict) -> str:
+        """Create a deterministic SHA256 hash of a coverage profile's edges."""
+        all_edges = []
+        # We only hash the edges, as they provide the most significant signal.
+        # It's crucial to sort the items to ensure the hash is deterministic.
+        for harness_id in sorted(coverage_profile.keys()):
+            edges = sorted(coverage_profile[harness_id].get("edges", {}).keys())
+            if edges:
+                all_edges.append(f"{harness_id}:{','.join(str(edge) for edge in edges)}")
+
+        canonical_string = ";".join(all_edges)
+        return hashlib.sha256(canonical_string.encode("utf-8")).hexdigest()
+
+    def _build_lineage_profile(
+        self, parent_lineage_profile: dict, child_baseline_profile: dict
+    ) -> dict:
+        """
+        Create a new lineage profile by taking the union of a parent's
+        lineage and a child's own baseline coverage.
+        """
+        # Start with a deep copy of the parent's lineage to avoid side effects.
+        lineage = copy.deepcopy(parent_lineage_profile)
+        for harness_id, child_data in child_baseline_profile.items():
+            # Ensure the harness entry exists in the new lineage profile.
+            lineage_harness = lineage.setdefault(
+                harness_id,
+                {
+                    "uops": set(),
+                    "edges": set(),
+                    "rare_events": set(),
+                    "max_trace_length": 0,
+                    "max_side_exits": 0,
+                },
+            )
+            lineage_harness["uops"].update(child_data.get("uops", {}).keys())
+            lineage_harness["rare_events"].update(child_data.get("rare_events", {}).keys())
+            lineage_harness["edges"].update(child_data.get("edges", {}).keys())
+
+            lineage_harness["max_trace_length"] = max(
+                lineage_harness.get("max_trace_length", 0), child_data.get("trace_length", 0)
+            )
+            lineage_harness["max_side_exits"] = max(
+                lineage_harness.get("max_side_exits", 0), child_data.get("side_exits", 0)
+            )
+
+        return lineage
+
+    def analyze_run(
+        self,
+        exec_result: ExecutionResult,
+        parent_lineage_profile: dict,
+        parent_id: str | None,
+        mutation_info: dict,
+        mutation_seed: int,
+        parent_file_size: int,
+        parent_lineage_edge_count: int,
+        is_differential_mode: bool = False,
+    ) -> dict:
+        """Orchestrate the analysis of a run and return a dictionary of findings."""
+        if self.artifact_manager is None or self.corpus_manager is None:
+            raise RuntimeError("ScoringManager requires artifact_manager and corpus_manager")
+        if self._get_core_code is None:
+            raise RuntimeError("ScoringManager requires get_core_code_func")
+        if self.run_stats is None:
+            raise RuntimeError("ScoringManager requires run_stats")
+
+        if exec_result.is_divergence:
+            self.artifact_manager.save_divergence(
+                exec_result.source_path,
+                exec_result.jit_output or "",
+                exec_result.nojit_output or "",
+                exec_result.divergence_reason or "unknown",
+            )
+            self.run_stats["divergences_found"] = self.run_stats.get("divergences_found", 0) + 1
+            return {"status": "DIVERGENCE"}
+
+        log_content = ""
+        try:
+            log_content = exec_result.log_path.read_text()
+        except IOError as e:
+            print(f"  [!] Warning: Could not read log file for analysis: {e}", file=sys.stderr)
+
+        if self.artifact_manager.check_for_crash(
+            exec_result.returncode,
+            log_content,
+            exec_result.source_path,
+            exec_result.log_path,
+            exec_result.parent_path,
+            exec_result.session_files,
+        ):
+            return {"status": "CRASH"}
+
+        child_coverage = parse_log_for_edge_coverage(exec_result.log_path, self.coverage_manager)
+
+        coverage_info = self.find_new_coverage(child_coverage, parent_lineage_profile, parent_id)
+        jit_stats = self.parse_jit_stats(log_content)
+
+        # Retrieve parent JIT stats from metadata
+        parent_jit_stats = {}
+        if parent_id:
+            parent_metadata = self.coverage_manager.state["per_file_coverage"].get(parent_id, {})
+            parent_jit_stats = parent_metadata.get("mutation_info", {}).get("jit_stats", {})
+
+        is_interesting = self.score_and_decide_interestingness(
+            coverage_info,
+            parent_id,
+            mutation_info,
+            parent_file_size,
+            parent_lineage_edge_count,
+            len(exec_result.source_path.read_text().encode("utf-8")),
+            exec_result.jit_avg_time_ms,
+            exec_result.nojit_avg_time_ms,
+            exec_result.nojit_cv,
+            jit_stats,
+            parent_jit_stats,
+        )
+
+        if is_interesting:
+            core_code_to_save = self._get_core_code(exec_result.source_path.read_text())
+            content_hash = hashlib.sha256(core_code_to_save.encode("utf-8")).hexdigest()
+            coverage_hash = self._calculate_coverage_hash(child_coverage)
+
+            if (content_hash, coverage_hash) in self.corpus_manager.known_hashes:
+                print(
+                    f"  [~] New coverage found, but this is a known duplicate behavior (ContentHash: {content_hash[:10]}, CoverageHash: {coverage_hash[:10]}). Skipping.",
+                    file=sys.stderr,
+                )
+                return {"status": "NO_CHANGE"}
+
+            # This is the crucial step: if it's new and not a duplicate, we commit the coverage.
+            self._update_global_coverage(child_coverage)
+
+            # --- Dynamic Density Clamping ---
+            # Prevent a single massive spike from setting an unreachable bar for the next generation.
+            child_density = jit_stats.get("max_exit_density", 0.0)
+            parent_density = parent_jit_stats.get("max_exit_density", 0.0)
+
+            if parent_density > 0:
+                # Allow exponential growth (up to 5x), but clamp massive outliers.
+                clamped_density = min(parent_density * 5.0, child_density)
+            else:
+                # First generation or no parent data: trust the child's value.
+                clamped_density = child_density
+
+            # --- Tachycardia Decay ---
+            # Apply decay to the saved metric so persistent instability remains interesting.
+            # This prevents the fuzzer from getting stuck in local optima where high baseline
+            # densities make incremental improvements invisible.
+            saved_density = clamped_density * TACHYCARDIA_DECAY_FACTOR
+            if clamped_density > 0:
+                print(
+                    f"  [~] Tachycardia decay: {clamped_density:.4f} -> {saved_density:.4f}",
+                    file=sys.stderr,
+                )
+
+            # Create a copy of stats for persistence, with the decayed density.
+            jit_stats_for_save = jit_stats.copy()
+            jit_stats_for_save["max_exit_density"] = saved_density
+
+            # Inject jit_stats into mutation_info so it gets saved with the file
+            mutation_info["jit_stats"] = jit_stats_for_save
+
+            return {
+                "status": "NEW_COVERAGE",
+                "core_code": core_code_to_save,
+                "baseline_coverage": child_coverage,
+                "content_hash": content_hash,
+                "coverage_hash": coverage_hash,
+                "execution_time_ms": exec_result.execution_time_ms,
+                "parent_id": parent_id,
+                "mutation_info": mutation_info,
+                "mutation_seed": mutation_seed,
+                "jit_avg_time_ms": exec_result.jit_avg_time_ms,
+                "nojit_avg_time_ms": exec_result.nojit_avg_time_ms,
+                # jit_stats is now inside mutation_info, no need to pass separately if not used by caller
+            }
+
+        return {"status": "NO_CHANGE"}

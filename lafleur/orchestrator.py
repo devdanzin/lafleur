@@ -8,43 +8,30 @@ results for new and interesting JIT behavior.
 """
 
 import argparse
-import ast
-import copy
-import hashlib
 import json
 import math
 import os
 import platform
 import random
 import shutil
-import subprocess
 import socket
 import sys
 
-import psutil
 from datetime import datetime, timezone
 from pathlib import Path
-from textwrap import dedent, indent
-from typing import cast
+from textwrap import dedent
 
 from lafleur.corpus_manager import CORPUS_DIR, CorpusManager
-from lafleur.coverage import (
-    CoverageManager,
-    parse_log_for_edge_coverage,
-    load_coverage_state,
-    PROTO_TRACE_REGEX,
-    OPTIMIZED_TRACE_REGEX,
-)
+from lafleur.coverage import CoverageManager, load_coverage_state
 from lafleur.analysis import CrashFingerprinter
 from lafleur.artifacts import ArtifactManager
-from lafleur.execution import ExecutionManager, ENV
+from lafleur.execution import ExecutionManager
 from lafleur.scoring import ScoringManager
 from lafleur.learning import MutatorScoreTracker
 from lafleur.mutation_controller import MutationController
-from lafleur.mutators import ASTMutator, FuzzerSetupNormalizer
-from lafleur.corpus_analysis import generate_corpus_stats
+from lafleur.mutators import ASTMutator
 from lafleur.metadata import generate_run_metadata
-from lafleur.utils import ExecutionResult, TeeLogger, load_run_stats, save_run_stats
+from lafleur.utils import TeeLogger, load_run_stats
 
 # --- Paths for Fuzzer Outputs (relative to current working directory) ---
 # This allows running multiple fuzzer instances from different directories.
@@ -55,13 +42,6 @@ TIMEOUTS_DIR = Path("timeouts")
 DIVERGENCES_DIR = Path("divergences")
 LOGS_DIR = Path("logs")
 RUN_LOGS_DIR = LOGS_DIR / "run_logs"
-
-# Tachycardia (instability) tracking: decay factor to prevent local optima
-# By decaying the saved density, persistent instability remains interesting over generations
-TACHYCARDIA_DECAY_FACTOR = 0.95
-
-BOILERPLATE_START_MARKER = "# FUSIL_BOILERPLATE_START"
-BOILERPLATE_END_MARKER = "# FUSIL_BOILERPLATE_END"
 
 
 class LafleurOrchestrator:
@@ -98,7 +78,6 @@ class LafleurOrchestrator:
         self.keep_tmp_logs = keep_tmp_logs
         self.deepening_probability = 0.2
         self.ast_mutator = ASTMutator()
-        self.boilerplate_code: str | None = None
         self.timeout = timeout
         self.max_timeout_log_bytes = max_timeout_log_size * 1024 * 1024
         self.max_crash_log_bytes = max_crash_log_size * 1024 * 1024
@@ -114,69 +93,31 @@ class LafleurOrchestrator:
         self.session_fuzz = session_fuzz
         self.score_tracker = MutatorScoreTracker(self.ast_mutator.transformers)
 
+        # Initialize the mutation controller for managing mutation strategies
+        # Note: corpus_manager is set to a placeholder and updated after CorpusManager init
+        self.mutation_controller = MutationController(
+            ast_mutator=self.ast_mutator,
+            score_tracker=self.score_tracker,
+            corpus_manager=None,  # type: ignore[arg-type]  # Set after CorpusManager init
+            differential_testing=differential_testing,
+        )
+
         self.min_corpus_files = min_corpus_files
         self.corpus_manager = CorpusManager(
             self.coverage_manager,
             self.run_stats,
             fusil_path,
-            self.get_boilerplate,
+            self.mutation_controller.get_boilerplate,
             self.timeout,
             target_python=target_python,
         )
 
-        # Verify that the target python is suitable for fuzzing before doing anything else
-        self.verify_target_capabilities()
+        # Now set the corpus_manager reference in mutation_controller
+        self.mutation_controller.corpus_manager = self.corpus_manager
 
         self.fingerprinter = CrashFingerprinter()
 
-        # Initialize the artifact manager for handling crashes, timeouts, and divergences
-        self.artifact_manager = ArtifactManager(
-            crashes_dir=CRASHES_DIR,
-            timeouts_dir=TIMEOUTS_DIR,
-            divergences_dir=DIVERGENCES_DIR,
-            regressions_dir=REGRESSIONS_DIR,
-            fingerprinter=self.fingerprinter,
-            max_timeout_log_bytes=self.max_timeout_log_bytes,
-            max_crash_log_bytes=self.max_crash_log_bytes,
-            session_fuzz=self.session_fuzz,
-        )
-
-        # Initialize the scoring manager for analyzing coverage and interestingness
-        self.scoring_manager = ScoringManager(self.coverage_manager, self.timing_fuzz)
-
-        # Initialize the execution manager for running child processes
-        self.execution_manager = ExecutionManager(
-            target_python=target_python,
-            timeout=timeout,
-            artifact_manager=self.artifact_manager,
-            corpus_manager=self.corpus_manager,
-            differential_testing=differential_testing,
-            timing_fuzz=timing_fuzz,
-            session_fuzz=session_fuzz,
-        )
-
-        # Initialize the mutation controller for managing mutation strategies
-        self.mutation_controller = MutationController(
-            ast_mutator=self.ast_mutator,
-            score_tracker=self.score_tracker,
-            corpus_manager=self.corpus_manager,
-            get_core_code_func=self._get_core_code,
-            get_boilerplate_func=self.get_boilerplate,
-            differential_testing=differential_testing,
-        )
-
-        # Synchronize the corpus and state at startup.
-        self.corpus_manager.synchronize(self.analyze_run, self._build_lineage_profile)
-
-        if prune_corpus_flag:
-            self.corpus_manager.prune_corpus(dry_run=not force_prune)
-            print("[*] Pruning complete. Exiting.")
-            sys.exit(0)
-
-        self.mutations_since_last_find = 0
-        self.global_seed_counter = self.run_stats.get("global_seed_counter", 0)
-
-        # Ensure temporary and log directories exist (artifact dirs handled by ArtifactManager)
+        # Ensure temporary and log directories exist first (needed for timeseries path)
         TMP_DIR.mkdir(exist_ok=True)
         LOGS_DIR.mkdir(exist_ok=True)
         if self.keep_tmp_logs:
@@ -191,35 +132,59 @@ class LafleurOrchestrator:
             f"[+] Time-series analytics for this run will be saved to: {self.timeseries_log_path}"
         )
 
-    def get_boilerplate(self) -> str:
-        """Return the cached boilerplate code."""
-        return self.boilerplate_code or ""
+        # Initialize the artifact manager for handling crashes, timeouts, divergences, and stats
+        self.artifact_manager = ArtifactManager(
+            crashes_dir=CRASHES_DIR,
+            timeouts_dir=TIMEOUTS_DIR,
+            divergences_dir=DIVERGENCES_DIR,
+            regressions_dir=REGRESSIONS_DIR,
+            fingerprinter=self.fingerprinter,
+            max_timeout_log_bytes=self.max_timeout_log_bytes,
+            max_crash_log_bytes=self.max_crash_log_bytes,
+            session_fuzz=self.session_fuzz,
+            run_stats=self.run_stats,
+            coverage_manager=self.coverage_manager,
+            corpus_manager=self.corpus_manager,
+            score_tracker=self.score_tracker,
+            timeseries_log_path=self.timeseries_log_path,
+        )
 
-    def _extract_and_cache_boilerplate(self, source_code: str) -> None:
-        """Parse a source file to find, extract, and cache the boilerplate code."""
-        try:
-            start_index = source_code.index(BOILERPLATE_START_MARKER)
-            end_index = source_code.index(BOILERPLATE_END_MARKER)
-            # The boilerplate includes the start marker itself.
-            self.boilerplate_code = source_code[start_index:end_index]
-            print("[+] Boilerplate code extracted and cached.")
-        except ValueError:
-            print(
-                "[!] Warning: Could not find boilerplate markers in the initial seed file.",
-                file=sys.stderr,
-            )
-            # Fallback to using an empty boilerplate
-            self.boilerplate_code = ""
+        # Initialize the scoring manager for analyzing coverage and interestingness
+        self.scoring_manager = ScoringManager(
+            coverage_manager=self.coverage_manager,
+            timing_fuzz=self.timing_fuzz,
+            artifact_manager=self.artifact_manager,
+            corpus_manager=self.corpus_manager,
+            get_core_code_func=self.mutation_controller._get_core_code,
+            run_stats=self.run_stats,
+        )
 
-    def _get_core_code(self, source_code: str) -> str:
-        """Strip the boilerplate from a source file to get the dynamic core."""
-        try:
-            end_index = source_code.index(BOILERPLATE_END_MARKER)
-            # The core code starts right after the end marker and its newline.
-            return source_code[end_index + len(BOILERPLATE_END_MARKER) + 1 :]
-        except ValueError:
-            # If no marker, assume the whole file is the core (for minimized corpus files)
-            return source_code
+        # Initialize the execution manager for running child processes
+        self.execution_manager = ExecutionManager(
+            target_python=target_python,
+            timeout=timeout,
+            artifact_manager=self.artifact_manager,
+            corpus_manager=self.corpus_manager,
+            differential_testing=differential_testing,
+            timing_fuzz=timing_fuzz,
+            session_fuzz=session_fuzz,
+        )
+
+        # Verify that the target python is suitable for fuzzing before doing anything else
+        self.execution_manager.verify_target_capabilities()
+
+        # Synchronize the corpus and state at startup.
+        self.corpus_manager.synchronize(
+            self.scoring_manager.analyze_run, self.scoring_manager._build_lineage_profile
+        )
+
+        if prune_corpus_flag:
+            self.corpus_manager.prune_corpus(dry_run=not force_prune)
+            print("[*] Pruning complete. Exiting.")
+            sys.exit(0)
+
+        self.mutations_since_last_find = 0
+        self.global_seed_counter = self.run_stats.get("global_seed_counter", 0)
 
     def run_evolutionary_loop(self) -> None:
         """
@@ -266,7 +231,8 @@ class LafleurOrchestrator:
                 print("[*] Starting corpus generation phase...")
                 for _ in range(needed):
                     self.corpus_manager.generate_new_seed(
-                        self.analyze_run, self._build_lineage_profile
+                        self.scoring_manager.analyze_run,
+                        self.scoring_manager._build_lineage_profile,
                     )
                 print(
                     f"[+] Corpus generation complete. New size: {len(self.coverage_manager.state['per_file_coverage'])}."
@@ -304,46 +270,16 @@ class LafleurOrchestrator:
                     )
 
                 # Update dynamic stats after each session
-                self.update_and_save_run_stats()
+                self.artifact_manager.update_and_save_run_stats(self.global_seed_counter)
                 if session_num % 10 == 0:
                     print(f"[*] Logging time-series data point at session {session_num}...")
-                    self._log_timeseries_datapoint()
+                    self.artifact_manager.log_timeseries_datapoint()
         finally:
             print("\n[+] Fuzzing loop terminating. Saving final stats...")
-            self.update_and_save_run_stats()
-            self._log_timeseries_datapoint()  # Log one final data point on exit
+            self.artifact_manager.update_and_save_run_stats(self.global_seed_counter)
+            self.artifact_manager.log_timeseries_datapoint()  # Log one final data point on exit
 
             self.score_tracker.save_state()
-
-    def update_and_save_run_stats(self) -> None:
-        """Update dynamic run statistics and save them to the stats file."""
-        self.run_stats["last_update_time"] = datetime.now(timezone.utc).isoformat()
-        self.run_stats["corpus_size"] = len(
-            self.coverage_manager.state.get("per_file_coverage", {})
-        )
-        global_cov = self.coverage_manager.state.get("global_coverage", {})
-        self.run_stats["global_uops"] = len(global_cov.get("uops", {}))
-        self.run_stats["global_edges"] = len(global_cov.get("edges", {}))
-        self.run_stats["global_rare_events"] = len(global_cov.get("rare_events", {}))
-        self.run_stats["global_seed_counter"] = self.global_seed_counter
-        self.run_stats["corpus_file_counter"] = self.corpus_manager.corpus_file_counter
-
-        total_finds = self.run_stats.get("new_coverage_finds", 0)
-        if total_finds > 0:
-            self.run_stats["average_mutations_per_find"] = (
-                self.run_stats.get("sum_of_mutations_per_find", 0) / total_finds
-            )
-
-        save_run_stats(self.run_stats)
-
-        # Generate and save corpus statistics
-        try:
-            corpus_stats = generate_corpus_stats(self.corpus_manager)
-            corpus_stats_path = Path("corpus_stats.json")
-            with open(corpus_stats_path, "w", encoding="utf-8") as f:
-                json.dump(corpus_stats, f, indent=2)
-        except Exception as e:
-            print(f"[!] Warning: Could not save corpus stats: {e}", file=sys.stderr)
 
     def _handle_analysis_data(
         self, analysis_data: dict, i: int, parent_metadata: dict, nojit_cv: float | None
@@ -380,7 +316,7 @@ class LafleurOrchestrator:
                 parent_id=analysis_data["parent_id"],
                 mutation_info=analysis_data["mutation_info"],
                 mutation_seed=analysis_data["mutation_seed"],
-                build_lineage_func=self._build_lineage_profile,
+                build_lineage_func=self.scoring_manager._build_lineage_profile,
             )
 
             if self.timing_fuzz:
@@ -413,60 +349,6 @@ class LafleurOrchestrator:
                 parent_metadata["is_sterile"] = True
             return None
 
-    def _get_nodes_from_parent(
-        self, parent_path: Path
-    ) -> tuple[ast.FunctionDef, ast.Module, list[ast.stmt]] | tuple[None, None, None]:
-        """Parse a parent file and extract its setup and harness AST nodes."""
-        try:
-            parent_source = parent_path.read_text()
-            if self.boilerplate_code is None:
-                self._extract_and_cache_boilerplate(parent_source)
-            parent_core_code = self._get_core_code(parent_source)
-            parent_core_tree = ast.parse(parent_core_code)
-
-            normalizer = FuzzerSetupNormalizer()
-            # The normalizer preserves Module structure, so cast to maintain type
-            parent_core_tree = cast(ast.Module, normalizer.visit(parent_core_tree))
-            ast.fix_missing_locations(parent_core_tree)
-
-        except (IOError, SyntaxError) as e:
-            print(f"[!] Error processing parent file {parent_path.name}: {e}", file=sys.stderr)
-            return None, None, None
-
-        base_harness_node = None
-        setup_nodes = []
-        for node in parent_core_tree.body:
-            if isinstance(node, ast.FunctionDef) and node.name.startswith("uop_harness_"):
-                base_harness_node = node
-            elif base_harness_node is None:
-                # Collect setup nodes that appear before the harness function
-                setup_nodes.append(node)
-        if not base_harness_node:
-            print(
-                f"[-] No harness function found in {parent_path.name}. Skipping.", file=sys.stderr
-            )
-            return None, None, None
-        return base_harness_node, parent_core_tree, setup_nodes
-
-    def _calculate_mutations(self, parent_score: float) -> int:
-        """Dynamically calculate the number of mutations based on parent score."""
-        # --- Implement Dynamic Mutation Count ---
-        base_mutations = 100
-        # Normalize the score relative to a baseline of 100 to calculate a multiplier
-        score_multiplier = parent_score / 100.0
-        # Apply a gentle curve so that very high scores don't lead to extreme mutation counts
-        # and very low scores don't get starved completely.
-        # We use math.log to dampen the effect. Add 1 to avoid log(0).
-        dynamic_multiplier = 0.5 + (math.log(max(1.0, score_multiplier * 10)) / 2)
-        # Clamp the multiplier to a reasonable range (e.g., 0.25x to 3.0x)
-        final_multiplier = max(0.25, min(3.0, dynamic_multiplier))
-        max_mutations = int(base_mutations * final_multiplier)
-        print(
-            f"[+] Dynamically adjusting mutation count based on score. Base: {base_mutations}, "
-            f"Multiplier: {final_multiplier:.2f}, Final Count: {max_mutations}"
-        )
-        return max_mutations
-
     def execute_mutation_and_analysis_cycle(
         self,
         initial_parent_path: Path,
@@ -488,7 +370,7 @@ class LafleurOrchestrator:
 
         # --- This loop controls the deepening process ---
         while True:
-            max_mutations = self._calculate_mutations(current_parent_score)
+            max_mutations = self.mutation_controller._calculate_mutations(current_parent_score)
             parent_id = current_parent_path.name
             parent_metadata = self.coverage_manager.state["per_file_coverage"].get(parent_id, {})
             parent_lineage_profile = parent_metadata.get("lineage_coverage_profile", {})
@@ -500,8 +382,8 @@ class LafleurOrchestrator:
             for harness_data in parent_lineage_profile.values():
                 parent_lineage_edge_count += len(harness_data.get("edges", set()))
 
-            base_harness_node, parent_core_tree, setup_nodes = self._get_nodes_from_parent(
-                current_parent_path
+            base_harness_node, parent_core_tree, setup_nodes = (
+                self.mutation_controller._get_nodes_from_parent(current_parent_path)
             )
             if base_harness_node is None or parent_core_tree is None:
                 return  # Abort if parent is invalid
@@ -589,7 +471,7 @@ class LafleurOrchestrator:
                         if not exec_result:
                             continue
 
-                        analysis_data = self.analyze_run(
+                        analysis_data = self.scoring_manager.analyze_run(
                             exec_result,
                             parent_lineage_profile,
                             parent_id,
@@ -619,14 +501,16 @@ class LafleurOrchestrator:
                                     parent_metadata.get("total_finds", 0) + 1
                                 )
                                 parent_metadata["mutations_since_last_find"] = 0
-                                self.update_and_save_run_stats()
+                                self.artifact_manager.update_and_save_run_stats(
+                                    self.global_seed_counter
+                                )
 
                                 new_finds_this_session += 1
                                 if new_finds_this_session % 10 == 0:
                                     print(
                                         f"[*] Logging time-series data point after {new_finds_this_session} finds in this session."
                                     )
-                                    self._log_timeseries_datapoint()
+                                    self.artifact_manager.log_timeseries_datapoint()
 
                                 if is_deepening_session:
                                     new_child_filename = analysis_data["new_filename"]
@@ -699,299 +583,6 @@ class LafleurOrchestrator:
             # Exit condition for the while True loop
             if not is_deepening_session or not found_new_coverage_in_cycle:
                 break
-
-    def _update_global_coverage(self, child_coverage: dict):
-        """Commit the coverage from a new, interesting child to the global state."""
-        global_coverage = self.coverage_manager.state["global_coverage"]
-        for harness_id, data in child_coverage.items():
-            for cov_type in ["uops", "edges", "rare_events"]:
-                # The data already contains integer IDs from the parser.
-                for item_id, count in data.get(cov_type, {}).items():
-                    global_coverage[cov_type].setdefault(item_id, 0)
-                    global_coverage[cov_type][item_id] += count
-
-    def _calculate_coverage_hash(self, coverage_profile: dict) -> str:
-        """Create a deterministic SHA256 hash of a coverage profile's edges."""
-        all_edges = []
-        # We only hash the edges, as they provide the most significant signal.
-        # It's crucial to sort the items to ensure the hash is deterministic.
-        for harness_id in sorted(coverage_profile.keys()):
-            edges = sorted(coverage_profile[harness_id].get("edges", {}).keys())
-            if edges:
-                all_edges.append(f"{harness_id}:{','.join(str(edge) for edge in edges)}")
-
-        canonical_string = ";".join(all_edges)
-        return hashlib.sha256(canonical_string.encode("utf-8")).hexdigest()
-
-    def verify_target_capabilities(self) -> None:
-        """
-        Verify that the target Python interpreter produces the expected JIT debug output.
-        Raises a RuntimeError if the JIT does not appear to be active or logging correctly.
-        """
-        print(
-            f"[*] Verifying target interpreter capabilities: {self.target_python}...",
-            file=sys.stderr,
-        )
-
-        # A minimal script to trigger the JIT
-        stimulus_code = dedent("""
-            def workload():
-                for i in range(1000):
-                    x = i + 1
-            for x in range(100):
-                workload()
-        """)
-
-        # Use the exact environment we rely on for coverage
-        env = ENV.copy()
-
-        try:
-            # Run the stimulus
-            result = subprocess.run(
-                [self.target_python, "-c", stimulus_code],
-                capture_output=True,
-                text=True,
-                env=env,
-                timeout=15,
-            )
-
-            # Check for JIT signals in stderr
-            has_proto = PROTO_TRACE_REGEX.search(f"{result.stderr}\n{result.stdout}")
-            has_opt = OPTIMIZED_TRACE_REGEX.search(f"{result.stderr}\n{result.stdout}")
-
-            if not (has_proto or has_opt):
-                stderr_stdout = result.stderr + "\n" + result.stdout
-                output = indent(
-                    stderr_stdout[:500] + "..." if len(stderr_stdout) > 500 else stderr_stdout,
-                    "    ",
-                )
-                # If we don't see traces, the JIT likely isn't enabled or built correctly.
-                error_msg = dedent(f"""
-                    [!] CRITICAL: The target interpreter '{self.target_python}' did not produce JIT debug output.
-
-                    Lafleur requires a CPython build with the experimental JIT enabled and configured for debug logging.
-
-                    Troubleshooting:
-                    1. Ensure you built CPython with: ./configure --with-pydebug --enable-experimental-jit
-                    2. Ensure you ran: make -j$(nproc)
-                    3. Ensure the environment variables PYTHON_JIT=1, PYTHON_LLTRACE=4, and PYTHON_OPT_DEBUG=4 are respected.
-
-                    Output received from target (stderr +  stdout):
-                    {output}
-                """)
-                raise RuntimeError(error_msg)
-
-            print(
-                "  [+] Target interpreter validated successfully (JIT traces detected).",
-                file=sys.stderr,
-            )
-
-        except subprocess.TimeoutExpired:
-            raise RuntimeError(
-                f"Target interpreter '{self.target_python}' timed out during verification check."
-            )
-        except RuntimeError as e:
-            print(e)
-            sys.exit(1)
-
-    def analyze_run(
-        self,
-        exec_result: ExecutionResult,
-        parent_lineage_profile: dict,
-        parent_id: str | None,
-        mutation_info: dict,
-        mutation_seed: int,
-        parent_file_size: int,
-        parent_lineage_edge_count: int,
-        is_differential_mode: bool = False,
-    ) -> dict:
-        """Orchestrate the analysis of a run and return a dictionary of findings."""
-
-        if exec_result.is_divergence:
-            self.artifact_manager.save_divergence(
-                exec_result.source_path,
-                exec_result.jit_output or "",
-                exec_result.nojit_output or "",
-                exec_result.divergence_reason or "unknown",
-            )
-            self.run_stats["divergences_found"] = self.run_stats.get("divergences_found", 0) + 1
-            return {"status": "DIVERGENCE"}
-
-        log_content = ""
-        try:
-            log_content = exec_result.log_path.read_text()
-        except IOError as e:
-            print(f"  [!] Warning: Could not read log file for analysis: {e}", file=sys.stderr)
-
-        if self.artifact_manager.check_for_crash(
-            exec_result.returncode,
-            log_content,
-            exec_result.source_path,
-            exec_result.log_path,
-            exec_result.parent_path,
-            exec_result.session_files,
-        ):
-            return {"status": "CRASH"}
-
-        child_coverage = parse_log_for_edge_coverage(exec_result.log_path, self.coverage_manager)
-
-        coverage_info = self.scoring_manager.find_new_coverage(
-            child_coverage, parent_lineage_profile, parent_id
-        )
-        jit_stats = self.scoring_manager.parse_jit_stats(log_content)
-
-        # Retrieve parent JIT stats from metadata
-        parent_jit_stats = {}
-        if parent_id:
-            parent_metadata = self.coverage_manager.state["per_file_coverage"].get(parent_id, {})
-            parent_jit_stats = parent_metadata.get("mutation_info", {}).get("jit_stats", {})
-
-        is_interesting = self.scoring_manager.score_and_decide_interestingness(
-            coverage_info,
-            parent_id,
-            mutation_info,
-            parent_file_size,
-            parent_lineage_edge_count,
-            len(exec_result.source_path.read_text().encode("utf-8")),
-            exec_result.jit_avg_time_ms,
-            exec_result.nojit_avg_time_ms,
-            exec_result.nojit_cv,
-            jit_stats,
-            parent_jit_stats,
-        )
-
-        if is_interesting:
-            core_code_to_save = self._get_core_code(exec_result.source_path.read_text())
-            content_hash = hashlib.sha256(core_code_to_save.encode("utf-8")).hexdigest()
-            coverage_hash = self._calculate_coverage_hash(child_coverage)
-
-            if (content_hash, coverage_hash) in self.corpus_manager.known_hashes:
-                print(
-                    f"  [~] New coverage found, but this is a known duplicate behavior (ContentHash: {content_hash[:10]}, CoverageHash: {coverage_hash[:10]}). Skipping.",
-                    file=sys.stderr,
-                )
-                return {"status": "NO_CHANGE"}
-
-            # This is the crucial step: if it's new and not a duplicate, we commit the coverage.
-            self._update_global_coverage(child_coverage)
-
-            # --- Dynamic Density Clamping ---
-            # Prevent a single massive spike from setting an unreachable bar for the next generation.
-            child_density = jit_stats.get("max_exit_density", 0.0)
-            parent_density = parent_jit_stats.get("max_exit_density", 0.0)
-
-            if parent_density > 0:
-                # Allow exponential growth (up to 5x), but clamp massive outliers.
-                clamped_density = min(parent_density * 5.0, child_density)
-            else:
-                # First generation or no parent data: trust the child's value.
-                clamped_density = child_density
-
-            # --- Tachycardia Decay ---
-            # Apply decay to the saved metric so persistent instability remains interesting.
-            # This prevents the fuzzer from getting stuck in local optima where high baseline
-            # densities make incremental improvements invisible.
-            saved_density = clamped_density * TACHYCARDIA_DECAY_FACTOR
-            if clamped_density > 0:
-                print(
-                    f"  [~] Tachycardia decay: {clamped_density:.4f} -> {saved_density:.4f}",
-                    file=sys.stderr,
-                )
-
-            # Create a copy of stats for persistence, with the decayed density.
-            jit_stats_for_save = jit_stats.copy()
-            jit_stats_for_save["max_exit_density"] = saved_density
-
-            # Inject jit_stats into mutation_info so it gets saved with the file
-            mutation_info["jit_stats"] = jit_stats_for_save
-
-            return {
-                "status": "NEW_COVERAGE",
-                "core_code": core_code_to_save,
-                "baseline_coverage": child_coverage,
-                "content_hash": content_hash,
-                "coverage_hash": coverage_hash,
-                "execution_time_ms": exec_result.execution_time_ms,
-                "parent_id": parent_id,
-                "mutation_info": mutation_info,
-                "mutation_seed": mutation_seed,
-                "jit_avg_time_ms": exec_result.jit_avg_time_ms,
-                "nojit_avg_time_ms": exec_result.nojit_avg_time_ms,
-                # jit_stats is now inside mutation_info, no need to pass separately if not used by caller
-            }
-
-        return {"status": "NO_CHANGE"}
-
-    def _log_timeseries_datapoint(self) -> None:
-        """Append a snapshot of the current run statistics to the time-series log."""
-        # Create a snapshot of the current stats for logging.
-        datapoint = self.run_stats.copy()
-        datapoint["timestamp"] = datetime.now(timezone.utc).isoformat()
-
-        # Add system resource metrics
-        try:
-            datapoint["system_load_1min"] = psutil.getloadavg()[0]
-        except (OSError, AttributeError):
-            # getloadavg() may not be available on all platforms (e.g., Windows)
-            datapoint["system_load_1min"] = None
-
-        datapoint["process_rss_mb"] = round(psutil.Process().memory_info().rss / (1024 * 1024), 2)
-
-        # Calculate corpus directory size
-        try:
-            corpus_size_bytes = sum(f.stat().st_size for f in CORPUS_DIR.rglob("*") if f.is_file())
-            datapoint["corpus_size_mb"] = round(corpus_size_bytes / (1024 * 1024), 2)
-        except OSError:
-            datapoint["corpus_size_mb"] = None
-
-        # Get disk usage percentage for the current working directory
-        try:
-            datapoint["disk_usage_percent"] = psutil.disk_usage(Path.cwd()).percent
-        except OSError:
-            datapoint["disk_usage_percent"] = None
-
-        try:
-            # Open in append mode and write the JSON object as a single line.
-            with open(self.timeseries_log_path, "a", encoding="utf-8") as f:
-                f.write(json.dumps(datapoint) + "\n")
-        except IOError as e:
-            print(f"[!] Warning: Could not write to time-series log file: {e}", file=sys.stderr)
-
-        self.score_tracker.save_telemetry()
-
-    def _build_lineage_profile(
-        self, parent_lineage_profile: dict, child_baseline_profile: dict
-    ) -> dict:
-        """
-        Create a new lineage profile by taking the union of a parent's
-        lineage and a child's own baseline coverage.
-        """
-        # Start with a deep copy of the parent's lineage to avoid side effects.
-        lineage = copy.deepcopy(parent_lineage_profile)
-        for harness_id, child_data in child_baseline_profile.items():
-            # Ensure the harness entry exists in the new lineage profile.
-            lineage_harness = lineage.setdefault(
-                harness_id,
-                {
-                    "uops": set(),
-                    "edges": set(),
-                    "rare_events": set(),
-                    "max_trace_length": 0,
-                    "max_side_exits": 0,
-                },
-            )
-            lineage_harness["uops"].update(child_data.get("uops", {}).keys())
-            lineage_harness["rare_events"].update(child_data.get("rare_events", {}).keys())
-            lineage_harness["edges"].update(child_data.get("edges", {}).keys())
-
-            lineage_harness["max_trace_length"] = max(
-                lineage_harness.get("max_trace_length", 0), child_data.get("trace_length", 0)
-            )
-            lineage_harness["max_side_exits"] = max(
-                lineage_harness.get("max_side_exits", 0), child_data.get("side_exits", 0)
-            )
-
-        return lineage
 
 
 def main():

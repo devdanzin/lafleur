@@ -17,7 +17,6 @@ from unittest.mock import MagicMock, patch
 
 from lafleur.execution import ExecutionManager
 from lafleur.mutation_controller import MutationController
-from lafleur.orchestrator import LafleurOrchestrator
 from lafleur.artifacts import ArtifactManager
 from lafleur.analysis import CrashFingerprinter
 from lafleur.utils import ExecutionResult
@@ -29,7 +28,7 @@ class TestPrepareChildScript(unittest.TestCase):
     def setUp(self):
         """Set up minimal MutationController instance."""
         self.controller = MutationController.__new__(MutationController)
-        self.controller._get_boilerplate = lambda: "# Boilerplate\n"
+        self.controller.boilerplate_code = "# Boilerplate\n"
         self.controller.differential_testing = False
 
     def test_assembles_complete_script(self):
@@ -605,12 +604,12 @@ class TestExecuteChild(unittest.TestCase):
 
 
 class TestVerifyTargetCapabilities(unittest.TestCase):
-    """Test verify_target_capabilities method."""
+    """Test ExecutionManager.verify_target_capabilities method."""
 
     def setUp(self):
-        """Set up minimal orchestrator instance."""
-        self.orchestrator = LafleurOrchestrator.__new__(LafleurOrchestrator)
-        self.orchestrator.target_python = "/usr/bin/python3"
+        """Set up minimal ExecutionManager instance."""
+        self.execution_manager = ExecutionManager.__new__(ExecutionManager)
+        self.execution_manager.target_python = "/usr/bin/python3"
 
     def test_succeeds_with_jit_traces(self):
         """Test that verification succeeds when JIT traces are detected."""
@@ -622,7 +621,7 @@ class TestVerifyTargetCapabilities(unittest.TestCase):
         with patch("subprocess.run", return_value=mock_result):
             with patch("sys.stderr", new_callable=io.StringIO) as mock_stderr:
                 # Should not raise
-                self.orchestrator.verify_target_capabilities()
+                self.execution_manager.verify_target_capabilities()
 
                 self.assertIn("validated successfully", mock_stderr.getvalue())
 
@@ -636,7 +635,7 @@ class TestVerifyTargetCapabilities(unittest.TestCase):
         with patch("subprocess.run", return_value=mock_result):
             with patch("sys.stderr", new_callable=io.StringIO):
                 with patch("sys.exit") as mock_exit:
-                    self.orchestrator.verify_target_capabilities()
+                    self.execution_manager.verify_target_capabilities()
 
                     # Should call sys.exit(1) when JIT traces not found
                     mock_exit.assert_called_once_with(1)
@@ -645,7 +644,7 @@ class TestVerifyTargetCapabilities(unittest.TestCase):
         """Test that subprocess timeout raises RuntimeError."""
         with patch("subprocess.run", side_effect=subprocess.TimeoutExpired("cmd", 15)):
             with self.assertRaises(RuntimeError) as ctx:
-                self.orchestrator.verify_target_capabilities()
+                self.execution_manager.verify_target_capabilities()
 
             self.assertIn("timed out", str(ctx.exception))
 
@@ -658,7 +657,7 @@ class TestVerifyTargetCapabilities(unittest.TestCase):
 
         with patch("subprocess.run", return_value=mock_result) as mock_run:
             with patch("sys.stderr", new_callable=io.StringIO):
-                self.orchestrator.verify_target_capabilities()
+                self.execution_manager.verify_target_capabilities()
 
                 # Check environment variables
                 call_kwargs = mock_run.call_args[1]

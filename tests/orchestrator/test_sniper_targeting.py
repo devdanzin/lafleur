@@ -44,7 +44,7 @@ class TestSniperTargeting(unittest.TestCase):
 
         with (
             patch.object(
-                orch,
+                orch.mutation_controller,
                 "_get_nodes_from_parent",
                 return_value=(harness_node, parent_tree, setup_nodes),
             ),

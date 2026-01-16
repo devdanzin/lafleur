@@ -49,14 +49,14 @@ class TestSniperTargeting(unittest.TestCase):
                 return_value=(harness_node, parent_tree, setup_nodes),
             ),
             patch.object(
-                orch, "_get_mutated_harness", return_value=(None, None)
+                orch.mutation_controller, "get_mutated_harness", return_value=(None, None)
             ) as mock_get_mutated,
             patch("lafleur.orchestrator.CORPUS_DIR"),
         ):
             # Run cycle (will abort early due to mock_get_mutated returning None, but enough to test logic)
             orch.execute_mutation_and_analysis_cycle(mock_path, 100.0, 1, False)
 
-            # Verify _get_mutated_harness called with filtered keys
+            # Verify get_mutated_harness called with filtered keys
             call_args = mock_get_mutated.call_args
             self.assertIsNotNone(call_args)
             watched_keys = call_args.kwargs.get("watched_keys") or []

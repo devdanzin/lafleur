@@ -313,6 +313,7 @@ class TestExecuteMutationAndAnalysisCycle(unittest.TestCase):
         self.orchestrator.base_runs = 3
         self.orchestrator.corpus_manager = MagicMock()
         self.orchestrator.execution_manager = MagicMock()
+        self.orchestrator.mutation_controller = MagicMock()
 
     def test_calculates_max_mutations(self):
         """Test that _calculate_mutations is called."""
@@ -360,7 +361,9 @@ class TestExecuteMutationAndAnalysisCycle(unittest.TestCase):
                 return_value=(mock_harness, mock_tree, []),
             ):
                 with patch.object(
-                    self.orchestrator, "_get_mutated_harness", return_value=(None, {})
+                    self.orchestrator.mutation_controller,
+                    "get_mutated_harness",
+                    return_value=(None, {}),
                 ):
                     with patch("sys.stderr", new_callable=io.StringIO):
                         self.orchestrator.execute_mutation_and_analysis_cycle(
@@ -385,7 +388,9 @@ class TestExecuteMutationAndAnalysisCycle(unittest.TestCase):
                 return_value=(mock_harness, mock_tree, []),
             ):
                 with patch.object(
-                    self.orchestrator, "_get_mutated_harness", return_value=(None, {})
+                    self.orchestrator.mutation_controller,
+                    "get_mutated_harness",
+                    return_value=(None, {}),
                 ):
                     with patch("sys.stdout", new_callable=io.StringIO) as mock_stdout:
                         self.orchestrator.execute_mutation_and_analysis_cycle(
@@ -413,10 +418,14 @@ class TestExecuteMutationAndAnalysisCycle(unittest.TestCase):
                 return_value=(mock_harness, mock_tree, []),
             ):
                 with patch.object(
-                    self.orchestrator, "_get_mutated_harness", return_value=(mock_harness, {})
+                    self.orchestrator.mutation_controller,
+                    "get_mutated_harness",
+                    return_value=(mock_harness, {}),
                 ):
                     with patch.object(
-                        self.orchestrator, "_prepare_child_script", return_value=None
+                        self.orchestrator.mutation_controller,
+                        "prepare_child_script",
+                        return_value=None,
                     ):
                         with patch("sys.stdout", new_callable=io.StringIO) as mock_stdout:
                             self.orchestrator.execute_mutation_and_analysis_cycle(
@@ -444,10 +453,14 @@ class TestExecuteMutationAndAnalysisCycle(unittest.TestCase):
                 return_value=(mock_harness, MagicMock(), []),
             ):
                 with patch.object(
-                    self.orchestrator, "_get_mutated_harness", return_value=(mock_harness, {})
+                    self.orchestrator.mutation_controller,
+                    "get_mutated_harness",
+                    return_value=(mock_harness, {}),
                 ):
                     with patch.object(
-                        self.orchestrator, "_prepare_child_script", return_value="code"
+                        self.orchestrator.mutation_controller,
+                        "prepare_child_script",
+                        return_value="code",
                     ):
                         with patch("sys.stderr", new_callable=io.StringIO):
                             self.orchestrator.execute_mutation_and_analysis_cycle(

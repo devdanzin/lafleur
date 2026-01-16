@@ -4,7 +4,7 @@ Tests for execution methods.
 
 This module contains unit tests for:
 - ExecutionManager methods (run_timed_trial, execute_child) in lafleur/execution.py
-- Orchestrator methods (_prepare_child_script, verify_target_capabilities) in lafleur/orchestrator.py
+- MutationController methods (prepare_child_script) in lafleur/mutation_controller.py
 """
 
 import ast
@@ -15,21 +15,22 @@ from pathlib import Path
 from textwrap import dedent
 from unittest.mock import MagicMock, patch
 
-from lafleur.orchestrator import LafleurOrchestrator
 from lafleur.execution import ExecutionManager
+from lafleur.mutation_controller import MutationController
+from lafleur.orchestrator import LafleurOrchestrator
 from lafleur.artifacts import ArtifactManager
 from lafleur.analysis import CrashFingerprinter
 from lafleur.utils import ExecutionResult
 
 
 class TestPrepareChildScript(unittest.TestCase):
-    """Test _prepare_child_script method."""
+    """Test MutationController.prepare_child_script method."""
 
     def setUp(self):
-        """Set up minimal orchestrator instance."""
-        self.orchestrator = LafleurOrchestrator.__new__(LafleurOrchestrator)
-        self.orchestrator.boilerplate_code = "# Boilerplate\n"
-        self.orchestrator.differential_testing = False
+        """Set up minimal MutationController instance."""
+        self.controller = MutationController.__new__(MutationController)
+        self.controller._get_boilerplate = lambda: "# Boilerplate\n"
+        self.controller.differential_testing = False
 
     def test_assembles_complete_script(self):
         """Test that script includes boilerplate, RNG setup, and core code."""
@@ -42,7 +43,7 @@ class TestPrepareChildScript(unittest.TestCase):
 
         mutated_harness = ast.parse("def uop_harness_test():\n    y = 10").body[0]
 
-        result = self.orchestrator._prepare_child_script(
+        result = self.controller.prepare_child_script(
             parent_tree, mutated_harness, runtime_seed=12345
         )
 
@@ -61,9 +62,7 @@ class TestPrepareChildScript(unittest.TestCase):
 
         mutated_harness = ast.parse("def uop_harness_test():\n    mutated = True").body[0]
 
-        result = self.orchestrator._prepare_child_script(
-            parent_tree, mutated_harness, runtime_seed=42
-        )
+        result = self.controller.prepare_child_script(parent_tree, mutated_harness, runtime_seed=42)
 
         self.assertIn("mutated = True", result)
         self.assertNotIn("original = True", result)
@@ -74,10 +73,10 @@ class TestPrepareChildScript(unittest.TestCase):
         mutated_harness = parent_tree.body[0]
 
         # Test with random returning value that triggers GC (< 0.25)
-        with patch("lafleur.orchestrator.random.random", return_value=0.1):
-            with patch("lafleur.orchestrator.random.choices", return_value=[10]):
+        with patch("lafleur.mutation_controller.random.random", return_value=0.1):
+            with patch("lafleur.mutation_controller.random.choices", return_value=[10]):
                 with patch("sys.stderr", new_callable=io.StringIO) as mock_stderr:
-                    result = self.orchestrator._prepare_child_script(
+                    result = self.controller.prepare_child_script(
                         parent_tree, mutated_harness, runtime_seed=42
                     )
 
@@ -90,8 +89,8 @@ class TestPrepareChildScript(unittest.TestCase):
         parent_tree = ast.parse("def uop_harness_test():\n    pass")
         mutated_harness = parent_tree.body[0]
 
-        with patch("lafleur.orchestrator.random.random", return_value=0.9):
-            result = self.orchestrator._prepare_child_script(
+        with patch("lafleur.mutation_controller.random.random", return_value=0.9):
+            result = self.controller.prepare_child_script(
                 parent_tree, mutated_harness, runtime_seed=42
             )
 
@@ -99,17 +98,17 @@ class TestPrepareChildScript(unittest.TestCase):
 
     def test_differential_testing_adds_instrumentation(self):
         """Test that HarnessInstrumentor is applied in differential mode."""
-        self.orchestrator.differential_testing = True
+        self.controller.differential_testing = True
 
         parent_tree = ast.parse("def uop_harness_f1():\n    x = 1")
         mutated_harness = parent_tree.body[0]
 
-        with patch("lafleur.orchestrator.HarnessInstrumentor") as mock_instr:
+        with patch("lafleur.mutation_controller.HarnessInstrumentor") as mock_instr:
             mock_instance = MagicMock()
             mock_instr.return_value = mock_instance
             mock_instance.visit.return_value = parent_tree
 
-            self.orchestrator._prepare_child_script(parent_tree, mutated_harness, runtime_seed=42)
+            self.controller.prepare_child_script(parent_tree, mutated_harness, runtime_seed=42)
 
             mock_instr.assert_called_once()
             mock_instance.visit.assert_called_once()
@@ -121,7 +120,7 @@ class TestPrepareChildScript(unittest.TestCase):
 
         with patch("ast.unparse", side_effect=RecursionError("Stack overflow")):
             with patch("sys.stderr", new_callable=io.StringIO) as mock_stderr:
-                result = self.orchestrator._prepare_child_script(
+                result = self.controller.prepare_child_script(
                     parent_tree, mutated_harness, runtime_seed=42
                 )
 
@@ -133,7 +132,7 @@ class TestPrepareChildScript(unittest.TestCase):
         parent_tree = ast.parse("def uop_harness_test():\n    pass")
         mutated_harness = parent_tree.body[0]
 
-        result = self.orchestrator._prepare_child_script(
+        result = self.controller.prepare_child_script(
             parent_tree, mutated_harness, runtime_seed=99999
         )
 
@@ -150,9 +149,7 @@ class TestPrepareChildScript(unittest.TestCase):
         parent_tree = ast.parse(parent_code)
         mutated_harness = parent_tree.body[2]
 
-        result = self.orchestrator._prepare_child_script(
-            parent_tree, mutated_harness, runtime_seed=42
-        )
+        result = self.controller.prepare_child_script(parent_tree, mutated_harness, runtime_seed=42)
 
         self.assertIn("int_v1 = 5", result)
         self.assertIn("str_v1 = 'hello'", result)
@@ -507,9 +504,7 @@ class TestExecuteChild(unittest.TestCase):
                     args=[], returncode=0, stdout="", stderr="Coverage: edges={}"
                 )
                 with patch("sys.stderr", new_callable=io.StringIO):
-                    self.execution_manager.execute_child(
-                        source, source_path, log_path, parent_path
-                    )
+                    self.execution_manager.execute_child(source, source_path, log_path, parent_path)
 
         # Should only run once for coverage (no differential runs)
         self.assertEqual(mock_run.call_count, 1)

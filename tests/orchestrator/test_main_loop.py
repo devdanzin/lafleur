@@ -501,5 +501,91 @@ class TestExecuteMutationAndAnalysisCycle(unittest.TestCase):
                             )
 
 
+class TestMain(unittest.TestCase):
+    """Test main CLI entry point."""
+
+    @patch("lafleur.orchestrator.LafleurOrchestrator")
+    @patch("lafleur.orchestrator.generate_run_metadata")
+    @patch("lafleur.orchestrator.load_run_stats")
+    @patch("lafleur.orchestrator.TeeLogger")
+    def test_main_basic_invocation(self, mock_tee, mock_stats, mock_metadata, mock_orch_class):
+        """Test basic main() invocation."""
+        from lafleur.orchestrator import main
+
+        mock_stats.return_value = {"total_mutations": 0}
+        mock_metadata.return_value = {"run_id": "test-123", "instance_name": "test"}
+        mock_tee_instance = MagicMock()
+        mock_tee.return_value = mock_tee_instance
+
+        mock_orch = MagicMock()
+        mock_orch_class.return_value = mock_orch
+
+        with patch("sys.argv", ["orchestrator", "--fusil-path", "/fake/fusil"]):
+            with patch("lafleur.orchestrator.LOGS_DIR") as mock_logs:
+                mock_logs.mkdir = MagicMock()
+                main()
+
+        mock_orch.run_evolutionary_loop.assert_called_once()
+
+    @patch("lafleur.orchestrator.LafleurOrchestrator")
+    @patch("lafleur.orchestrator.generate_run_metadata")
+    @patch("lafleur.orchestrator.load_run_stats")
+    @patch("lafleur.orchestrator.TeeLogger")
+    def test_main_handles_keyboard_interrupt(
+        self, mock_tee, mock_stats, mock_metadata, mock_orch_class
+    ):
+        """Test that KeyboardInterrupt is handled gracefully."""
+        from lafleur.orchestrator import main
+
+        mock_stats.return_value = {"total_mutations": 0}
+        mock_metadata.return_value = {"run_id": "test-123", "instance_name": "test"}
+
+        # Create a mock TeeLogger that writes to our captured output
+        mock_tee_instance = MagicMock()
+        captured_writes = []
+        mock_tee_instance.write = lambda x: captured_writes.append(x)
+        mock_tee.return_value = mock_tee_instance
+
+        mock_orch = MagicMock()
+        mock_orch.run_evolutionary_loop.side_effect = KeyboardInterrupt()
+        mock_orch_class.return_value = mock_orch
+
+        with patch("sys.argv", ["orchestrator", "--fusil-path", "/fake/fusil"]):
+            with patch("lafleur.orchestrator.LOGS_DIR") as mock_logs:
+                mock_logs.mkdir = MagicMock()
+                # Also patch Path / operator for logs directory
+                mock_logs.__truediv__ = lambda self, x: Path("/fake/logs") / x
+                main()
+
+        # Check that "stopped by user" was in any of the writes
+        all_output = "".join(str(w) for w in captured_writes)
+        self.assertIn("stopped by user", all_output)
+
+    @patch("lafleur.orchestrator.LafleurOrchestrator")
+    @patch("lafleur.orchestrator.generate_run_metadata")
+    @patch("lafleur.orchestrator.load_run_stats")
+    @patch("lafleur.orchestrator.TeeLogger")
+    def test_main_handles_exception(self, mock_tee, mock_stats, mock_metadata, mock_orch_class):
+        """Test that unexpected exceptions are handled."""
+        from lafleur.orchestrator import main
+
+        mock_stats.return_value = {"total_mutations": 0}
+        mock_metadata.return_value = {"run_id": "test-123", "instance_name": "test"}
+        mock_tee_instance = MagicMock()
+        mock_tee.return_value = mock_tee_instance
+
+        mock_orch = MagicMock()
+        mock_orch.run_evolutionary_loop.side_effect = RuntimeError("Test error")
+        mock_orch_class.return_value = mock_orch
+
+        with patch("sys.argv", ["orchestrator", "--fusil-path", "/fake/fusil"]):
+            with patch("lafleur.orchestrator.LOGS_DIR") as mock_logs:
+                mock_logs.mkdir = MagicMock()
+                with patch("sys.stdout", io.StringIO()):
+                    with patch("sys.stderr", io.StringIO()):
+                        # Should not raise
+                        main()
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

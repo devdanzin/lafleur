@@ -15,6 +15,8 @@ from unittest.mock import MagicMock, patch
 
 from lafleur.corpus_manager import CorpusManager
 from lafleur.coverage import save_coverage_state
+from lafleur.execution import ExecutionManager
+from lafleur.mutation_controller import MutationController
 from lafleur.orchestrator import LafleurOrchestrator
 
 
@@ -48,7 +50,7 @@ class TestRunEvolutionaryLoopIntegration(unittest.TestCase):
         )
 
         # Mock verify_target_capabilities to skip JIT checks
-        with patch.object(LafleurOrchestrator, "verify_target_capabilities"):
+        with patch.object(ExecutionManager, "verify_target_capabilities"):
             # Create orchestrator with real components (no corpus sync)
             with patch.object(CorpusManager, "synchronize"):
                 self.orchestrator = LafleurOrchestrator(
@@ -77,7 +79,7 @@ class TestRunEvolutionaryLoopIntegration(unittest.TestCase):
 
         # Mock _calculate_mutations to return small number for faster tests
         self.mutations_patcher = patch.object(
-            LafleurOrchestrator,
+            MutationController,
             "_calculate_mutations",
             return_value=1,  # Only do 1 mutation per cycle instead of 100
         )
@@ -328,7 +330,7 @@ class TestCorpusBootstrappingIntegration(unittest.TestCase):
         Path("crashes").mkdir()
 
         # Mock verify_target_capabilities to skip JIT checks
-        with patch.object(LafleurOrchestrator, "verify_target_capabilities"):
+        with patch.object(ExecutionManager, "verify_target_capabilities"):
             with patch.object(CorpusManager, "synchronize"):
                 self.orchestrator = LafleurOrchestrator(
                     fusil_path=None,
@@ -426,7 +428,7 @@ class TestMutationCycleIntegration(unittest.TestCase):
         )
 
         # Mock verify_target_capabilities to skip JIT checks
-        with patch.object(LafleurOrchestrator, "verify_target_capabilities"):
+        with patch.object(ExecutionManager, "verify_target_capabilities"):
             with patch.object(CorpusManager, "synchronize"):
                 self.orchestrator = LafleurOrchestrator(
                     fusil_path=None,
@@ -450,7 +452,7 @@ class TestMutationCycleIntegration(unittest.TestCase):
 
         # Mock _calculate_mutations to return small number for faster tests
         self.mutations_patcher = patch.object(
-            LafleurOrchestrator,
+            MutationController,
             "_calculate_mutations",
             return_value=1,  # Only do 1 mutation per cycle instead of 100
         )
@@ -466,12 +468,12 @@ class TestMutationCycleIntegration(unittest.TestCase):
         """Complete mutation cycle creates child file with mutations."""
         seed_file = list(Path("corpus").glob("*.py"))[0]
 
-        # Mock _score_and_decide_interestingness to return True (interesting)
+        # Mock score_and_decide_interestingness to return True (interesting)
         # This bypasses the complex JIT log parsing and directly tests child creation
 
         def mock_score_interesting(*args, **kwargs):
             # Call original to get NewCoverageInfo, but force it to be interesting
-            from lafleur.orchestrator import NewCoverageInfo
+            from lafleur.scoring import NewCoverageInfo
 
             # Return interesting coverage: 2 global edges = score of 20 > 10
             return True, NewCoverageInfo(global_edges=2)
@@ -479,8 +481,8 @@ class TestMutationCycleIntegration(unittest.TestCase):
         with patch("subprocess.run") as mock_run:
             mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
             with patch.object(
-                self.orchestrator,
-                "_score_and_decide_interestingness",
+                self.orchestrator.scoring_manager,
+                "score_and_decide_interestingness",
                 side_effect=mock_score_interesting,
             ):
                 # Run one mutation cycle
@@ -581,7 +583,7 @@ class TestStatePersistenceIntegration(unittest.TestCase):
     def test_saves_and_loads_coverage_state(self):
         """Orchestrator saves coverage state that can be reloaded."""
         # Mock verify_target_capabilities to skip JIT checks
-        with patch.object(LafleurOrchestrator, "verify_target_capabilities"):
+        with patch.object(ExecutionManager, "verify_target_capabilities"):
             with patch.object(CorpusManager, "synchronize"):
                 # Create first orchestrator and add coverage
                 orch1 = LafleurOrchestrator(
@@ -598,7 +600,7 @@ class TestStatePersistenceIntegration(unittest.TestCase):
         save_coverage_state(orch1.coverage_manager.state)
 
         # Mock verify_target_capabilities to skip JIT checks
-        with patch.object(LafleurOrchestrator, "verify_target_capabilities"):
+        with patch.object(ExecutionManager, "verify_target_capabilities"):
             with patch.object(CorpusManager, "synchronize"):
                 # Create second orchestrator and verify it loads the state
                 orch2 = LafleurOrchestrator(
@@ -615,7 +617,7 @@ class TestStatePersistenceIntegration(unittest.TestCase):
     def test_persists_mutator_scores_across_sessions(self):
         """Mutator scores are persisted and loaded across sessions."""
         # Mock verify_target_capabilities to skip JIT checks
-        with patch.object(LafleurOrchestrator, "verify_target_capabilities"):
+        with patch.object(ExecutionManager, "verify_target_capabilities"):
             with patch.object(CorpusManager, "synchronize"):
                 # Create first orchestrator
                 orch1 = LafleurOrchestrator(
@@ -633,7 +635,7 @@ class TestStatePersistenceIntegration(unittest.TestCase):
         save_coverage_state(orch1.coverage_manager.state)
 
         # Mock verify_target_capabilities to skip JIT checks
-        with patch.object(LafleurOrchestrator, "verify_target_capabilities"):
+        with patch.object(ExecutionManager, "verify_target_capabilities"):
             with patch.object(CorpusManager, "synchronize"):
                 # Create second orchestrator
                 orch2 = LafleurOrchestrator(
@@ -653,7 +655,7 @@ class TestStatePersistenceIntegration(unittest.TestCase):
         seed_file = list(Path("corpus").glob("*.py"))[0]
 
         # Mock verify_target_capabilities to skip JIT checks
-        with patch.object(LafleurOrchestrator, "verify_target_capabilities"):
+        with patch.object(ExecutionManager, "verify_target_capabilities"):
             with patch.object(CorpusManager, "synchronize"):
                 # Create orchestrator and add metadata
                 orch1 = LafleurOrchestrator(
@@ -678,7 +680,7 @@ class TestStatePersistenceIntegration(unittest.TestCase):
         save_coverage_state(orch1.coverage_manager.state)
 
         # Mock verify_target_capabilities to skip JIT checks
-        with patch.object(LafleurOrchestrator, "verify_target_capabilities"):
+        with patch.object(ExecutionManager, "verify_target_capabilities"):
             with patch.object(CorpusManager, "synchronize"):
                 # Create new orchestrator and verify metadata loaded
                 orch2 = LafleurOrchestrator(

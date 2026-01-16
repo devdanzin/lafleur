@@ -27,7 +27,7 @@ class TestJITParsing(unittest.TestCase):
         }
         log_content = f"Some log\n[DRIVER:STATS] {json.dumps(stats)}\nEnd log"
 
-        parsed = self.orch._parse_jit_stats(log_content)
+        parsed = self.orch.scoring_manager.parse_jit_stats(log_content)
 
         self.assertEqual(parsed["max_exit_count"], 10)
         self.assertEqual(parsed["max_chain_depth"], 2)
@@ -55,7 +55,7 @@ class TestJITParsing(unittest.TestCase):
             f"[DRIVER:STATS] {json.dumps(stats2)}"
         )
 
-        parsed = self.orch._parse_jit_stats(log_content)
+        parsed = self.orch.scoring_manager.parse_jit_stats(log_content)
 
         self.assertEqual(parsed["max_exit_count"], 50)  # Max
         self.assertEqual(parsed["max_chain_depth"], 5)  # Max
@@ -65,7 +65,7 @@ class TestJITParsing(unittest.TestCase):
     def test_parse_jit_stats_empty(self):
         """Test parsing logs with no stats."""
         log_content = "Just some debug info\nNo stats here"
-        parsed = self.orch._parse_jit_stats(log_content)
+        parsed = self.orch.scoring_manager.parse_jit_stats(log_content)
 
         self.assertEqual(parsed["max_exit_count"], 0)
         self.assertEqual(parsed["min_code_size"], 0)
@@ -73,7 +73,7 @@ class TestJITParsing(unittest.TestCase):
     def test_parse_jit_stats_malformed(self):
         """Test graceful handling of malformed JSON."""
         log_content = "[DRIVER:STATS] {invalid_json"
-        parsed = self.orch._parse_jit_stats(log_content)
+        parsed = self.orch.scoring_manager.parse_jit_stats(log_content)
 
         # Should return defaults, not crash
         self.assertEqual(parsed["max_exit_count"], 0)
@@ -88,7 +88,7 @@ class TestJITParsing(unittest.TestCase):
         """
 
         # Should not raise JSONDecodeError
-        stats = self.orch._parse_jit_stats(log_content)
+        stats = self.orch.scoring_manager.parse_jit_stats(log_content)
 
         # Should return safe defaults
         self.assertEqual(stats["max_exit_count"], 0)

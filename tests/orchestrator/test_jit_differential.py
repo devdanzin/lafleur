@@ -1,5 +1,5 @@
 import unittest
-from lafleur.orchestrator import InterestingnessScorer, NewCoverageInfo
+from lafleur.scoring import InterestingnessScorer, NewCoverageInfo
 
 
 class TestDifferentialJITScoring(unittest.TestCase):

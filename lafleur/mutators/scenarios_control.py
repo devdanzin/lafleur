@@ -945,3 +945,589 @@ class MaxOperandMutator(ast.NodeTransformer):
 
         # Prepend to function body
         node.body = [if_node] + node.body
+
+
+class PatternMatchingChaosMutator(ast.NodeTransformer):
+    """
+    Attack JIT optimizations for structural pattern matching (PEP 634).
+
+    The JIT compiles match statements into specialized bytecode sequences
+    (MATCH_MAPPING, MATCH_SEQUENCE, MATCH_CLASS, MATCH_KEYS, GET_LEN).
+    This mutator generates chaotic patterns that stress-test these opcodes:
+
+    1. **Guard Side Effects**: Guards that mutate the subject during matching
+    2. **Overlapping Patterns**: Or patterns and nested structures forcing backtracking
+    3. **Dynamic __match_args__**: Custom classes with mutable match protocol
+    4. **Control Flow Conversion**: Transforms if/for into match statements
+    5. **Type-Switching Subject**: Subject that changes type mid-match
+    6. **Nested Match Statements**: Match inside match for deep recursion
+    """
+
+    HELPER_CLASS_NAME = "_JitMatchChaos"
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.helper_injected = False
+
+    def _create_chaos_match_class(self) -> list[ast.stmt]:
+        """Create the _JitMatchChaos helper class with dynamic __match_args__."""
+        class_code = dedent(f"""
+            class {self.HELPER_CLASS_NAME}:
+                '''Class with chaotic pattern matching behavior.'''
+                _access_count = 0
+                _match_args_variants = [
+                    ('x',),
+                    ('x', 'y'),
+                    ('y', 'x'),
+                    ('x', 'y', 'z'),
+                    (),
+                ]
+
+                def __init__(self, x=1, y=2, z=3):
+                    self.x = x
+                    self.y = y
+                    self.z = z
+                    self._local_count = 0
+
+                @property
+                def __match_args__(self):
+                    '''Return different match args on each access to confuse JIT.'''
+                    {self.HELPER_CLASS_NAME}._access_count += 1
+                    idx = {self.HELPER_CLASS_NAME}._access_count % len(
+                        {self.HELPER_CLASS_NAME}._match_args_variants
+                    )
+                    return {self.HELPER_CLASS_NAME}._match_args_variants[idx]
+
+                def __getattr__(self, name):
+                    '''Trigger type changes when JIT inspects attributes.'''
+                    self._local_count += 1
+                    if self._local_count > 50:
+                        # After warmup, return wrong types to trigger deopt
+                        if name == 'x':
+                            return "string_instead_of_int"
+                        elif name == 'y':
+                            return [1, 2, 3]  # List instead of int
+                    return object.__getattribute__(self, name)
+
+                def __eq__(self, other):
+                    '''Non-deterministic equality for pattern guards.'''
+                    {self.HELPER_CLASS_NAME}._access_count += 1
+                    return {self.HELPER_CLASS_NAME}._access_count % 3 != 0
+        """)
+        return ast.parse(class_code).body
+
+    def _create_guard_side_effect_function(self, prefix: str) -> list[ast.stmt]:
+        """Create a function that mutates its argument when called in a guard."""
+        func_code = dedent(f"""
+            def _jit_mutate_subject_{prefix}(subject):
+                '''Guard function that mutates the subject during matching.'''
+                if isinstance(subject, list):
+                    if len(subject) > 0:
+                        subject.append(None)  # Grow list during match
+                    return True
+                elif isinstance(subject, dict):
+                    subject['_mutated'] = True  # Add key during match
+                    return True
+                elif hasattr(subject, '__dict__'):
+                    subject.__dict__['_chaos'] = 42  # Mutate object
+                return True
+        """)
+        return ast.parse(func_code).body
+
+    def _create_type_switching_subject(self, prefix: str) -> list[ast.stmt]:
+        """Create a subject class that changes type behavior after warmup."""
+        class_code = dedent(f"""
+            class _TypeSwitcher_{prefix}:
+                '''Subject that changes its sequence/mapping behavior.'''
+                _check_count = 0
+
+                def __init__(self, data):
+                    self._data = data
+
+                def __len__(self):
+                    _TypeSwitcher_{prefix}._check_count += 1
+                    if _TypeSwitcher_{prefix}._check_count > 100:
+                        raise TypeError("Length no longer available")
+                    return len(self._data)
+
+                def __getitem__(self, key):
+                    _TypeSwitcher_{prefix}._check_count += 1
+                    if _TypeSwitcher_{prefix}._check_count > 100:
+                        # Switch from sequence to mapping behavior
+                        if isinstance(key, int):
+                            raise KeyError(key)
+                    return self._data[key]
+
+                def __iter__(self):
+                    _TypeSwitcher_{prefix}._check_count += 1
+                    if _TypeSwitcher_{prefix}._check_count > 100:
+                        # Yield different number of items after warmup
+                        yield from self._data
+                        yield "extra_chaos"
+                    else:
+                        yield from self._data
+
+                def keys(self):
+                    return self._data.keys() if hasattr(self._data, 'keys') else []
+        """)
+        return ast.parse(class_code).body
+
+    def visit_Module(self, node: ast.Module) -> ast.Module:
+        """Inject helper classes at module level."""
+        # Check if helper already exists
+        for stmt in node.body:
+            if isinstance(stmt, ast.ClassDef) and stmt.name == self.HELPER_CLASS_NAME:
+                self.helper_injected = True
+                break
+
+        # Inject helper class with low probability
+        if not self.helper_injected and random.random() < 0.15:
+            print(
+                f"    -> Injecting {self.HELPER_CLASS_NAME} helper class for pattern matching chaos",
+                file=sys.stderr,
+            )
+            helper_classes = self._create_chaos_match_class()
+            node.body = helper_classes + node.body
+            self.helper_injected = True
+            ast.fix_missing_locations(node)
+
+        self.generic_visit(node)
+        return node
+
+    def visit_Match(self, node: ast.Match) -> ast.Match:
+        """Transform existing match statements with chaotic patterns."""
+        self.generic_visit(node)
+
+        if random.random() < 0.3:  # 30% chance to transform
+            action = random.choice(["guard", "complexity", "nested"])
+
+            if action == "guard":
+                self._inject_guard_side_effects(node)
+            elif action == "complexity":
+                self._add_pattern_complexity(node)
+            else:
+                self._add_nested_match(node)
+
+            ast.fix_missing_locations(node)
+
+        return node
+
+    def _inject_guard_side_effects(self, node: ast.Match) -> None:
+        """Add guards that mutate the subject during matching."""
+        print("    -> Injecting guard side effects into match statement", file=sys.stderr)
+
+        for case in node.cases:
+            if case.guard is None and random.random() < 0.5:
+                # Add a guard that mutates the subject
+                # guard: _subject_ref.append(None) or True
+                case.guard = ast.BoolOp(
+                    op=ast.Or(),
+                    values=[
+                        ast.Call(
+                            func=ast.Attribute(
+                                value=ast.Name(id="_chaos_side_effect", ctx=ast.Load()),
+                                attr="append",
+                                ctx=ast.Load(),
+                            ),
+                            args=[ast.Constant(value=None)],
+                            keywords=[],
+                        )
+                        if random.random() < 0.3
+                        else ast.Constant(value=True),
+                        ast.Compare(
+                            left=ast.Call(
+                                func=ast.Name(id="len", ctx=ast.Load()),
+                                args=[node.subject],
+                                keywords=[],
+                            ),
+                            ops=[ast.GtE()],
+                            comparators=[ast.Constant(value=0)],
+                        ),
+                    ],
+                )
+
+    def _add_pattern_complexity(self, node: ast.Match) -> None:
+        """Add Or patterns and nested structures."""
+        print("    -> Adding pattern complexity to match statement", file=sys.stderr)
+
+        for case in node.cases:
+            if isinstance(case.pattern, ast.MatchAs) and case.pattern.pattern is None:
+                # Skip wildcard patterns
+                continue
+
+            # Wrap pattern in MatchOr with alternative patterns
+            if random.random() < 0.4:
+                original_pattern = case.pattern
+                # Create alternative patterns
+                alternatives = [
+                    original_pattern,
+                    ast.MatchSequence(patterns=[ast.MatchAs(pattern=None, name=None)]),
+                    ast.MatchMapping(keys=[], patterns=[], rest=None),
+                ]
+                case.pattern = ast.MatchOr(patterns=alternatives[:2])
+
+    def _add_nested_match(self, node: ast.Match) -> None:
+        """Add nested match statements inside case bodies."""
+        print("    -> Adding nested match statement", file=sys.stderr)
+
+        for case in node.cases:
+            if len(case.body) > 0 and random.random() < 0.3:
+                # Create a nested match on a captured variable
+                inner_match_code = dedent("""
+                    match _inner_subject:
+                        case []: _nested_result = 0
+                        case [x]: _nested_result = 1
+                        case [x, y]: _nested_result = 2
+                        case _: _nested_result = -1
+                """)
+                try:
+                    inner_match = ast.parse(inner_match_code).body[0]
+                    # Insert assignment and nested match
+                    case.body.insert(
+                        0,
+                        ast.Assign(
+                            targets=[ast.Name(id="_inner_subject", ctx=ast.Store())],
+                            value=ast.List(elts=[ast.Constant(value=1)], ctx=ast.Load()),
+                        ),
+                    )
+                    case.body.insert(1, inner_match)
+                except SyntaxError:
+                    pass
+
+    def visit_If(self, node: ast.If) -> ast.stmt:
+        """Convert isinstance checks to match statements."""
+        self.generic_visit(node)
+
+        # Check if this is an isinstance check we can convert
+        if random.random() < 0.15 and self._is_isinstance_check(node.test):
+            converted = self._convert_isinstance_to_match(node)
+            if converted:
+                print("    -> Converting isinstance check to match statement", file=sys.stderr)
+                return converted
+
+        return node
+
+    def _is_isinstance_check(self, test: ast.expr) -> bool:
+        """Check if expression is isinstance(x, SomeType)."""
+        if isinstance(test, ast.Call):
+            if isinstance(test.func, ast.Name) and test.func.id == "isinstance":
+                return len(test.args) >= 2
+        return False
+
+    def _convert_isinstance_to_match(self, node: ast.If) -> ast.Match | None:
+        """Convert if isinstance(x, Type) to match x: case Type()."""
+        try:
+            call = node.test
+            if not isinstance(call, ast.Call):
+                return None
+
+            subject = call.args[0]
+            type_check = call.args[1]
+
+            # Create the match statement
+            match_pattern: ast.pattern
+            if isinstance(type_check, ast.Name):
+                match_pattern = ast.MatchClass(
+                    cls=type_check,
+                    patterns=[],
+                    kwd_attrs=[],
+                    kwd_patterns=[],
+                )
+            elif isinstance(type_check, ast.Tuple):
+                # isinstance(x, (int, str)) -> case int() | str()
+                patterns = []
+                for elt in type_check.elts:
+                    if isinstance(elt, ast.Name):
+                        patterns.append(
+                            ast.MatchClass(
+                                cls=elt,
+                                patterns=[],
+                                kwd_attrs=[],
+                                kwd_patterns=[],
+                            )
+                        )
+                if not patterns:
+                    return None
+                match_pattern = (
+                    ast.MatchOr(patterns=cast(list[ast.pattern], patterns))
+                    if len(patterns) > 1
+                    else patterns[0]
+                )
+            else:
+                return None
+
+            # Build match cases
+            cases = [
+                ast.match_case(
+                    pattern=match_pattern,
+                    guard=None,
+                    body=node.body,
+                ),
+            ]
+
+            # Add else case if present
+            if node.orelse:
+                cases.append(
+                    ast.match_case(
+                        pattern=ast.MatchAs(pattern=None, name=None),
+                        guard=None,
+                        body=node.orelse,
+                    )
+                )
+
+            match_node = ast.Match(subject=subject, cases=cases)
+            ast.fix_missing_locations(match_node)
+            return match_node
+
+        except (AttributeError, IndexError):
+            return None
+
+    def visit_For(self, node: ast.For) -> ast.stmt:
+        """Convert simple for loops with tuple unpacking to match-based iteration."""
+        self.generic_visit(node)
+
+        # Only convert tuple unpacking: for x, y in items
+        if random.random() < 0.1 and isinstance(node.target, ast.Tuple):
+            converted = self._convert_for_to_match(node)
+            if converted:
+                print("    -> Converting for loop to match-based iteration", file=sys.stderr)
+                return converted
+
+        return node
+
+    def _convert_for_to_match(self, node: ast.For) -> ast.For | None:
+        """Convert for x, y in items to for item in items: match item."""
+        try:
+            # Create new simple target
+            item_var = "_match_item"
+
+            # Create match statement for the loop body
+            # Extract variable names from tuple (we know target is Tuple from visit_For check)
+            target_tuple = cast(ast.Tuple, node.target)
+            var_patterns: list[ast.pattern] = []
+            for elt in target_tuple.elts:
+                if isinstance(elt, ast.Name):
+                    var_patterns.append(ast.MatchAs(pattern=None, name=elt.id))
+                else:
+                    var_patterns.append(ast.MatchAs(pattern=None, name=None))
+
+            match_node = ast.Match(
+                subject=ast.Name(id=item_var, ctx=ast.Load()),
+                cases=[
+                    ast.match_case(
+                        pattern=ast.MatchSequence(patterns=var_patterns),
+                        guard=None,
+                        body=node.body,
+                    ),
+                    # Fallback case for wrong structure
+                    ast.match_case(
+                        pattern=ast.MatchAs(pattern=None, name=None),
+                        guard=None,
+                        body=[ast.Pass()],
+                    ),
+                ],
+            )
+
+            # Create new for loop
+            new_for = ast.For(
+                target=ast.Name(id=item_var, ctx=ast.Store()),
+                iter=node.iter,
+                body=[match_node],
+                orelse=node.orelse,
+            )
+
+            ast.fix_missing_locations(new_for)
+            return new_for
+
+        except (AttributeError, IndexError):
+            return None
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> ast.FunctionDef:
+        """Inject chaotic match scenarios into harness functions."""
+        self.generic_visit(node)
+
+        if not node.name.startswith("uop_harness"):
+            return node
+
+        if random.random() < 0.15:  # 15% chance
+            scenario = random.choice(
+                [
+                    "chaos_class_match",
+                    "type_switcher",
+                    "walrus_guard",
+                    "exhaustive_patterns",
+                ]
+            )
+
+            prefix = f"pm_{random.randint(1000, 9999)}"
+
+            if scenario == "chaos_class_match" and self.helper_injected:
+                self._inject_chaos_class_match(node, prefix)
+            elif scenario == "type_switcher":
+                self._inject_type_switcher_scenario(node, prefix)
+            elif scenario == "walrus_guard":
+                self._inject_walrus_guard_scenario(node, prefix)
+            else:
+                self._inject_exhaustive_patterns(node, prefix)
+
+            ast.fix_missing_locations(node)
+
+        return node
+
+    def _inject_chaos_class_match(self, node: ast.FunctionDef, prefix: str) -> None:
+        """Inject match using the chaos class with dynamic __match_args__."""
+        print(
+            f"    -> Injecting chaos class match scenario with prefix '{prefix}'",
+            file=sys.stderr,
+        )
+
+        scenario_code = dedent(f"""
+            # Chaos class match scenario - dynamic __match_args__
+            for _i_{prefix} in range(200):
+                _obj_{prefix} = {self.HELPER_CLASS_NAME}(_i_{prefix}, _i_{prefix} * 2, _i_{prefix} * 3)
+                try:
+                    match _obj_{prefix}:
+                        case {self.HELPER_CLASS_NAME}(a):
+                            _result_{prefix} = a
+                        case {self.HELPER_CLASS_NAME}(a, b):
+                            _result_{prefix} = a + b
+                        case {self.HELPER_CLASS_NAME}(a, b, c):
+                            _result_{prefix} = a + b + c
+                        case _:
+                            _result_{prefix} = -1
+                except Exception:
+                    pass
+        """)
+
+        try:
+            scenario_nodes = ast.parse(scenario_code).body
+            node.body = scenario_nodes + node.body
+        except SyntaxError:
+            pass
+
+    def _inject_type_switcher_scenario(self, node: ast.FunctionDef, prefix: str) -> None:
+        """Inject match using type-switching subject."""
+        print(
+            f"    -> Injecting type-switcher match scenario with prefix '{prefix}'",
+            file=sys.stderr,
+        )
+
+        # First inject the helper class
+        helper_code = self._create_type_switching_subject(prefix)
+        node.body = helper_code + node.body
+
+        scenario_code = dedent(f"""
+            # Type-switching subject scenario
+            _data_{prefix} = [1, 2, 3]
+            _switcher_{prefix} = _TypeSwitcher_{prefix}(_data_{prefix})
+            for _i_{prefix} in range(150):
+                try:
+                    match _switcher_{prefix}:
+                        case []: _result_{prefix} = "empty"
+                        case [x]: _result_{prefix} = f"one: {{x}}"
+                        case [x, y]: _result_{prefix} = f"two: {{x}}, {{y}}"
+                        case [x, y, *rest]: _result_{prefix} = f"many: {{len(rest)}}"
+                        case _: _result_{prefix} = "unknown"
+                except Exception:
+                    _result_{prefix} = "error"
+        """)
+
+        try:
+            scenario_nodes = ast.parse(scenario_code).body
+            # Insert after the class definition
+            insert_idx = len(helper_code)
+            node.body[insert_idx:insert_idx] = scenario_nodes
+        except SyntaxError:
+            pass
+
+    def _inject_walrus_guard_scenario(self, node: ast.FunctionDef, prefix: str) -> None:
+        """Inject match with walrus operator (:=) in guards for side effects."""
+        print(
+            f"    -> Injecting walrus guard match scenario with prefix '{prefix}'",
+            file=sys.stderr,
+        )
+
+        scenario_code = dedent(f"""
+            # Walrus operator in guards - captures and modifies during match
+            _counter_{prefix} = [0]  # Mutable counter
+            _data_{prefix} = [[1, 2], [3, 4, 5], [6], [], [7, 8, 9, 10]]
+            for _item_{prefix} in _data_{prefix} * 50:
+                try:
+                    match _item_{prefix}:
+                        case [x, y] if (_counter_{prefix}.__setitem__(0, _counter_{prefix}[0] + 1) or True):
+                            _result_{prefix} = x + y
+                        case [x, y, z] if ((_n_{prefix} := len(_item_{prefix})) > 2):
+                            _result_{prefix} = x + y + z + _n_{prefix}
+                        case [single] if (_counter_{prefix}[0] % 10 == 0):
+                            _result_{prefix} = single * 2
+                        case [] if (_counter_{prefix}[0] > 100):
+                            _result_{prefix} = -999
+                        case _:
+                            _result_{prefix} = 0
+                except Exception:
+                    pass
+        """)
+
+        try:
+            scenario_nodes = ast.parse(scenario_code).body
+            node.body = scenario_nodes + node.body
+        except SyntaxError:
+            pass
+
+    def _inject_exhaustive_patterns(self, node: ast.FunctionDef, prefix: str) -> None:
+        """Inject match with many overlapping patterns to stress backtracking."""
+        print(
+            f"    -> Injecting exhaustive patterns scenario with prefix '{prefix}'",
+            file=sys.stderr,
+        )
+
+        scenario_code = dedent(f"""
+            # Exhaustive overlapping patterns - stress backtracking
+            _subjects_{prefix} = [
+                [1, 2, 3],
+                (1, 2),
+                {{'a': 1, 'b': 2}},
+                {{'x': [1, 2], 'y': (3, 4)}},
+                [[1], [2, 3]],
+                1,
+                "string",
+                None,
+            ]
+            for _i_{prefix} in range(100):
+                _subj_{prefix} = _subjects_{prefix}[_i_{prefix} % len(_subjects_{prefix})]
+                try:
+                    match _subj_{prefix}:
+                        # Deeply nested patterns
+                        case {{'x': [a, b], 'y': (c, d)}}:
+                            _result_{prefix} = a + b + c + d
+                        case {{'x': [*items], 'y': _}}:
+                            _result_{prefix} = sum(items) if items else 0
+                        # Or patterns with different structures
+                        case [1, 2, 3] | (1, 2, 3):
+                            _result_{prefix} = 6
+                        case [a, b] | (a, b):
+                            _result_{prefix} = a + b if isinstance(a, int) else 0
+                        # Sequence with rest
+                        case [first, *middle, last]:
+                            _result_{prefix} = first + last
+                        # Mapping with rest
+                        case {{'a': x, **rest}}:
+                            _result_{prefix} = x + len(rest)
+                        # Class patterns
+                        case int(x) if x > 0:
+                            _result_{prefix} = x * 2
+                        case str(s) if len(s) > 0:
+                            _result_{prefix} = len(s)
+                        case None:
+                            _result_{prefix} = 0
+                        case _:
+                            _result_{prefix} = -1
+                except Exception:
+                    _result_{prefix} = -999
+        """)
+
+        try:
+            scenario_nodes = ast.parse(scenario_code).body
+            node.body = scenario_nodes + node.body
+        except SyntaxError:
+            pass

@@ -126,15 +126,21 @@ lafleur-triage export-issues known_issues.json
 ### Project Structure
 
 - `lafleur/` — Main package
-  - `orchestrator.py` — Core fuzzing loop (selection → mutation → execution → analysis)
+  - `orchestrator.py` — Core fuzzing loop coordinator ("The Conductor")
+  - `artifacts.py` — Log processing and findings management ("The Librarian")
+  - `scoring.py` — Coverage analysis and interestingness scoring ("The Judge")
+  - `execution.py` — Subprocess execution and timeout handling ("The Muscle")
+  - `mutation_controller.py` — Mutation strategy and source assembly ("The Strategist")
   - `mutators/` — AST-based mutation strategies
     - `engine.py` — ASTMutator class, registers all transformers
     - `generic.py` — General-purpose mutators (OperatorSwapper, ConstantPerturbator, etc.)
     - `scenarios_types.py` — Type system attacks (TypeInstabilityInjector, InlineCachePolluter, etc.)
-    - `scenarios_control.py` — Control flow stress testing (DeepCallMutator, TraceBreaker, etc.)
-    - `scenarios_data.py` — Data structure manipulation (DictPolluter, GlobalOptimizationInvalidator, etc.)
+    - `scenarios_control.py` — Control flow stress testing (DeepCallMutator, TraceBreaker, PatternMatchingChaosMutator, etc.)
+    - `scenarios_data.py` — Data structure manipulation (DictPolluter, UnpackingChaosMutator, etc.)
     - `scenarios_runtime.py` — Runtime state corruption (FrameManipulator, GCInjector, etc.)
     - `utils.py` — Shared utilities for mutators
+    - `helper_injection.py` — HelperFunctionInjector for Sniper targeting
+    - `sniper.py` — SniperMutator for surgical Bloom filter invalidation
   - `coverage_parser.py` — Parses JIT trace logs for uop-edge coverage
   - `corpus_manager.py` — Manages test case corpus and scheduling
   - `report.py` — Single-instance text reporter CLI
@@ -147,11 +153,26 @@ lafleur-triage export-issues known_issues.json
 
 ### Core Components
 
-**lafleur/orchestrator.py** - The main evolutionary loop coordinator
-- `LafleurOrchestrator` class manages the four-stage feedback cycle: Selection → Mutation → Execution → Analysis
-- Handles child process execution with JIT logging enabled
-- Performs differential testing when enabled
-- Manages crash/timeout/divergence detection and storage
+**lafleur/orchestrator.py** - The main evolutionary loop coordinator ("The Conductor")
+- `LafleurOrchestrator` class coordinates the four-stage feedback cycle: Selection → Mutation → Execution → Analysis
+- Delegates to specialized managers: `ArtifactManager`, `ScoringManager`, `ExecutionManager`, `MutationController`
+- Orchestrates the fuzzing loop without implementing low-level details
+
+**lafleur/artifacts.py** - File and finding management ("The Librarian")
+- `ArtifactManager` handles log processing, crash detection, and saving findings
+- Methods: `process_log_file`, `check_for_crash`, `save_crash`, `save_timeout`, `save_divergence`
+
+**lafleur/scoring.py** - Coverage analysis and scoring ("The Judge")
+- `ScoringManager` parses JIT stats, detects new coverage, and calculates interestingness
+- Classes: `InterestingnessScorer`, `NewCoverageInfo`
+
+**lafleur/execution.py** - Subprocess execution ("The Muscle")
+- `ExecutionManager` runs test cases with JIT enabled and handles timeouts
+- Methods: `execute_child`, `run_timed_trial`, `verify_target_capabilities`
+
+**lafleur/mutation_controller.py** - Mutation strategy ("The Strategist")
+- `MutationController` decides mutation approach and assembles source code
+- Implements stages: deterministic, havoc, spam, splicing, sniper, helper_sniper
 
 **lafleur/corpus_manager.py** - Corpus and parent selection management
 - `CorpusManager` handles all corpus file operations and state synchronization
@@ -224,14 +245,16 @@ The mutators are organized into several submodules under `lafleur/mutators/`:
 - Deep call chains, recursion wrapping
 - Exception handler mazes, trace breaking
 - Guard exhaustion, side exit stress
-- Examples: `DeepCallMutator`, `ExceptionHandlerMaze`, `GuardExhaustionGenerator`, `TraceBreaker`
+- Pattern matching chaos (dynamic `__match_args__`, type-switching subjects)
+- Examples: `DeepCallMutator`, `ExceptionHandlerMaze`, `GuardExhaustionGenerator`, `TraceBreaker`, `PatternMatchingChaosMutator`
 
 **scenarios_data.py** - Data structure manipulation
 - Dictionary pollution, comprehension bombs
 - Iterator/iterable misbehavior, numeric edge cases
 - Magic method attacks, builtin namespace corruption
 - Global optimization invalidation, code object hot-swapping
-- Examples: `DictPolluter`, `MagicMethodMutator`, `GlobalOptimizationInvalidator`, `CodeObjectHotSwapper`
+- Unpacking chaos (iterators that lie about length, change after JIT warmup)
+- Examples: `DictPolluter`, `MagicMethodMutator`, `GlobalOptimizationInvalidator`, `CodeObjectHotSwapper`, `UnpackingChaosMutator`
 
 **scenarios_runtime.py** - Runtime state corruption
 - Frame manipulation, garbage collection stress

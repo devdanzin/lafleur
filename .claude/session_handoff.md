@@ -2,162 +2,95 @@
 
 This document contains important context for continuing work on the lafleur project.
 
-## Current State (January 2026)
+## Current State (January 17, 2026)
 
-### Completed Work
-- **PR #331**: Re-enable mypy type checking - **MERGED**
-- All previous PRs have been merged
-- **Testing**: `tests/` coverage is robust, including recent additions for Triage and Reporting.
+### Recently Completed Work
 
-### Next Task: Refactor orchestrator.py
+**PR #339**: `PatternMatchingChaosMutator` - **MERGED**
+- Attacks JIT structural pattern matching (MATCH_MAPPING, MATCH_SEQUENCE, MATCH_CLASS)
+- Injects `_JitMatchChaos` helper with dynamic `__match_args__` property
+- Creates type-switching subjects that change behavior after JIT warmup
+- Converts `isinstance` checks and for-loop unpacking to match statements
+- 17 tests added
 
-**Goal**: Transform `LafleurOrchestrator` from a 2206-line "God Class" into a clean "Conductor" that coordinates distinct manager classes.
-**Rationale**: The file is ~2600 lines with the `LafleurOrchestrator` class spanning 2206 lines and containing 45 methods. This makes it difficult to maintain, test, and understand.
-**Constraint**: We must maintain passing tests and mypy checks at every step. Do not introduce circular dependencies.
+**PR #337**: `UnpackingChaosMutator` - **MERGED**
+- Attacks JIT unpacking optimizations (UNPACK_SEQUENCE, UNPACK_EX)
+- Wraps iterables in chaotic iterators that lie about length
+- Three behaviors: grow, shrink, type_switch after JIT warmup
+- 15 tests added
 
-## LafleurOrchestrator Deep Dive
+**PR #335**: Test Coverage Improvements - **MERGED**
+- Increased coverage from 69% to 81%
+- Added CLI entry point tests
+- Increased triage.py coverage from 61% to 91%
 
-### Overview
-`LafleurOrchestrator` is the central coordinator for the fuzzing process. It manages the evolutionary loop that:
-1. Selects parent test cases from the corpus
-2. Applies mutations to generate children
-3. Executes children with JIT enabled
-4. Analyzes results for new coverage, crashes, and divergences
-5. Updates the corpus and statistics
+**PR #333**: Orchestrator Refactoring - **MERGED**
+- Transformed 2206-line `LafleurOrchestrator` into a clean "Conductor"
+- Extracted four manager classes:
+  - `ArtifactManager` in `lafleur/artifacts.py` ("The Librarian")
+  - `ScoringManager` in `lafleur/scoring.py` ("The Judge")
+  - `ExecutionManager` in `lafleur/execution.py` ("The Muscle")
+  - `MutationController` in `lafleur/mutation_controller.py` ("The Strategist")
 
-### Class Statistics
-- **Location**: `lafleur/orchestrator.py` lines 289-2494
-- **Total lines**: 2206
-- **Methods**: 45
-- **Key dependencies**: `CorpusManager`, `CoverageManager`, `ASTMutator`, `MutatorScoreTracker`
+**PR #331**: Re-enable mypy - **MERGED**
 
-```python
-# Core components
-self.corpus_manager: CorpusManager
-self.coverage_manager: CoverageManager
-self.ast_mutator: ASTMutator
-self.score_tracker: MutatorScoreTracker
+### Test Status
+- **1135 tests passing**
+- mypy clean
+- ruff format/check clean
 
-# Configuration flags
-self.differential_testing: bool
-self.timing_fuzz: bool
-self.session_fuzz: bool
-self.use_dynamic_runs: bool
+## Open Issues (Potential Next Tasks)
 
-# Runtime state
-self.run_stats: dict
-self.boilerplate_code: str | None
-self.global_seed_counter: int
-self.mutations_since_last_find: int
-self.nojit_cv: float | None  # Coefficient of variation for no-JIT runs
-```
+### High Priority
+- **#152**: `serialize_state` appending multiple times (bug)
+- **#114**: Slicing loses or omits information (bug)
 
+### Enhancement Ideas
+- **#89**: Add new mutators (umbrella issue)
+- **#122**: Study and target UOPs we don't currently cover
+- **#115**: Tweak probabilities for mutators
+- **#197**: Keep documentation updated
 
-## Architectural Plan
+### Larger Features
+- **#316**: Fleet Management System
+- **#315**: Visualize Lineage Trees
+- **#314**: Web UI Dashboard
+- **#313**: Automated GitHub issue reporting
 
-We will reject the idea of splitting into many tiny, fragmented modules (e.g., `log_processing.py`, `result_saving.py`). Instead, we will group responsibilities into four cohesive "Manager" modules.
+## Architecture Overview
 
-**IMPORTANT:** Do not create a module named `analysis.py`. We already have `lafleur/analysis.py` (Crash Fingerprinting). Use `lafleur/scoring.py` instead.
-
-### Phase 1: Preparation
-
-1. **Remove Dead Code**: Ensure `debug_mutation_differences` and `verify_jit_determinism` are deleted from `orchestrator.py` before moving any code.
-
-### Phase 2: The Refactoring Roadmap
-
-#### 1. `lafleur/artifacts.py` ("The Librarian")
-
-**Responsibility**: Managing files, processing logs, and saving findings. This has low coupling and is the safest place to start.
-
-* **Move methods**:
-* `_process_log_file`, `_truncate_huge_log`, `_compress_log_stream`
-* `_check_for_crash`
-* `_handle_timeout`, `_save_regression_timeout`, `_save_jit_hang`
-* `_save_session_crash`, `_save_divergence`, `_save_regression`
-
-
-
-#### 2. `lafleur/scoring.py` ("The Judge")
-
-**Responsibility**: Parsing results, calculating scores, and detecting coverage.
-
-* **Move Classes**: `InterestingnessScorer`, `NewCoverageInfo`
-* **Move Methods**:
-* `_parse_jit_stats`
-* `_find_new_coverage`
-* `_calculate_coverage_hash`
-* `_score_and_decide_interestingness` (logic only; keep state updates in orchestrator if needed)
-
-
-
-#### 3. `lafleur/execution.py` ("The Muscle")
-
-**Responsibility**: Running subprocesses and handling the OS layer.
-
-* **Move Classes**: `ExecutionResult` (if not already in utils)
-* **Move Methods**:
-* `_execute_child`
-* `_run_timed_trial`
-* `verify_target_capabilities`
-* `_filter_jit_stderr`
-
-
-
-#### 4. `lafleur/mutation_controller.py` ("The Strategist")
-
-**Responsibility**: Deciding *how* to mutate and assembling the source code.
-
-* **Move Methods**:
-* `apply_mutation_strategy`
-* `_run_deterministic_stage`, `_run_havoc_stage`, `_run_spam_stage`, `_run_splicing_stage`, `_run_sniper_stage`, `_run_helper_sniper_stage`, `_run_slicing`
-* `_get_mutated_harness`
-* `_prepare_child_script` (Source code assembly/GC injection)
-* `_analyze_setup_ast`
-* `_calculate_mutations`
-
-
-
----
-
-## Resulting `orchestrator.py` ("The Conductor")
-
-After refactoring, `orchestrator.py` should effectively look like this high-level story:
-
-```python
-class LafleurOrchestrator:
-    def __init__(self, ...):
-        self.executor = Executor(...)
-        self.mutator = MutationController(...)
-        self.artifacts = ArtifactManager(...)
-        self.scorer = ScoreKeeper(...)
-
-    def run_evolutionary_loop(self):
-        # 1. Select Parent
-        # 2. Cycle:
-        #    child_src = self.mutator.create_child(parent)
-        #    result = self.executor.run(child_src)
-        #    if self.artifacts.is_crash(result):
-        #        self.artifacts.save_crash(result)
-        #    score = self.scorer.evaluate(result)
-        #    if score > threshold:
-        #        self.corpus.save(child)
+The project was recently refactored. Key modules:
 
 ```
+lafleur/
+├── orchestrator.py        # "The Conductor" - coordinates the fuzzing loop
+├── artifacts.py           # "The Librarian" - log processing, crash saving
+├── scoring.py             # "The Judge" - coverage analysis, interestingness
+├── execution.py           # "The Muscle" - subprocess execution
+├── mutation_controller.py # "The Strategist" - mutation strategy
+├── corpus_manager.py      # Corpus management and scheduling
+├── coverage.py            # Coverage tracking and persistence
+├── mutators/
+│   ├── engine.py          # ASTMutator, registers all transformers
+│   ├── generic.py         # General-purpose mutators
+│   ├── scenarios_types.py # Type system attacks
+│   ├── scenarios_control.py # Control flow stress (incl. PatternMatchingChaosMutator)
+│   ├── scenarios_data.py  # Data manipulation (incl. UnpackingChaosMutator)
+│   ├── scenarios_runtime.py # Runtime state corruption
+│   ├── helper_injection.py # HelperFunctionInjector
+│   └── sniper.py          # SniperMutator
+└── [analysis, triage, reporting tools]
+```
 
-## Key Dependencies & Method Map
+## Development Workflow
 
-| Method | Target Module | Dependencies to Inject |
-| --- | --- | --- |
-| `_execute_child` | `execution.py` | `timeout`, `target_python`, `ENV` |
-| `_check_for_crash` | `artifacts.py` | `CrashFingerprinter` |
-| `_prepare_child_script` | `mutation_controller.py` | `boilerplate_code` |
-| `_find_new_coverage` | `scoring.py` | `CoverageManager` (read-only access) |
-
-
-## Working Patterns
+### Python Environment
+**Critical**: Always use the JIT CPython venv:
+```bash
+~/venvs/jit_cpython_venv/bin/python
+```
 
 ### Pre-commit Checklist
-Always run before committing:
 ```bash
 ~/venvs/jit_cpython_venv/bin/python -m pytest tests
 ~/venvs/jit_cpython_venv/bin/python -m mypy lafleur
@@ -170,37 +103,67 @@ Follow Conventional Commits:
 - `feat:` - New features
 - `fix:` - Bug fixes
 - `refactor:` - Code restructuring
-- `docs:` - Documentation
 - `test:` - Tests
+- `docs:` - Documentation
 
 Always include:
 ```
 Co-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>
 ```
+(or appropriate AI assistant attribution)
 
-### Python Environment
-**Critical**: Use the JIT CPython venv for all commands:
-```bash
-~/venvs/jit_cpython_venv/bin/python
+## Mutator Development Patterns
+
+### Pattern 1: Scenario Injection (preferred for complex mutations)
+```python
+class MyMutator(ast.NodeTransformer):
+    """One-line description."""
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> ast.FunctionDef:
+        if not node.name.startswith("uop_harness"):
+            return node
+        if random.random() < 0.1:
+            scenario = ast.parse("# injected code").body
+            node.body = scenario + node.body
+            ast.fix_missing_locations(node)
+        return node
 ```
-**Checks**: Run `pytest tests` and `mypy lafleur` frequently.
 
-## Key Technical Details
+### Testing Pattern
+```python
+def test_my_mutator_basic(self):
+    code = dedent('''
+        def uop_harness_test():
+            x = 1
+    ''')
+    tree = ast.parse(code)
 
-### Type Patterns Used
+    with patch("random.random", return_value=0.05):
+        mutator = MyMutator()
+        mutated = mutator.visit(tree)
 
-1. **AST transformations** - Use `cast()` for `ast.parse()` returns
-2. **TypedDict** for complex dict structures
-3. **Callable** for conditional imports
-4. **TypeVar** for generic methods
+    result = ast.unparse(mutated)
+    self.assertIn("expected_code", result)
+```
 
-### Important Files
-- `lafleur/orchestrator.py` - Target for refactoring (2600 lines)
-- `lafleur/corpus_manager.py` - Corpus management
-- `lafleur/coverage.py` - Coverage tracking
-- `lafleur/mutators/engine.py` - Mutation engine
+### Common Pitfalls
+1. **Comments don't survive AST round-trip** - Check for code elements, not comments
+2. **Mock enough random values** - Provide `side_effect=[0.1] * 20` for multiple calls
+3. **Type annotations for mypy** - Use `cast()` for AST returns, explicit type annotations for pattern variables
 
 ## GitHub Repository
 - URL: https://github.com/devdanzin/lafleur
 - Main branch: `main`
-- Workflow: PRs to main, squash merge preferred
+- Workflow: Feature branches, PRs to main, user merges PRs
+
+## JIT-Specific Concepts
+
+Effective mutators target:
+- **Type speculation** - JIT assumes stable types; inject type changes mid-loop
+- **Guard handling** - Stress guard failure paths
+- **Inline caching** - Invalidate with `__class__` changes
+- **Deoptimization** - Force fallback to interpreter mid-execution
+- **Pattern matching** - Dynamic `__match_args__`, type-switching subjects
+- **Unpacking** - Iterators that lie about length or change behavior
+- **Global-to-constant promotion** - Swap globals after JIT trusts them
+- **Code object metadata** - Swap `__code__` attributes

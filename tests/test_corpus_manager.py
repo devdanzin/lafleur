@@ -3,7 +3,9 @@
 Unit tests for lafleur/corpus_manager.py
 """
 
+import tempfile
 import unittest
+from io import StringIO
 from pathlib import Path
 from unittest.mock import Mock, patch
 
@@ -385,6 +387,315 @@ class TestCorpusManager(unittest.TestCase):
         profile = {}
         edges = self.corpus_manager._get_edge_set_from_profile(profile)
         self.assertEqual(edges, set())
+
+
+class TestCorpusManagerSelectParent(unittest.TestCase):
+    """Tests for select_parent method."""
+
+    def setUp(self):
+        self.state = {
+            "global_coverage": {"edges": {}, "uops": {}, "rare_events": {}},
+            "per_file_coverage": {},
+        }
+        self.coverage_manager = CoverageManager(self.state)
+        self.run_stats = {"corpus_file_counter": 0}
+
+        with patch("lafleur.corpus_manager.CORPUS_DIR"), patch("lafleur.corpus_manager.TMP_DIR"):
+            self.corpus_manager = CorpusManager(
+                coverage_state=self.coverage_manager,
+                run_stats=self.run_stats,
+                fusil_path="",
+                get_boilerplate_func=lambda: "",
+                execution_timeout=10,
+            )
+
+    def test_returns_none_when_corpus_empty(self):
+        """Test that select_parent returns None for empty corpus."""
+        result = self.corpus_manager.select_parent()
+        self.assertIsNone(result)
+
+    def test_returns_file_when_corpus_has_files(self):
+        """Test selecting parent from non-empty corpus."""
+        self.state["per_file_coverage"]["test1.py"] = {
+            "baseline_coverage": {},
+            "execution_time_ms": 50,
+            "file_size_bytes": 500,
+            "total_finds": 0,
+            "lineage_depth": 1,
+        }
+
+        with patch("lafleur.corpus_manager.CORPUS_DIR") as mock_dir:
+            mock_dir.__truediv__ = lambda self, x: Path("/mock") / x
+            result = self.corpus_manager.select_parent()
+
+        self.assertIsNotNone(result)
+        self.assertEqual(result[0].name, "test1.py")
+
+    def test_handles_zero_weights(self):
+        """Test fallback when all weights are zero."""
+        # Create files with negative scores (will be clamped to 1.0 min)
+        self.state["per_file_coverage"]["test1.py"] = {
+            "baseline_coverage": {},
+            "execution_time_ms": 100000,  # Very slow
+            "file_size_bytes": 100000,  # Very large
+            "total_finds": 0,
+            "lineage_depth": 1,
+            "is_sterile": True,
+        }
+
+        with patch("lafleur.corpus_manager.CORPUS_DIR") as mock_dir:
+            mock_dir.__truediv__ = lambda self, x: Path("/mock") / x
+            result = self.corpus_manager.select_parent()
+
+        self.assertIsNotNone(result)
+
+
+class TestCorpusManagerPruneCorpus(unittest.TestCase):
+    """Tests for prune_corpus method."""
+
+    def setUp(self):
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.temp_path = Path(self.temp_dir.name)
+
+        self.state = {
+            "global_coverage": {"edges": {}, "uops": {}, "rare_events": {}},
+            "per_file_coverage": {},
+        }
+        self.coverage_manager = CoverageManager(self.state)
+        self.run_stats = {"corpus_file_counter": 0}
+
+        with patch("lafleur.corpus_manager.CORPUS_DIR", self.temp_path / "corpus"):
+            with patch("lafleur.corpus_manager.TMP_DIR", self.temp_path / "tmp"):
+                self.corpus_manager = CorpusManager(
+                    coverage_state=self.coverage_manager,
+                    run_stats=self.run_stats,
+                    fusil_path="",
+                    get_boilerplate_func=lambda: "",
+                    execution_timeout=10,
+                )
+
+    def tearDown(self):
+        self.temp_dir.cleanup()
+
+    def test_prune_corpus_dry_run_no_files_removed(self):
+        """Test that dry run doesn't remove files."""
+        # Create file that could be pruned
+        self.state["per_file_coverage"]["test1.py"] = {
+            "lineage_coverage_profile": {"f1": {"edges": {0, 1}}},
+            "file_size_bytes": 1000,
+            "execution_time_ms": 100,
+        }
+        self.state["per_file_coverage"]["test2.py"] = {
+            "lineage_coverage_profile": {"f1": {"edges": {0, 1, 2}}},
+            "file_size_bytes": 500,
+            "execution_time_ms": 50,
+        }
+
+        self.corpus_manager.prune_corpus(dry_run=True)
+
+        # Both files should still be in state
+        self.assertIn("test1.py", self.state["per_file_coverage"])
+        self.assertIn("test2.py", self.state["per_file_coverage"])
+
+    def test_prune_corpus_finds_no_prunable(self):
+        """Test when no files are prunable."""
+        # Files with disjoint coverage
+        self.state["per_file_coverage"]["test1.py"] = {
+            "lineage_coverage_profile": {"f1": {"edges": {0, 1}}},
+            "file_size_bytes": 500,
+            "execution_time_ms": 50,
+        }
+        self.state["per_file_coverage"]["test2.py"] = {
+            "lineage_coverage_profile": {"f1": {"edges": {2, 3}}},
+            "file_size_bytes": 500,
+            "execution_time_ms": 50,
+        }
+
+        self.corpus_manager.prune_corpus(dry_run=True)
+
+        # No files should be marked for pruning
+        self.assertEqual(len(self.state["per_file_coverage"]), 2)
+
+    @patch("lafleur.corpus_manager.save_coverage_state")
+    def test_prune_corpus_removes_subsumed_files(self, mock_save):
+        """Test that subsumed files are removed in non-dry-run mode."""
+        corpus_dir = self.temp_path / "corpus"
+        corpus_dir.mkdir(parents=True, exist_ok=True)
+
+        # Create test files
+        (corpus_dir / "test1.py").write_text("# test1")
+        (corpus_dir / "test2.py").write_text("# test2")
+
+        # test1 is subsumed by test2
+        self.state["per_file_coverage"]["test1.py"] = {
+            "lineage_coverage_profile": {"f1": {"edges": {0, 1}}},
+            "file_size_bytes": 1000,
+            "execution_time_ms": 100,
+        }
+        self.state["per_file_coverage"]["test2.py"] = {
+            "lineage_coverage_profile": {"f1": {"edges": {0, 1, 2}}},
+            "file_size_bytes": 500,
+            "execution_time_ms": 50,
+        }
+
+        with patch("lafleur.corpus_manager.CORPUS_DIR", corpus_dir):
+            self.corpus_manager.prune_corpus(dry_run=False)
+
+        # test1 should be removed
+        self.assertNotIn("test1.py", self.state["per_file_coverage"])
+        self.assertIn("test2.py", self.state["per_file_coverage"])
+        self.assertFalse((corpus_dir / "test1.py").exists())
+
+
+class TestCorpusManagerGetFilesToAnalyze(unittest.TestCase):
+    """Tests for _get_files_to_analyze method."""
+
+    def setUp(self):
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.temp_path = Path(self.temp_dir.name)
+
+        self.state = {
+            "global_coverage": {"edges": {}, "uops": {}, "rare_events": {}},
+            "per_file_coverage": {},
+        }
+        self.coverage_manager = CoverageManager(self.state)
+        self.run_stats = {"corpus_file_counter": 0}
+
+        with patch("lafleur.corpus_manager.CORPUS_DIR", self.temp_path):
+            with patch("lafleur.corpus_manager.TMP_DIR", self.temp_path / "tmp"):
+                self.corpus_manager = CorpusManager(
+                    coverage_state=self.coverage_manager,
+                    run_stats=self.run_stats,
+                    fusil_path="",
+                    get_boilerplate_func=lambda: "",
+                    execution_timeout=10,
+                )
+
+    def tearDown(self):
+        self.temp_dir.cleanup()
+
+    def test_identifies_new_files(self):
+        """Test identifying new files not in state."""
+        import hashlib
+
+        # Create both files on disk
+        (self.temp_path / "file1.py").write_text("# file1")
+        (self.temp_path / "file2.py").write_text("# file2")
+
+        disk_files = {"file1.py", "file2.py"}
+        state_files = {"file1.py"}
+
+        # Set the content hash for file1 so it won't be detected as modified
+        file1_hash = hashlib.sha256("# file1".encode()).hexdigest()
+        self.state["per_file_coverage"]["file1.py"] = {"content_hash": file1_hash}
+
+        with patch("lafleur.corpus_manager.CORPUS_DIR", self.temp_path):
+            with patch("sys.stdout", StringIO()):  # Suppress print messages
+                result = self.corpus_manager._get_files_to_analyze(disk_files, state_files)
+
+        # file2 is new (not in state), file1 has matching hash so not detected
+        self.assertIn("file2.py", result)
+        self.assertNotIn("file1.py", result)
+
+    def test_identifies_modified_files(self):
+        """Test identifying files with changed content."""
+        # Create file with specific content
+        (self.temp_path / "file1.py").write_text("# original")
+
+        import hashlib
+
+        original_hash = hashlib.sha256("# modified".encode()).hexdigest()
+
+        self.state["per_file_coverage"]["file1.py"] = {
+            "content_hash": original_hash  # Different from current content
+        }
+
+        disk_files = {"file1.py"}
+        state_files = {"file1.py"}
+
+        with patch("lafleur.corpus_manager.CORPUS_DIR", self.temp_path):
+            result = self.corpus_manager._get_files_to_analyze(disk_files, state_files)
+
+        self.assertIn("file1.py", result)
+
+
+class TestCorpusManagerFusilValidation(unittest.TestCase):
+    """Tests for fusil path validation."""
+
+    def test_invalid_fusil_path(self):
+        """Test that invalid fusil path is detected."""
+        state = {
+            "global_coverage": {"edges": {}, "uops": {}, "rare_events": {}},
+            "per_file_coverage": {},
+        }
+        coverage_manager = CoverageManager(state)
+        run_stats = {"corpus_file_counter": 0}
+
+        with patch("lafleur.corpus_manager.CORPUS_DIR"), patch("lafleur.corpus_manager.TMP_DIR"):
+            corpus_manager = CorpusManager(
+                coverage_state=coverage_manager,
+                run_stats=run_stats,
+                fusil_path="/nonexistent/fusil",
+                get_boilerplate_func=lambda: "",
+                execution_timeout=10,
+            )
+
+        self.assertFalse(corpus_manager.fusil_path_is_valid)
+
+    def test_empty_fusil_path(self):
+        """Test that empty fusil path is handled."""
+        state = {
+            "global_coverage": {"edges": {}, "uops": {}, "rare_events": {}},
+            "per_file_coverage": {},
+        }
+        coverage_manager = CoverageManager(state)
+        run_stats = {"corpus_file_counter": 0}
+
+        with patch("lafleur.corpus_manager.CORPUS_DIR"), patch("lafleur.corpus_manager.TMP_DIR"):
+            corpus_manager = CorpusManager(
+                coverage_state=coverage_manager,
+                run_stats=run_stats,
+                fusil_path="",
+                get_boilerplate_func=lambda: "",
+                execution_timeout=10,
+            )
+
+        self.assertFalse(corpus_manager.fusil_path_is_valid)
+
+
+class TestCorpusSchedulerEdgeCases(unittest.TestCase):
+    """Edge case tests for CorpusScheduler."""
+
+    def setUp(self):
+        self.state = {
+            "global_coverage": {"edges": {}, "uops": {}, "rare_events": {}},
+            "per_file_coverage": {},
+        }
+        self.coverage_manager = CoverageManager(self.state)
+
+    def test_calculate_scores_empty_corpus(self):
+        """Test score calculation with empty corpus."""
+        scheduler = CorpusScheduler(self.coverage_manager)
+        scores = scheduler.calculate_scores()
+        self.assertEqual(scores, {})
+
+    def test_score_clamped_to_minimum(self):
+        """Test that scores are clamped to minimum of 1.0."""
+        # Create file with very negative factors
+        self.state["per_file_coverage"]["slow.py"] = {
+            "baseline_coverage": {},
+            "execution_time_ms": 100000,  # Very slow
+            "file_size_bytes": 100000,  # Very large
+            "total_finds": 0,
+            "lineage_depth": 0,
+            "is_sterile": True,
+        }
+
+        scheduler = CorpusScheduler(self.coverage_manager)
+        scores = scheduler.calculate_scores()
+
+        # Score should be clamped to at least 1.0
+        self.assertGreaterEqual(scores["slow.py"], 1.0)
 
 
 if __name__ == "__main__":

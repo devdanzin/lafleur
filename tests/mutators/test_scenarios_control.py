@@ -20,6 +20,7 @@ from lafleur.mutators.scenarios_control import (
     ExitStresser,
     GuardExhaustionGenerator,
     MaxOperandMutator,
+    PatternMatchingChaosMutator,
     RecursionWrappingMutator,
     TraceBreaker,
     YieldFromInjector,
@@ -1489,6 +1490,350 @@ class TestExitStresser(unittest.TestCase):
         self.assertIn("res_es_5", result)
         # Check that it produces valid python
         ast.parse(result)
+
+
+class TestPatternMatchingChaosMutator(unittest.TestCase):
+    """Test PatternMatchingChaosMutator mutator."""
+
+    def setUp(self):
+        """Set random seed for reproducible tests."""
+        random.seed(42)
+
+    def test_injects_helper_class_at_module_level(self):
+        """Test that _JitMatchChaos helper class is injected at module level."""
+        code = dedent("""
+            def test_func():
+                x = 1
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.1):  # Below 0.15 threshold
+            mutator = PatternMatchingChaosMutator()
+            mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should have _JitMatchChaos class
+        self.assertIn("class _JitMatchChaos:", result)
+        self.assertIn("__match_args__", result)
+
+    def test_helper_class_has_dynamic_match_args(self):
+        """Test that helper class has dynamic __match_args__ property."""
+        code = dedent("""
+            def test_func():
+                pass
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.1):
+            mutator = PatternMatchingChaosMutator()
+            mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should have dynamic __match_args__ with property decorator
+        self.assertIn("@property", result)
+        self.assertIn("def __match_args__(self):", result)
+        self.assertIn("_match_args_variants", result)
+
+    def test_helper_class_has_chaotic_getattr(self):
+        """Test that helper class has __getattr__ that changes types."""
+        code = dedent("""
+            def test_func():
+                pass
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.1):
+            mutator = PatternMatchingChaosMutator()
+            mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should have __getattr__ that returns wrong types after warmup
+        self.assertIn("def __getattr__(self, name):", result)
+        self.assertIn("string_instead_of_int", result)
+
+    def test_converts_isinstance_check_to_match(self):
+        """Test that isinstance checks are converted to match statements."""
+        code = dedent("""
+            def test_func():
+                if isinstance(x, int):
+                    y = 1
+                else:
+                    y = 2
+        """)
+        tree = ast.parse(code)
+
+        # Force isinstance conversion
+        with patch("random.random", side_effect=[0.9, 0.1]):  # Skip module, convert if
+            mutator = PatternMatchingChaosMutator()
+            mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should have match statement instead of isinstance
+        self.assertIn("match x:", result)
+        self.assertIn("case int():", result)
+
+    def test_converts_isinstance_tuple_to_match_or(self):
+        """Test that isinstance(x, (int, str)) converts to case int() | str()."""
+        code = dedent("""
+            def test_func():
+                if isinstance(x, (int, str)):
+                    y = 1
+        """)
+        tree = ast.parse(code)
+
+        # Force isinstance conversion
+        with patch("random.random", side_effect=[0.9, 0.1]):
+            mutator = PatternMatchingChaosMutator()
+            mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should have Or pattern
+        self.assertIn("match x:", result)
+        self.assertIn("int()", result)
+        self.assertIn("str()", result)
+
+    def test_converts_for_loop_unpacking_to_match(self):
+        """Test that for loops with tuple unpacking are converted to match."""
+        code = dedent("""
+            def test_func():
+                for x, y in items:
+                    z = x + y
+        """)
+        tree = ast.parse(code)
+
+        # Force for loop conversion
+        with patch("random.random", side_effect=[0.9, 0.05]):  # Skip module, convert for
+            mutator = PatternMatchingChaosMutator()
+            mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should have match statement inside for loop
+        self.assertIn("for _match_item in items:", result)
+        self.assertIn("match _match_item:", result)
+
+    def test_injects_exhaustive_patterns_scenario(self):
+        """Test that exhaustive patterns scenario is injected into harness."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+
+        # Force harness injection with exhaustive patterns
+        with patch("random.random", side_effect=[0.9, 0.1]):  # Skip module, inject harness
+            with patch("random.choice", return_value="exhaustive_patterns"):
+                with patch("random.randint", return_value=1234):
+                    mutator = PatternMatchingChaosMutator()
+                    mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should have exhaustive patterns scenario (check for code elements, not comments)
+        self.assertIn("_subjects_pm_1234", result)
+        self.assertIn("_subj_pm_1234", result)
+        self.assertIn("match _subj_pm_1234:", result)
+
+    def test_injects_walrus_guard_scenario(self):
+        """Test that walrus guard scenario is injected."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", side_effect=[0.9, 0.1]):
+            with patch("random.choice", return_value="walrus_guard"):
+                with patch("random.randint", return_value=5678):
+                    mutator = PatternMatchingChaosMutator()
+                    mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should have walrus guard scenario (check code elements, not comments)
+        self.assertIn("_counter_pm_5678", result)
+        self.assertIn("_data_pm_5678", result)
+        self.assertIn(":=", result)
+
+    def test_injects_type_switcher_scenario(self):
+        """Test that type-switcher scenario is injected."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", side_effect=[0.9, 0.1]):
+            with patch("random.choice", return_value="type_switcher"):
+                with patch("random.randint", return_value=9999):
+                    mutator = PatternMatchingChaosMutator()
+                    mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should have type switcher class and scenario (check code elements, not comments)
+        self.assertIn("class _TypeSwitcher_pm_9999:", result)
+        self.assertIn("_switcher_pm_9999", result)
+        self.assertIn("_data_pm_9999", result)
+
+    def test_injects_chaos_class_match_scenario(self):
+        """Test that chaos class match scenario is injected when helper exists."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+
+        # Force helper injection AND chaos class match - need many random values
+        random_values = [0.1] * 20  # Enough for all random.random calls
+        with patch("random.random", side_effect=random_values):
+            with patch("random.choice", return_value="chaos_class_match"):
+                with patch("random.randint", return_value=4321):
+                    mutator = PatternMatchingChaosMutator()
+                    mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should have chaos class match scenario (check code elements)
+        self.assertIn("_JitMatchChaos", result)
+        self.assertIn("_obj_pm_4321", result)
+
+    def test_transforms_existing_match_with_guard(self):
+        """Test that existing match statements get guard side effects."""
+        code = dedent("""
+            def test_func():
+                match x:
+                    case [a, b]:
+                        y = a + b
+                    case _:
+                        y = 0
+        """)
+        tree = ast.parse(code)
+
+        # Skip module injection, force match transformation with guard action
+        # Need enough random values for all calls
+        random_values = [0.9, 0.2] + [0.3] * 10  # Skip module, transform match, guards
+        with patch("random.random", side_effect=random_values):
+            with patch("random.choice", return_value="guard"):
+                mutator = PatternMatchingChaosMutator()
+                mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should still be valid Python with match
+        self.assertIn("match x:", result)
+        ast.parse(result)  # Ensure valid
+
+    def test_transforms_existing_match_with_nested(self):
+        """Test that existing match statements get nested match."""
+        code = dedent("""
+            def test_func():
+                match x:
+                    case [a, b]:
+                        y = a + b
+        """)
+        tree = ast.parse(code)
+
+        # Force nested match transformation
+        with patch("random.random", side_effect=[0.9, 0.2, 0.1]):  # Transform, nested, add
+            with patch("random.choice", return_value="nested"):
+                mutator = PatternMatchingChaosMutator()
+                mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should have nested match (inner subject assignment)
+        self.assertIn("_inner_subject", result)
+        self.assertIn("_nested_result", result)
+
+    def test_no_transformation_without_injection(self):
+        """Test that harness is not modified if probability not met."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+
+        # High probability prevents injection
+        with patch("random.random", return_value=0.9):
+            mutator = PatternMatchingChaosMutator()
+            mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should NOT have chaos patterns
+        self.assertNotIn("_JitMatchChaos", result)
+        self.assertNotIn("exhaustive patterns", result.lower())
+        # Original code preserved
+        self.assertIn("x = 1", result)
+
+    def test_skips_non_harness_functions(self):
+        """Test that non-harness functions are not modified."""
+        code = dedent("""
+            def regular_function():
+                x = 1
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.1):
+            mutator = PatternMatchingChaosMutator()
+            mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should NOT have harness-specific scenarios
+        self.assertNotIn("_subjects_pm_", result)
+        self.assertNotIn("_counter_pm_", result)
+
+    def test_produces_valid_code(self):
+        """Test that output is valid, parseable Python."""
+        code = dedent("""
+            def uop_harness_test():
+                for x, y in [(1, 2), (3, 4)]:
+                    if isinstance(z, int):
+                        result = x + y
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.1):
+            mutator = PatternMatchingChaosMutator()
+            mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should be parseable
+        reparsed = ast.parse(result)
+        self.assertIsInstance(reparsed, ast.Module)
+
+    def test_skips_existing_helper_class(self):
+        """Test that helper is not re-injected if already present."""
+        code = dedent("""
+            class _JitMatchChaos:
+                pass
+            def test_func():
+                x = 1
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.1):
+            mutator = PatternMatchingChaosMutator()
+            mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should only have one _JitMatchChaos class definition
+        self.assertEqual(result.count("class _JitMatchChaos:"), 1)
+
+    def test_type_switcher_class_has_chaotic_methods(self):
+        """Test that _TypeSwitcher class has behavior-changing methods."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", side_effect=[0.9, 0.1]):
+            with patch("random.choice", return_value="type_switcher"):
+                with patch("random.randint", return_value=1111):
+                    mutator = PatternMatchingChaosMutator()
+                    mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should have all the chaotic methods
+        self.assertIn("def __len__(self):", result)
+        self.assertIn("def __getitem__(self, key):", result)
+        self.assertIn("def __iter__(self):", result)
+        self.assertIn("raise TypeError", result)
+        self.assertIn("extra_chaos", result)
 
 
 if __name__ == "__main__":

@@ -1527,3 +1527,150 @@ class ZombieTraceMutator(ast.NodeTransformer):
             ast.fix_missing_locations(node)
 
         return node
+
+
+class UnpackingChaosMutator(ast.NodeTransformer):
+    """
+    Attack JIT optimizations for UNPACK_SEQUENCE and UNPACK_EX operations.
+
+    The JIT specializes unpacking based on observed iterator behavior during tracing.
+    This mutator wraps iterables in a chaotic iterator that changes behavior after
+    JIT warmup:
+    - 'grow' mode: yields extra items after trigger_count iterations
+    - 'shrink' mode: stops iteration early after trigger_count iterations
+    - 'type_switch' mode: yields a different type after trigger_count iterations
+
+    The iterator also lies about its length via __length_hint__ to confuse
+    pre-allocation optimizations.
+    """
+
+    HELPER_CLASS_NAME = "_JitChaosIterator"
+
+    def __init__(self):
+        super().__init__()
+        self.helper_injected = False
+
+    def _create_chaos_iterator_class(self) -> ast.ClassDef:
+        """Create the _JitChaosIterator helper class AST."""
+        class_code = dedent(f"""
+            class {self.HELPER_CLASS_NAME}:
+                '''Iterator that changes behavior after trigger_count iterations.'''
+                def __init__(self, iterable, mode='grow', trigger_count=50):
+                    self._items = list(iterable)
+                    self._mode = mode
+                    self._trigger_count = trigger_count
+                    self._call_count = 0
+                    self._index = 0
+
+                def __iter__(self):
+                    self._call_count += 1
+                    self._index = 0
+                    return self
+
+                def __next__(self):
+                    triggered = self._call_count > self._trigger_count
+
+                    if self._index >= len(self._items):
+                        # After exhausting items, maybe yield extra in 'grow' mode
+                        if triggered and self._mode == 'grow' and self._index == len(self._items):
+                            self._index += 1
+                            return None  # Extra unexpected item
+                        raise StopIteration
+
+                    # In 'shrink' mode, stop early after trigger
+                    if triggered and self._mode == 'shrink' and self._index >= len(self._items) // 2:
+                        raise StopIteration
+
+                    item = self._items[self._index]
+                    self._index += 1
+
+                    # In 'type_switch' mode, return wrong type after trigger
+                    if triggered and self._mode == 'type_switch' and self._index == len(self._items):
+                        return "unexpected_string_type"
+
+                    return item
+
+                def __length_hint__(self):
+                    # Lie about length to confuse pre-allocation
+                    if self._call_count > self._trigger_count:
+                        return max(0, len(self._items) - 1)  # Underreport
+                    return len(self._items) + 1  # Overreport initially
+        """)
+        return cast(ast.ClassDef, ast.parse(class_code).body[0])
+
+    def visit_Module(self, node: ast.Module) -> ast.Module:
+        """Inject the helper class at module level if needed."""
+        # Check if helper already exists
+        for stmt in node.body:
+            if isinstance(stmt, ast.ClassDef) and stmt.name == self.HELPER_CLASS_NAME:
+                self.helper_injected = True
+                break
+
+        # Inject helper class at module level with low probability
+        if not self.helper_injected and random.random() < 0.15:
+            print(
+                f"    -> Injecting {self.HELPER_CLASS_NAME} helper class",
+                file=sys.stderr,
+            )
+            helper_class = self._create_chaos_iterator_class()
+            node.body.insert(0, helper_class)
+            self.helper_injected = True
+            ast.fix_missing_locations(node)
+
+        # Continue visiting children
+        self.generic_visit(node)
+        return node
+
+    def _wrap_in_chaos_iterator(self, value_node: ast.expr) -> ast.Call:
+        """Wrap a value node in _JitChaosIterator call."""
+        mode = random.choice(["grow", "shrink", "type_switch"])
+        trigger = random.randint(30, 100)
+
+        return ast.Call(
+            func=ast.Name(id=self.HELPER_CLASS_NAME, ctx=ast.Load()),
+            args=[value_node],
+            keywords=[
+                ast.keyword(arg="mode", value=ast.Constant(value=mode)),
+                ast.keyword(arg="trigger_count", value=ast.Constant(value=trigger)),
+            ],
+        )
+
+    def _is_unpacking_target(self, target: ast.expr) -> bool:
+        """Check if target is a tuple/list unpacking pattern."""
+        return isinstance(target, (ast.Tuple, ast.List))
+
+    def visit_Assign(self, node: ast.Assign) -> ast.Assign:
+        """Transform unpacking assignments: a, b = iterable -> a, b = _JitChaosIterator(iterable)."""
+        if not self.helper_injected:
+            return node
+
+        # Check if any target is an unpacking pattern
+        has_unpacking = any(self._is_unpacking_target(t) for t in node.targets)
+
+        if has_unpacking and random.random() < 0.2:
+            print(
+                "    -> Wrapping unpacking assignment with chaos iterator",
+                file=sys.stderr,
+            )
+            node.value = self._wrap_in_chaos_iterator(node.value)
+            ast.fix_missing_locations(node)
+
+        return node
+
+    def visit_For(self, node: ast.For) -> ast.For:
+        """Transform for loop unpacking: for a, b in seq -> for a, b in _JitChaosIterator(seq)."""
+        self.generic_visit(node)
+
+        if not self.helper_injected:
+            return node
+
+        # Check if target is an unpacking pattern (for x, y in ...)
+        if self._is_unpacking_target(node.target) and random.random() < 0.2:
+            print(
+                "    -> Wrapping for loop iterator with chaos iterator",
+                file=sys.stderr,
+            )
+            node.iter = self._wrap_in_chaos_iterator(node.iter)
+            ast.fix_missing_locations(node)
+
+        return node

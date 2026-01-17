@@ -7,6 +7,7 @@ All notable changes to this project should be documented in this file.
 ### Added
 
 - GitHub Actions CI/CD workflow with lint, format, and JIT test jobs, by @devdanzin.
+- An `UnpackingChaosMutator` that attacks JIT optimizations for `UNPACK_SEQUENCE` and `UNPACK_EX` by wrapping iterables in a chaotic iterator that lies about its length and changes behavior (grow, shrink, type_switch) after JIT warmup to trigger deoptimization bugs, by @devdanzin.
 
 ### Enhanced
 

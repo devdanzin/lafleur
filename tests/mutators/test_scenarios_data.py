@@ -28,6 +28,7 @@ from lafleur.mutators.scenarios_data import (
     ReentrantSideEffectMutator,
     StackCacheThrasher,
     TypeShadowingMutator,
+    UnpackingChaosMutator,
     ZombieTraceMutator,
     _create_hash_attack,
     _create_len_attack,
@@ -2213,6 +2214,287 @@ class TestZombieTraceMutator(unittest.TestCase):
         # Should be parseable
         reparsed = ast.parse(result)
         self.assertIsInstance(reparsed, ast.Module)
+
+
+class TestUnpackingChaosMutator(unittest.TestCase):
+    """Test UnpackingChaosMutator mutator."""
+
+    def setUp(self):
+        """Set random seed for reproducible tests."""
+        random.seed(42)
+
+    def test_injects_helper_class_at_module_level(self):
+        """Test that _JitChaosIterator helper class is injected at module level."""
+        code = dedent("""
+            def test_func():
+                a, b = [1, 2]
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.1):  # Below 0.15 threshold
+            mutator = UnpackingChaosMutator()
+            mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should have _JitChaosIterator class
+        self.assertIn("class _JitChaosIterator:", result)
+        self.assertIn("def __init__(self, iterable, mode='grow', trigger_count=50):", result)
+        self.assertIn("def __iter__(self):", result)
+        self.assertIn("def __next__(self):", result)
+        self.assertIn("def __length_hint__(self):", result)
+
+    def test_helper_class_has_grow_mode(self):
+        """Test that helper class implements grow mode."""
+        code = dedent("""
+            def test_func():
+                a, b = [1, 2]
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.1):
+            mutator = UnpackingChaosMutator()
+            mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should have grow mode logic
+        self.assertIn("mode == 'grow'", result)
+        self.assertIn("return None", result)  # Extra item in grow mode
+
+    def test_helper_class_has_shrink_mode(self):
+        """Test that helper class implements shrink mode."""
+        code = dedent("""
+            def test_func():
+                a, b = [1, 2]
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.1):
+            mutator = UnpackingChaosMutator()
+            mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should have shrink mode logic
+        self.assertIn("mode == 'shrink'", result)
+
+    def test_helper_class_has_type_switch_mode(self):
+        """Test that helper class implements type_switch mode."""
+        code = dedent("""
+            def test_func():
+                a, b = [1, 2]
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.1):
+            mutator = UnpackingChaosMutator()
+            mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should have type_switch mode logic
+        self.assertIn("mode == 'type_switch'", result)
+        self.assertIn("unexpected_string_type", result)
+
+    def test_helper_class_lies_about_length(self):
+        """Test that __length_hint__ returns misleading values."""
+        code = dedent("""
+            def test_func():
+                a, b = [1, 2]
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.1):
+            mutator = UnpackingChaosMutator()
+            mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should have __length_hint__ with misleading logic
+        self.assertIn("__length_hint__", result)
+        self.assertIn("len(self._items) - 1", result)  # Underreport
+        self.assertIn("len(self._items) + 1", result)  # Overreport
+
+    def test_transforms_unpacking_assignment(self):
+        """Test that unpacking assignment is wrapped with chaos iterator."""
+        code = dedent("""
+            def test_func():
+                a, b = [1, 2]
+        """)
+        tree = ast.parse(code)
+
+        # Force helper injection and assignment transformation
+        with patch("random.random", side_effect=[0.1, 0.1]):  # First for module, second for assign
+            with patch("random.choice", return_value="grow"):
+                with patch("random.randint", return_value=50):
+                    mutator = UnpackingChaosMutator()
+                    mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should wrap the assignment value
+        self.assertIn("_JitChaosIterator([1, 2]", result)
+
+    def test_transforms_for_loop_unpacking(self):
+        """Test that for loop with unpacking is wrapped."""
+        code = dedent("""
+            def test_func():
+                for x, y in [(1, 2), (3, 4)]:
+                    pass
+        """)
+        tree = ast.parse(code)
+
+        # Force helper injection and for loop transformation
+        with patch("random.random", side_effect=[0.1, 0.1]):  # First for module, second for loop
+            with patch("random.choice", return_value="shrink"):
+                with patch("random.randint", return_value=75):
+                    mutator = UnpackingChaosMutator()
+                    mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should wrap the iterator
+        self.assertIn("_JitChaosIterator([(1, 2), (3, 4)]", result)
+
+    def test_no_transformation_without_helper_injection(self):
+        """Test that assignments are not wrapped if helper wasn't injected."""
+        code = dedent("""
+            def test_func():
+                a, b = [1, 2]
+        """)
+        tree = ast.parse(code)
+
+        # High probability prevents helper injection
+        with patch("random.random", return_value=0.9):
+            mutator = UnpackingChaosMutator()
+            mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should NOT have chaos iterator
+        self.assertNotIn("_JitChaosIterator", result)
+        # Original code preserved
+        self.assertIn("a, b = [1, 2]", result)
+
+    def test_ignores_simple_assignments(self):
+        """Test that simple (non-unpacking) assignments are not transformed."""
+        code = dedent("""
+            def test_func():
+                x = 42
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.1):
+            mutator = UnpackingChaosMutator()
+            mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should NOT wrap simple assignment
+        self.assertNotIn("_JitChaosIterator(42)", result)
+        self.assertIn("x = 42", result)
+
+    def test_ignores_for_loops_without_unpacking(self):
+        """Test that for loops without unpacking are not transformed."""
+        code = dedent("""
+            def test_func():
+                for x in range(10):
+                    pass
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.1):
+            mutator = UnpackingChaosMutator()
+            mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should NOT wrap simple for loop
+        self.assertNotIn("_JitChaosIterator(range(10))", result)
+        self.assertIn("for x in range(10):", result)
+
+    def test_handles_list_unpacking_target(self):
+        """Test that list unpacking targets are recognized."""
+        code = dedent("""
+            def test_func():
+                [a, b, c] = [1, 2, 3]
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", side_effect=[0.1, 0.1]):
+            with patch("random.choice", return_value="grow"):
+                with patch("random.randint", return_value=50):
+                    mutator = UnpackingChaosMutator()
+                    mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should wrap the assignment
+        self.assertIn("_JitChaosIterator", result)
+
+    def test_skips_existing_helper_class(self):
+        """Test that helper is not re-injected if already present."""
+        code = dedent("""
+            class _JitChaosIterator:
+                pass
+            def test_func():
+                a, b = [1, 2]
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.1):
+            mutator = UnpackingChaosMutator()
+            mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should only have one _JitChaosIterator class definition
+        self.assertEqual(result.count("class _JitChaosIterator:"), 1)
+
+    def test_produces_valid_code(self):
+        """Test that output is valid, parseable Python."""
+        code = dedent("""
+            def test_func():
+                a, b = [1, 2]
+                for x, y in [(1, 2)]:
+                    pass
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.1):
+            mutator = UnpackingChaosMutator()
+            mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should be parseable
+        reparsed = ast.parse(result)
+        self.assertIsInstance(reparsed, ast.Module)
+
+    def test_mode_and_trigger_are_configurable(self):
+        """Test that mode and trigger_count are passed to the wrapper."""
+        code = dedent("""
+            def test_func():
+                a, b = [1, 2]
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", side_effect=[0.1, 0.1]):
+            with patch("random.choice", return_value="type_switch"):
+                with patch("random.randint", return_value=99):
+                    mutator = UnpackingChaosMutator()
+                    mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should have the configured mode and trigger
+        self.assertIn("mode='type_switch'", result)
+        self.assertIn("trigger_count=99", result)
+
+    def test_helper_tracks_call_count(self):
+        """Test that helper class tracks iteration call count."""
+        code = dedent("""
+            def test_func():
+                a, b = [1, 2]
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.1):
+            mutator = UnpackingChaosMutator()
+            mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should track call count
+        self.assertIn("self._call_count", result)
+        self.assertIn("self._call_count += 1", result)
+        self.assertIn("self._call_count > self._trigger_count", result)
 
 
 if __name__ == "__main__":

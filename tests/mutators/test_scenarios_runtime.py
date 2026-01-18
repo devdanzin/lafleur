@@ -874,7 +874,7 @@ class TestClosureStompMutator(unittest.TestCase):
                 inner_func_found = True
             if isinstance(node, ast.Expr) and "jit_stomp_closure" in ast.unparse(node):
                 stomp_found = True
-        
+
         self.assertTrue(inner_func_found)
         self.assertTrue(stomp_found)
 
@@ -897,20 +897,18 @@ class TestClosureStompMutator(unittest.TestCase):
         # def _jit_stomp_closure(...): ...
         # def _jit_stomp_closure(...): ... # redefined
         # _jit_stomp_closure(_jit_stomp_closure)
-        
+
         # We check by counting occurrences of the function name or call
         # Or simpler: checking that the result is identical to input (modulo formatting)
         # But AST roundtrip changes formatting.
-        
+
         # Check that we don't have the call pattern
         self.assertNotIn("_jit_stomp_closure(_jit_stomp_closure)", result)
-        
+
         # Also ensure we didn't inject the body of the helper again
         # The helper body has "CHAOS_STR"
         if "CHAOS_STR" not in code:
-             self.assertNotIn("CHAOS_STR", result)
-
-
+            self.assertNotIn("CHAOS_STR", result)
 
 
 if __name__ == "__main__":

@@ -6,6 +6,11 @@ This document contains important context for continuing work on the lafleur proj
 
 ### Recently Completed Work
 
+**PR #340**: `ClosureStompMutator` - **DONE**
+- Attacks JIT closure optimizations by injecting `_jit_stomp_closure` helper
+- Randomly corrupts `func.__closure__[i].cell_contents` at runtime
+- Invalidate type/value assumptions for nested functions
+
 **PR #339**: `PatternMatchingChaosMutator` - **MERGED**
 - Attacks JIT structural pattern matching (MATCH_MAPPING, MATCH_SEQUENCE, MATCH_CLASS)
 - Injects `_JitMatchChaos` helper with dynamic `__match_args__` property

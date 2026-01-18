@@ -878,6 +878,39 @@ class TestClosureStompMutator(unittest.TestCase):
         self.assertTrue(inner_func_found)
         self.assertTrue(stomp_found)
 
+    def test_closure_stomp_skips_helper(self):
+        """Test that the helper function itself is not recursively stomped."""
+        code = dedent("""
+            def _jit_stomp_closure(target_func):
+                pass
+        """)
+        tree = ast.parse(code)
+
+        # Force mutation if logic were not skipping
+        with patch("random.random", return_value=0.1):
+            mutator = ClosureStompMutator()
+            mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should NOT contain a recursive call to _jit_stomp_closure(_jit_stomp_closure)
+        # If it mutated, it would look like:
+        # def _jit_stomp_closure(...): ...
+        # def _jit_stomp_closure(...): ... # redefined
+        # _jit_stomp_closure(_jit_stomp_closure)
+        
+        # We check by counting occurrences of the function name or call
+        # Or simpler: checking that the result is identical to input (modulo formatting)
+        # But AST roundtrip changes formatting.
+        
+        # Check that we don't have the call pattern
+        self.assertNotIn("_jit_stomp_closure(_jit_stomp_closure)", result)
+        
+        # Also ensure we didn't inject the body of the helper again
+        # The helper body has "CHAOS_STR"
+        if "CHAOS_STR" not in code:
+             self.assertNotIn("CHAOS_STR", result)
+
+
 
 
 if __name__ == "__main__":

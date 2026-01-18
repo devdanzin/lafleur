@@ -647,6 +647,10 @@ class ClosureStompMutator(ast.NodeTransformer):
         if node.name.startswith("uop_harness"):
             return node
 
+        # Prevent recursive stomping of the helper function itself
+        if node.name == "_jit_stomp_closure":
+            return node
+
         # Apply with low probability to avoid excessive noise
         if random.random() > 0.15:
             return node

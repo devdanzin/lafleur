@@ -74,6 +74,7 @@ from lafleur.mutators.scenarios_data import (
     ZombieTraceMutator,
 )
 from lafleur.mutators.scenarios_runtime import (
+    ClosureStompMutator,
     FrameManipulator,
     GCInjector,
     GlobalInvalidator,
@@ -182,6 +183,7 @@ class ASTMutator:
             TypeShadowingMutator,
             ZombieTraceMutator,
             UnpackingChaosMutator,
+            ClosureStompMutator,
             GCInjector,
             DictPolluter,
             FunctionPatcher,

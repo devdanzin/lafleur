@@ -13,6 +13,7 @@ from textwrap import dedent
 from unittest.mock import patch
 
 from lafleur.mutators.scenarios_runtime import (
+    ClosureStompMutator,
     FrameManipulator,
     GCInjector,
     GlobalInvalidator,
@@ -762,6 +763,152 @@ class TestWeakRefCallbackChaos(unittest.TestCase):
         # Should use lambda to wrap callback
         self.assertIn("lambda ref:", result)
         self.assertIn("evil_callback_gc_7000(ref, 'gc_var_gc_7000')", result)
+
+
+class TestClosureStompMutator(unittest.TestCase):
+    """Test ClosureStompMutator."""
+
+    def setUp(self):
+        """Set random seed."""
+        random.seed(42)
+
+    def test_closure_stomp_injection(self):
+        """Test that the closure stomper is injected."""
+        code = dedent("""
+            def outer():
+                x = 1
+                def inner():
+                    return x
+        """)
+        tree = ast.parse(code)
+
+        # Force mutation (threshold is <= 0.15)
+        with patch("random.random", return_value=0.1):
+            mutator = ClosureStompMutator()
+            mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+
+        # Should have helper function
+        self.assertIn("def _jit_stomp_closure(target_func):", result)
+        # Should have call to helper
+        self.assertIn("_jit_stomp_closure(outer)", result)
+        # Should contain chaos values
+        self.assertIn("CHAOS_STR", result)
+
+    def test_closure_stomp_probability(self):
+        """Test that mutation respects probability."""
+        code = dedent("""
+            def outer():
+                pass
+        """)
+        tree = ast.parse(code)
+
+        # Force NO mutation (threshold is > 0.15)
+        with patch("random.random", return_value=0.2):
+            mutator = ClosureStompMutator()
+            mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        self.assertNotIn("_jit_stomp_closure", result)
+
+    def test_closure_stomp_valid_python(self):
+        """Test that generated code is valid Python."""
+        code = dedent("""
+            def outer():
+                x = 1
+                def inner():
+                    return x
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.1):
+            mutator = ClosureStompMutator()
+            mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        ast.parse(result)  # Should not raise SyntaxError
+
+    def test_closure_stomp_multiple_functions(self):
+        """Test injection for multiple functions."""
+        code = dedent("""
+            def f1():
+                pass
+            def f2():
+                pass
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.1):
+            mutator = ClosureStompMutator()
+            mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        self.assertIn("_jit_stomp_closure(f1)", result)
+        self.assertIn("_jit_stomp_closure(f2)", result)
+
+    def test_closure_stomp_harness_skip(self):
+        """Test that the harness function itself is skipped (returns FunctionDef, not list)."""
+        code = dedent("""
+            def uop_harness_test():
+                def inner():
+                    pass
+        """)
+        # Parse and get the FunctionDef node directly, mimicking MutationController
+        tree = ast.parse(code).body[0]
+        self.assertIsInstance(tree, ast.FunctionDef)
+
+        with patch("random.random", return_value=0.1):
+            mutator = ClosureStompMutator()
+            mutated_node = mutator.visit(tree)
+
+        # The root result must remain a FunctionDef
+        self.assertIsInstance(mutated_node, ast.FunctionDef)
+        self.assertEqual(mutated_node.name, "uop_harness_test")
+
+        # But the inner function SHOULD be mutated (check body)
+        inner_func_found = False
+        stomp_found = False
+        for node in mutated_node.body:
+            if isinstance(node, ast.FunctionDef) and node.name == "inner":
+                inner_func_found = True
+            if isinstance(node, ast.Expr) and "jit_stomp_closure" in ast.unparse(node):
+                stomp_found = True
+
+        self.assertTrue(inner_func_found)
+        self.assertTrue(stomp_found)
+
+    def test_closure_stomp_skips_helper(self):
+        """Test that the helper function itself is not recursively stomped."""
+        code = dedent("""
+            def _jit_stomp_closure(target_func):
+                pass
+        """)
+        tree = ast.parse(code)
+
+        # Force mutation if logic were not skipping
+        with patch("random.random", return_value=0.1):
+            mutator = ClosureStompMutator()
+            mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should NOT contain a recursive call to _jit_stomp_closure(_jit_stomp_closure)
+        # If it mutated, it would look like:
+        # def _jit_stomp_closure(...): ...
+        # def _jit_stomp_closure(...): ... # redefined
+        # _jit_stomp_closure(_jit_stomp_closure)
+
+        # We check by counting occurrences of the function name or call
+        # Or simpler: checking that the result is identical to input (modulo formatting)
+        # But AST roundtrip changes formatting.
+
+        # Check that we don't have the call pattern
+        self.assertNotIn("_jit_stomp_closure(_jit_stomp_closure)", result)
+
+        # Also ensure we didn't inject the body of the helper again
+        # The helper body has "CHAOS_STR"
+        if "CHAOS_STR" not in code:
+            self.assertNotIn("CHAOS_STR", result)
 
 
 if __name__ == "__main__":

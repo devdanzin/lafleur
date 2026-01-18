@@ -593,3 +593,84 @@ class StressPatternInjector(ast.NodeTransformer):
                 node.body[insert_pos:insert_pos] = snippet_nodes
 
         return node
+
+
+def _create_closure_stomper() -> ast.FunctionDef:
+    """
+    Creates a helper function `_jit_stomp_closure` that randomly corrupts
+    the closure cells of a given target function.
+    """
+    return cast(
+        ast.FunctionDef,
+        ast.parse(
+            dedent("""
+    def _jit_stomp_closure(target_func):
+        try:
+            if not hasattr(target_func, "__closure__") or not target_func.__closure__:
+                return
+            
+            # We need to import random locally to ensure it's available
+            import random
+            
+            for cell in target_func.__closure__:
+                try:
+                    # Randomly replace cell contents with chaotic values
+                    val = random.choice([None, "CHAOS_STR", 999999, 0.0, [], {}, object()])
+                    cell.cell_contents = val
+                except Exception:
+                    # Ignore read-only cells or other errors
+                    pass
+        except Exception:
+            pass
+    """)
+        ).body[0],
+    )
+
+
+class ClosureStompMutator(ast.NodeTransformer):
+    """
+    Injects a runtime attack that directly modifies `func.__closure__[i].cell_contents`,
+    potentially invalidating type/value assumptions made by the JIT for nested functions.
+
+    This mutator:
+    1. Injects a `_jit_stomp_closure` helper function.
+    2. Inserts a call to this helper immediately after a function definition.
+    """
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> ast.FunctionDef | list[ast.stmt]:
+        # First visit children
+        self.generic_visit(node)
+
+        # Do not stomp the harness function itself.
+        # This prevents the root node of the mutation (the harness) from being replaced
+        # by a list, which causes crashes in the MutationController pipeline.
+        if node.name.startswith("uop_harness"):
+            return node
+
+        # Prevent recursive stomping of the helper function itself
+        if node.name == "_jit_stomp_closure":
+            return node
+
+        # Apply with low probability to avoid excessive noise
+        if random.random() > 0.15:
+            return node
+
+        print(f"    -> Injecting closure stomper for '{node.name}'", file=sys.stderr)
+
+        # 1. Create the helper function AST
+        helper_ast = _create_closure_stomper()
+
+        # 2. Create the call to the helper: _jit_stomp_closure(node.name)
+        call_ast = ast.Expr(
+            value=ast.Call(
+                func=ast.Name(id="_jit_stomp_closure", ctx=ast.Load()),
+                args=[ast.Name(id=node.name, ctx=ast.Load())],
+                keywords=[],
+            )
+        )
+
+        # 3. Return the sequence: [node, helper, call]
+        # This defines the original function, then the helper, then calls the helper on the function.
+        # Note: We define the helper *at the site of use*. This might lead to redefinitions if used
+        # multiple times, but that's safe in Python.
+        return [node, helper_ast, call_ast]

@@ -641,6 +641,12 @@ class ClosureStompMutator(ast.NodeTransformer):
         # First visit children
         self.generic_visit(node)
 
+        # Do not stomp the harness function itself.
+        # This prevents the root node of the mutation (the harness) from being replaced
+        # by a list, which causes crashes in the MutationController pipeline.
+        if node.name.startswith("uop_harness"):
+            return node
+
         # Apply with low probability to avoid excessive noise
         if random.random() > 0.15:
             return node

@@ -847,6 +847,38 @@ class TestClosureStompMutator(unittest.TestCase):
         self.assertIn("_jit_stomp_closure(f1)", result)
         self.assertIn("_jit_stomp_closure(f2)", result)
 
+    def test_closure_stomp_harness_skip(self):
+        """Test that the harness function itself is skipped (returns FunctionDef, not list)."""
+        code = dedent("""
+            def uop_harness_test():
+                def inner():
+                    pass
+        """)
+        # Parse and get the FunctionDef node directly, mimicking MutationController
+        tree = ast.parse(code).body[0]
+        self.assertIsInstance(tree, ast.FunctionDef)
+
+        with patch("random.random", return_value=0.1):
+            mutator = ClosureStompMutator()
+            mutated_node = mutator.visit(tree)
+
+        # The root result must remain a FunctionDef
+        self.assertIsInstance(mutated_node, ast.FunctionDef)
+        self.assertEqual(mutated_node.name, "uop_harness_test")
+
+        # But the inner function SHOULD be mutated (check body)
+        inner_func_found = False
+        stomp_found = False
+        for node in mutated_node.body:
+            if isinstance(node, ast.FunctionDef) and node.name == "inner":
+                inner_func_found = True
+            if isinstance(node, ast.Expr) and "jit_stomp_closure" in ast.unparse(node):
+                stomp_found = True
+        
+        self.assertTrue(inner_func_found)
+        self.assertTrue(stomp_found)
+
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

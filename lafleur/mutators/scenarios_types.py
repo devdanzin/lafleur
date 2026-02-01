@@ -1162,3 +1162,736 @@ class ManyVarsInjector(ast.NodeTransformer):
             ast.fix_missing_locations(node)
 
         return node
+
+
+class DynamicClassSwapper(ast.NodeTransformer):
+    """
+    Aggressively swaps objects between incompatible classes.
+
+    Goes beyond LatticeSurfingMutator by:
+    - Swapping to built-in types (int, str, list subclasses)
+    - Swapping between user classes with incompatible __dict__
+    - Swapping to/from types with __slots__
+    - Swapping between classes with different MRO depths
+
+    Targets the `set_class` rare event to stress JIT type guards and
+    deoptimization logic.
+    """
+
+    ATTACK_SCENARIOS = [
+        "builtin_swap",
+        "slots_swap",
+        "mro_depth_swap",
+        "incompatible_dict_swap",
+    ]
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> ast.FunctionDef:
+        self.generic_visit(node)
+
+        if not node.name.startswith("uop_harness") or not node.body:
+            return node
+
+        if random.random() < 0.12:  # 12% probability
+            attack_type = random.choice(self.ATTACK_SCENARIOS)
+            p_prefix = f"swap_{random.randint(1000, 9999)}"
+
+            print(
+                f"    -> Injecting DynamicClassSwapper ({attack_type}) with prefix '{p_prefix}'",
+                file=sys.stderr,
+            )
+
+            if attack_type == "builtin_swap":
+                scenario_ast = self._create_builtin_swap_attack(p_prefix)
+            elif attack_type == "slots_swap":
+                scenario_ast = self._create_slots_swap_attack(p_prefix)
+            elif attack_type == "mro_depth_swap":
+                scenario_ast = self._create_mro_depth_swap_attack(p_prefix)
+            else:  # incompatible_dict_swap
+                scenario_ast = self._create_incompatible_dict_swap_attack(p_prefix)
+
+            # Inject the scenario
+            injection_point = random.randint(0, len(node.body))
+            node.body[injection_point:injection_point] = scenario_ast
+            ast.fix_missing_locations(node)
+
+        return node
+
+    def _create_builtin_swap_attack(self, prefix: str) -> list[ast.stmt]:
+        """Swap from user class to built-in type subclass."""
+        attack_code = dedent(f"""
+            # Built-in type swap attack
+            print('[{prefix}] Running builtin swap attack...', file=sys.stderr)
+
+            # Create a user class with __dict__
+            class UserClass_{prefix}:
+                def __init__(self, value):
+                    self.value = value
+                def get_value(self):
+                    return self.value
+
+            # Create int subclass that accepts __dict__
+            class IntSubclass_{prefix}(int):
+                def __new__(cls, val):
+                    instance = super().__new__(cls, val)
+                    return instance
+                def get_value(self):
+                    return int(self)
+
+            # Create str subclass that accepts __dict__
+            class StrSubclass_{prefix}(str):
+                def __new__(cls, val=""):
+                    instance = super().__new__(cls, val)
+                    return instance
+                def get_value(self):
+                    return str(self)
+
+            obj_{prefix} = UserClass_{prefix}(42)
+
+            # Phase 1: Warmup - let JIT compile method calls
+            for i_{prefix} in range(200):
+                try:
+                    _ = obj_{prefix}.get_value()
+                except Exception:
+                    pass
+
+            # Phase 2: Swap to int subclass
+            try:
+                print('[{prefix}] Swapping to int subclass...', file=sys.stderr)
+                obj_{prefix}.__class__ = IntSubclass_{prefix}
+                _ = obj_{prefix}.get_value()
+            except (TypeError, AttributeError):
+                pass
+
+            # Phase 3: Swap to str subclass
+            try:
+                print('[{prefix}] Swapping to str subclass...', file=sys.stderr)
+                obj_{prefix}.__class__ = StrSubclass_{prefix}
+                _ = obj_{prefix}.get_value()
+            except (TypeError, AttributeError):
+                pass
+
+            # Phase 4: Trigger more method calls after swaps
+            for i_{prefix} in range(50):
+                try:
+                    _ = obj_{prefix}.get_value()
+                except (TypeError, AttributeError):
+                    pass
+        """)
+        return ast.parse(attack_code).body
+
+    def _create_slots_swap_attack(self, prefix: str) -> list[ast.stmt]:
+        """Swap between classes with/without __slots__."""
+        attack_code = dedent(f"""
+            # Slots swap attack
+            print('[{prefix}] Running slots swap attack...', file=sys.stderr)
+
+            # Class with __dict__ (no __slots__)
+            class DictClass_{prefix}:
+                def __init__(self):
+                    self.x = 1
+                    self.y = 2
+                def compute(self):
+                    return self.x + self.y
+
+            # Class with __slots__ (no __dict__)
+            class SlotsClass_{prefix}:
+                __slots__ = ['x', 'y']
+                def __init__(self):
+                    self.x = 10
+                    self.y = 20
+                def compute(self):
+                    return self.x * self.y
+
+            # Class with both __slots__ and __dict__
+            class MixedClass_{prefix}:
+                __slots__ = ['x', '__dict__']
+                def __init__(self):
+                    self.x = 100
+                    self.y = 200  # Goes to __dict__
+                def compute(self):
+                    return self.x - self.y
+
+            obj_{prefix} = DictClass_{prefix}()
+
+            # Phase 1: Warmup with DictClass
+            for i_{prefix} in range(200):
+                try:
+                    _ = obj_{prefix}.compute()
+                except Exception:
+                    pass
+
+            # Phase 2: Try to swap to SlotsClass (should fail - incompatible layout)
+            try:
+                print('[{prefix}] Trying swap to SlotsClass...', file=sys.stderr)
+                obj_{prefix}.__class__ = SlotsClass_{prefix}
+                _ = obj_{prefix}.compute()
+            except (TypeError, AttributeError):
+                pass
+
+            # Phase 3: Create MixedClass instance and swap
+            obj2_{prefix} = MixedClass_{prefix}()
+            for i_{prefix} in range(200):
+                try:
+                    _ = obj2_{prefix}.compute()
+                except Exception:
+                    pass
+
+            # Phase 4: Try swapping MixedClass to DictClass
+            try:
+                print('[{prefix}] Swapping MixedClass to DictClass...', file=sys.stderr)
+                obj2_{prefix}.__class__ = DictClass_{prefix}
+                _ = obj2_{prefix}.compute()
+            except (TypeError, AttributeError):
+                pass
+        """)
+        return ast.parse(attack_code).body
+
+    def _create_mro_depth_swap_attack(self, prefix: str) -> list[ast.stmt]:
+        """Swap between classes with different MRO depths."""
+        attack_code = dedent(f"""
+            # MRO depth swap attack
+            print('[{prefix}] Running MRO depth swap attack...', file=sys.stderr)
+
+            # Simple class - MRO depth 1
+            class Shallow_{prefix}:
+                def method(self):
+                    return "shallow"
+                def depth(self):
+                    return 1
+
+            # Deep class hierarchy - MRO depth 4
+            class Level1_{prefix}:
+                def method(self):
+                    return "level1"
+                def depth(self):
+                    return 1
+
+            class Level2_{prefix}(Level1_{prefix}):
+                def depth(self):
+                    return 2
+
+            class Level3_{prefix}(Level2_{prefix}):
+                def depth(self):
+                    return 3
+
+            class Deep_{prefix}(Level3_{prefix}):
+                def method(self):
+                    return "deep"
+                def depth(self):
+                    return 4
+
+            # Diamond inheritance - complex MRO
+            class MixinA_{prefix}:
+                def mixin_method(self):
+                    return "A"
+
+            class MixinB_{prefix}:
+                def mixin_method(self):
+                    return "B"
+
+            class Diamond_{prefix}(MixinA_{prefix}, MixinB_{prefix}):
+                def method(self):
+                    return "diamond"
+                def depth(self):
+                    return len(type(self).__mro__)
+
+            obj_{prefix} = Shallow_{prefix}()
+
+            # Phase 1: Warmup on shallow class
+            for i_{prefix} in range(200):
+                try:
+                    _ = obj_{prefix}.method()
+                    _ = obj_{prefix}.depth()
+                except Exception:
+                    pass
+
+            # Phase 2: Swap to deep hierarchy
+            try:
+                print('[{prefix}] Swapping to Deep class...', file=sys.stderr)
+                obj_{prefix}.__class__ = Deep_{prefix}
+                _ = obj_{prefix}.method()
+                _ = obj_{prefix}.depth()
+            except (TypeError, AttributeError):
+                pass
+
+            # Phase 3: Swap to diamond inheritance
+            try:
+                print('[{prefix}] Swapping to Diamond class...', file=sys.stderr)
+                obj_{prefix}.__class__ = Diamond_{prefix}
+                _ = obj_{prefix}.method()
+                _ = obj_{prefix}.mixin_method()
+            except (TypeError, AttributeError):
+                pass
+
+            # Phase 4: Swap back to shallow
+            try:
+                print('[{prefix}] Swapping back to Shallow class...', file=sys.stderr)
+                obj_{prefix}.__class__ = Shallow_{prefix}
+                _ = obj_{prefix}.method()
+            except (TypeError, AttributeError):
+                pass
+
+            # Phase 5: Stress test with rapid swaps
+            for i_{prefix} in range(100):
+                try:
+                    if i_{prefix} % 3 == 0:
+                        obj_{prefix}.__class__ = Shallow_{prefix}
+                    elif i_{prefix} % 3 == 1:
+                        obj_{prefix}.__class__ = Deep_{prefix}
+                    else:
+                        obj_{prefix}.__class__ = Diamond_{prefix}
+                    _ = obj_{prefix}.method()
+                except (TypeError, AttributeError):
+                    pass
+        """)
+        return ast.parse(attack_code).body
+
+    def _create_incompatible_dict_swap_attack(self, prefix: str) -> list[ast.stmt]:
+        """Swap between classes with incompatible __dict__ attributes."""
+        attack_code = dedent(f"""
+            # Incompatible dict swap attack
+            print('[{prefix}] Running incompatible dict swap attack...', file=sys.stderr)
+
+            # Class expecting attributes x, y
+            class ClassXY_{prefix}:
+                def __init__(self):
+                    self.x = 1
+                    self.y = 2
+                def compute(self):
+                    return self.x + self.y
+
+            # Class expecting attributes a, b, c (different attributes)
+            class ClassABC_{prefix}:
+                def __init__(self):
+                    self.a = 10
+                    self.b = 20
+                    self.c = 30
+                def compute(self):
+                    return self.a + self.b + self.c
+
+            # Class expecting attributes with different types
+            class ClassMixed_{prefix}:
+                def __init__(self):
+                    self.data = [1, 2, 3]
+                    self.name = "test"
+                def compute(self):
+                    return len(self.data) + len(self.name)
+
+            obj_{prefix} = ClassXY_{prefix}()
+
+            # Phase 1: Warmup - JIT specializes for ClassXY
+            for i_{prefix} in range(200):
+                try:
+                    _ = obj_{prefix}.compute()
+                    _ = obj_{prefix}.x
+                    _ = obj_{prefix}.y
+                except Exception:
+                    pass
+
+            # Phase 2: Swap to ClassABC - x, y no longer exist
+            try:
+                print('[{prefix}] Swapping to ClassABC...', file=sys.stderr)
+                obj_{prefix}.__class__ = ClassABC_{prefix}
+                # compute() will fail - no a, b, c attributes
+                _ = obj_{prefix}.compute()
+            except (TypeError, AttributeError):
+                pass
+
+            # Phase 3: Add expected attributes and try again
+            try:
+                obj_{prefix}.a = 100
+                obj_{prefix}.b = 200
+                obj_{prefix}.c = 300
+                _ = obj_{prefix}.compute()
+            except (TypeError, AttributeError):
+                pass
+
+            # Phase 4: Swap to ClassMixed
+            try:
+                print('[{prefix}] Swapping to ClassMixed...', file=sys.stderr)
+                obj_{prefix}.__class__ = ClassMixed_{prefix}
+                _ = obj_{prefix}.compute()
+            except (TypeError, AttributeError):
+                pass
+
+            # Phase 5: Rapidly alternate between classes
+            for i_{prefix} in range(100):
+                try:
+                    if i_{prefix} % 2 == 0:
+                        obj_{prefix}.__class__ = ClassXY_{prefix}
+                        obj_{prefix}.x = i_{prefix}
+                        obj_{prefix}.y = i_{prefix} + 1
+                    else:
+                        obj_{prefix}.__class__ = ClassABC_{prefix}
+                        obj_{prefix}.a = i_{prefix}
+                        obj_{prefix}.b = i_{prefix} + 1
+                        obj_{prefix}.c = i_{prefix} + 2
+                    _ = obj_{prefix}.compute()
+                except (TypeError, AttributeError):
+                    pass
+        """)
+        return ast.parse(attack_code).body
+
+
+class BasesRewriteMutator(ast.NodeTransformer):
+    """
+    Creatively manipulates __bases__ to attack MRO caching.
+
+    Complements MROShuffler with more creative __bases__ manipulations:
+    - Replace bases with empty tuple (remove all parents)
+    - Inject built-in types into bases
+    - Toggle between single/multiple inheritance
+    - Replace bases with completely different classes
+
+    Targets the `set_bases` rare event to invalidate JIT's MRO caching
+    assumptions.
+    """
+
+    ATTACK_SCENARIOS = [
+        "bases_removal",
+        "builtin_injection",
+        "inheritance_toggle",
+        "base_replacement",
+    ]
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> ast.FunctionDef:
+        self.generic_visit(node)
+
+        if not node.name.startswith("uop_harness") or not node.body:
+            return node
+
+        if random.random() < 0.12:  # 12% probability
+            attack_type = random.choice(self.ATTACK_SCENARIOS)
+            p_prefix = f"bases_{random.randint(1000, 9999)}"
+
+            print(
+                f"    -> Injecting BasesRewriteMutator ({attack_type}) with prefix '{p_prefix}'",
+                file=sys.stderr,
+            )
+
+            if attack_type == "bases_removal":
+                scenario_ast = self._create_bases_removal_attack(p_prefix)
+            elif attack_type == "builtin_injection":
+                scenario_ast = self._create_builtin_injection_attack(p_prefix)
+            elif attack_type == "inheritance_toggle":
+                scenario_ast = self._create_inheritance_toggle_attack(p_prefix)
+            else:  # base_replacement
+                scenario_ast = self._create_base_replacement_attack(p_prefix)
+
+            # Inject the scenario
+            injection_point = random.randint(0, len(node.body))
+            node.body[injection_point:injection_point] = scenario_ast
+            ast.fix_missing_locations(node)
+
+        return node
+
+    def _create_bases_removal_attack(self, prefix: str) -> list[ast.stmt]:
+        """Remove all bases from a class."""
+        attack_code = dedent(f"""
+            # Bases removal attack
+            print('[{prefix}] Running bases removal attack...', file=sys.stderr)
+
+            class Base_{prefix}:
+                def method(self):
+                    return "from_base"
+                def base_only(self):
+                    return "base_only_method"
+
+            class Derived_{prefix}(Base_{prefix}):
+                pass
+
+            obj_{prefix} = Derived_{prefix}()
+
+            # Phase 1: Warmup - method is inherited from Base
+            for i_{prefix} in range(200):
+                try:
+                    _ = obj_{prefix}.method()
+                    _ = obj_{prefix}.base_only()
+                except Exception:
+                    pass
+
+            # Phase 2: Set bases to object only
+            try:
+                print('[{prefix}] Setting bases to (object,)...', file=sys.stderr)
+                Derived_{prefix}.__bases__ = (object,)
+                _ = obj_{prefix}.method()  # Should fail - method no longer inherited
+            except (TypeError, AttributeError):
+                pass
+
+            # Phase 3: Restore original base
+            try:
+                print('[{prefix}] Restoring original base...', file=sys.stderr)
+                Derived_{prefix}.__bases__ = (Base_{prefix},)
+                _ = obj_{prefix}.method()  # Should work again
+            except (TypeError, AttributeError):
+                pass
+
+            # Phase 4: Rapidly toggle bases
+            for i_{prefix} in range(100):
+                try:
+                    if i_{prefix} % 2 == 0:
+                        Derived_{prefix}.__bases__ = (object,)
+                    else:
+                        Derived_{prefix}.__bases__ = (Base_{prefix},)
+                    _ = obj_{prefix}.method()
+                except (TypeError, AttributeError):
+                    pass
+        """)
+        return ast.parse(attack_code).body
+
+    def _create_builtin_injection_attack(self, prefix: str) -> list[ast.stmt]:
+        """Inject built-in types into bases."""
+        attack_code = dedent(f"""
+            # Builtin injection attack
+            print('[{prefix}] Running builtin injection attack...', file=sys.stderr)
+
+            class BaseA_{prefix}:
+                def method(self):
+                    return "A"
+
+            class BaseB_{prefix}:
+                def method(self):
+                    return "B"
+
+            class Target_{prefix}(BaseA_{prefix}, BaseB_{prefix}):
+                pass
+
+            obj_{prefix} = Target_{prefix}()
+
+            # Phase 1: Warmup
+            for i_{prefix} in range(200):
+                try:
+                    _ = obj_{prefix}.method()
+                except Exception:
+                    pass
+
+            # Phase 2: Inject int-like class into bases
+            try:
+                print('[{prefix}] Injecting IntMixin into bases...', file=sys.stderr)
+
+                class IntMixin_{prefix}:
+                    def __int__(self):
+                        return 42
+
+                Target_{prefix}.__bases__ = (IntMixin_{prefix}, BaseA_{prefix}, BaseB_{prefix})
+                _ = obj_{prefix}.method()
+                _ = int(obj_{prefix})
+            except (TypeError, AttributeError):
+                pass
+
+            # Phase 3: Inject dict-like class into bases
+            try:
+                print('[{prefix}] Injecting DictMixin into bases...', file=sys.stderr)
+
+                class DictMixin_{prefix}:
+                    def keys(self):
+                        return []
+
+                Target_{prefix}.__bases__ = (DictMixin_{prefix}, BaseA_{prefix})
+                _ = obj_{prefix}.method()
+                _ = obj_{prefix}.keys()
+            except (TypeError, AttributeError):
+                pass
+
+            # Phase 4: Try injecting actual Exception as base
+            try:
+                print('[{prefix}] Injecting Exception into bases...', file=sys.stderr)
+
+                class ExcMixin_{prefix}(Exception):
+                    pass
+
+                # This will likely fail due to layout conflicts
+                Target_{prefix}.__bases__ = (ExcMixin_{prefix}, BaseA_{prefix})
+                _ = obj_{prefix}.method()
+            except (TypeError, AttributeError):
+                pass
+
+            # Phase 5: Restore original bases
+            try:
+                Target_{prefix}.__bases__ = (BaseA_{prefix}, BaseB_{prefix})
+                _ = obj_{prefix}.method()
+            except (TypeError, AttributeError):
+                pass
+        """)
+        return ast.parse(attack_code).body
+
+    def _create_inheritance_toggle_attack(self, prefix: str) -> list[ast.stmt]:
+        """Toggle between single and multiple inheritance."""
+        attack_code = dedent(f"""
+            # Inheritance toggle attack
+            print('[{prefix}] Running inheritance toggle attack...', file=sys.stderr)
+
+            class Parent1_{prefix}:
+                def method1(self):
+                    return "p1"
+                def shared(self):
+                    return "from_p1"
+
+            class Parent2_{prefix}:
+                def method2(self):
+                    return "p2"
+                def shared(self):
+                    return "from_p2"
+
+            class Parent3_{prefix}:
+                def method3(self):
+                    return "p3"
+                def shared(self):
+                    return "from_p3"
+
+            # Start with single inheritance
+            class Child_{prefix}(Parent1_{prefix}):
+                pass
+
+            obj_{prefix} = Child_{prefix}()
+
+            # Phase 1: Warmup with single inheritance
+            for i_{prefix} in range(200):
+                try:
+                    _ = obj_{prefix}.method1()
+                    _ = obj_{prefix}.shared()
+                except Exception:
+                    pass
+
+            # Phase 2: Switch to multiple inheritance
+            try:
+                print('[{prefix}] Switching to multiple inheritance...', file=sys.stderr)
+                Child_{prefix}.__bases__ = (Parent1_{prefix}, Parent2_{prefix})
+                _ = obj_{prefix}.method1()
+                _ = obj_{prefix}.method2()
+                _ = obj_{prefix}.shared()  # Now from Parent1 (first in MRO)
+            except (TypeError, AttributeError):
+                pass
+
+            # Phase 3: Add third parent
+            try:
+                print('[{prefix}] Adding third parent...', file=sys.stderr)
+                Child_{prefix}.__bases__ = (Parent1_{prefix}, Parent2_{prefix}, Parent3_{prefix})
+                _ = obj_{prefix}.method1()
+                _ = obj_{prefix}.method2()
+                _ = obj_{prefix}.method3()
+            except (TypeError, AttributeError):
+                pass
+
+            # Phase 4: Switch back to single inheritance
+            try:
+                print('[{prefix}] Switching back to single inheritance...', file=sys.stderr)
+                Child_{prefix}.__bases__ = (Parent2_{prefix},)
+                _ = obj_{prefix}.method2()
+                _ = obj_{prefix}.shared()  # Now from Parent2
+            except (TypeError, AttributeError):
+                pass
+
+            # Phase 5: Rapid toggling
+            for i_{prefix} in range(100):
+                try:
+                    if i_{prefix} % 4 == 0:
+                        Child_{prefix}.__bases__ = (Parent1_{prefix},)
+                    elif i_{prefix} % 4 == 1:
+                        Child_{prefix}.__bases__ = (Parent2_{prefix},)
+                    elif i_{prefix} % 4 == 2:
+                        Child_{prefix}.__bases__ = (Parent1_{prefix}, Parent2_{prefix})
+                    else:
+                        Child_{prefix}.__bases__ = (Parent3_{prefix}, Parent1_{prefix})
+                    _ = obj_{prefix}.shared()
+                except (TypeError, AttributeError):
+                    pass
+        """)
+        return ast.parse(attack_code).body
+
+    def _create_base_replacement_attack(self, prefix: str) -> list[ast.stmt]:
+        """Replace all bases with completely different classes."""
+        attack_code = dedent(f"""
+            # Base replacement attack
+            print('[{prefix}] Running base replacement attack...', file=sys.stderr)
+
+            # Original hierarchy
+            class OrigBase_{prefix}:
+                val = 100
+                def method(self):
+                    return "original"
+                def orig_only(self):
+                    return "original_only"
+
+            # Replacement hierarchy (completely different)
+            class NewBase_{prefix}:
+                val = 999
+                def method(self):
+                    return "replacement"
+                def new_only(self):
+                    return "new_only"
+
+            # Alternative replacement
+            class AltBase_{prefix}:
+                val = -1
+                def method(self):
+                    return "alternative"
+                def alt_only(self):
+                    return "alt_only"
+
+            class Target_{prefix}(OrigBase_{prefix}):
+                pass
+
+            obj_{prefix} = Target_{prefix}()
+
+            # Phase 1: Warmup with original base
+            for i_{prefix} in range(200):
+                try:
+                    _ = obj_{prefix}.method()
+                    _ = obj_{prefix}.orig_only()
+                    _ = Target_{prefix}.val
+                except Exception:
+                    pass
+
+            # Phase 2: Complete base replacement
+            try:
+                print('[{prefix}] Replacing base with NewBase...', file=sys.stderr)
+                Target_{prefix}.__bases__ = (NewBase_{prefix},)
+                _ = obj_{prefix}.method()  # Returns "replacement" now
+                _ = obj_{prefix}.new_only()  # Available now
+                _ = Target_{prefix}.val  # 999 now
+            except (TypeError, AttributeError):
+                pass
+
+            # Phase 3: Replace with alternative
+            try:
+                print('[{prefix}] Replacing base with AltBase...', file=sys.stderr)
+                Target_{prefix}.__bases__ = (AltBase_{prefix},)
+                _ = obj_{prefix}.method()  # Returns "alternative"
+                _ = Target_{prefix}.val  # -1 now
+            except (TypeError, AttributeError):
+                pass
+
+            # Phase 4: Mix old and new bases
+            try:
+                print('[{prefix}] Mixing bases...', file=sys.stderr)
+                Target_{prefix}.__bases__ = (NewBase_{prefix}, AltBase_{prefix})
+                _ = obj_{prefix}.method()  # From NewBase (first in MRO)
+            except (TypeError, AttributeError):
+                pass
+
+            # Phase 5: Restore original and trigger cached lookups
+            try:
+                print('[{prefix}] Restoring original base...', file=sys.stderr)
+                Target_{prefix}.__bases__ = (OrigBase_{prefix},)
+                _ = obj_{prefix}.method()
+                _ = obj_{prefix}.orig_only()
+            except (TypeError, AttributeError):
+                pass
+
+            # Phase 6: Rapid replacement cycle
+            bases_list_{prefix} = [
+                (OrigBase_{prefix},),
+                (NewBase_{prefix},),
+                (AltBase_{prefix},),
+                (NewBase_{prefix}, AltBase_{prefix}),
+            ]
+            for i_{prefix} in range(100):
+                try:
+                    Target_{prefix}.__bases__ = bases_list_{prefix}[i_{prefix} % len(bases_list_{prefix})]
+                    _ = obj_{prefix}.method()
+                    _ = Target_{prefix}.val
+                except (TypeError, AttributeError):
+                    pass
+        """)
+        return ast.parse(attack_code).body

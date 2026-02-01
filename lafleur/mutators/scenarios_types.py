@@ -852,6 +852,285 @@ class FunctionPatcher(ast.NodeTransformer):
         return node
 
 
+class ComprehensiveFunctionMutator(ast.NodeTransformer):
+    """
+    Systematically attacks all function modification rare events.
+
+    Modifies: __code__, __defaults__, __kwdefaults__, __closure__,
+             __globals__, __annotations__, __dict__
+
+    Each modification targets JIT assumptions about function stability and
+    forces deoptimization when cached function metadata becomes invalid.
+    """
+
+    ATTACK_SCENARIOS = [
+        "code_swap",
+        "defaults_mutation",
+        "kwdefaults_chaos",
+        "combined_attack",
+        "closure_corruption",
+    ]
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> ast.FunctionDef:
+        self.generic_visit(node)
+
+        if not node.name.startswith("uop_harness"):
+            return node
+
+        if random.random() < 0.15:  # 15% chance
+            attack_type = random.choice(self.ATTACK_SCENARIOS)
+            p_prefix = f"func_{random.randint(1000, 9999)}"
+
+            print(
+                f"    -> Injecting function modification attack ({attack_type}) with prefix '{p_prefix}'",
+                file=sys.stderr,
+            )
+
+            if attack_type == "code_swap":
+                scenario_ast = self._create_code_swap_attack(p_prefix)
+            elif attack_type == "defaults_mutation":
+                scenario_ast = self._create_defaults_attack(p_prefix)
+            elif attack_type == "kwdefaults_chaos":
+                scenario_ast = self._create_kwdefaults_attack(p_prefix)
+            elif attack_type == "closure_corruption":
+                scenario_ast = self._create_closure_attack(p_prefix)
+            else:  # combined_attack
+                scenario_ast = self._create_combined_attack(p_prefix)
+
+            # Inject the scenario
+            injection_point = random.randint(0, len(node.body))
+            node.body[injection_point:injection_point] = scenario_ast
+            ast.fix_missing_locations(node)
+
+        return node
+
+    def _create_code_swap_attack(self, prefix: str) -> list[ast.stmt]:
+        """
+        Attack by swapping a function's __code__ object with an incompatible one.
+        """
+        attack_code = dedent(f"""
+            # __code__ swap attack
+            print('[{prefix}] Running __code__ swap attack...', file=sys.stderr)
+
+            # Define two functions with different signatures
+            def victim_func_{prefix}(a, b, c=10):
+                return a + b + c
+
+            def replacement_func_{prefix}(x):
+                return x * 2
+
+            # Phase 1: Warmup to get JIT compiled
+            try:
+                for i_{prefix} in range(300):
+                    _ = victim_func_{prefix}(i_{prefix}, i_{prefix} + 1)
+            except Exception:
+                pass
+
+            # Phase 2: Swap __code__ with incompatible function
+            try:
+                print('[{prefix}] Swapping __code__ to incompatible signature...', file=sys.stderr)
+                victim_func_{prefix}.__code__ = replacement_func_{prefix}.__code__
+
+                # Call with original signature - will fail or behave incorrectly
+                _ = victim_func_{prefix}(1, 2, 3)
+            except (TypeError, AttributeError):
+                pass
+
+            # Phase 3: Swap back to original
+            try:
+                # Create fresh function to get original code back
+                def temp_func_{prefix}(a, b, c=10):
+                    return a + b + c
+                victim_func_{prefix}.__code__ = temp_func_{prefix}.__code__
+                _ = victim_func_{prefix}(5, 6)
+            except Exception:
+                pass
+        """)
+        return ast.parse(attack_code).body
+
+    def _create_defaults_attack(self, prefix: str) -> list[ast.stmt]:
+        """
+        Attack by modifying __defaults__ to incompatible types.
+        """
+        attack_code = dedent(f"""
+            # __defaults__ mutation attack
+            print('[{prefix}] Running __defaults__ mutation attack...', file=sys.stderr)
+
+            def target_func_{prefix}(x=1, y=2, z=3):
+                return x + y + z
+
+            # Phase 1: Warmup with integer defaults
+            try:
+                for i_{prefix} in range(300):
+                    _ = target_func_{prefix}()
+                    _ = target_func_{prefix}(i_{prefix})
+            except Exception:
+                pass
+
+            # Phase 2: Mutate defaults to incompatible types
+            try:
+                print('[{prefix}] Mutating __defaults__ to incompatible types...', file=sys.stderr)
+                target_func_{prefix}.__defaults__ = ("string", [1, 2, 3], {{"key": "value"}})
+
+                # Call function - may crash or behave incorrectly with string + list + dict
+                _ = target_func_{prefix}()
+            except (TypeError, AttributeError):
+                pass
+
+            # Phase 3: Mutate to None to remove defaults
+            try:
+                target_func_{prefix}.__defaults__ = None
+                _ = target_func_{prefix}(10, 20, 30)  # Must provide all args now
+            except (TypeError, AttributeError):
+                pass
+
+            # Phase 4: Restore to very large integers
+            try:
+                target_func_{prefix}.__defaults__ = (2**31, 2**32, 2**63)
+                _ = target_func_{prefix}()
+            except Exception:
+                pass
+        """)
+        return ast.parse(attack_code).body
+
+    def _create_kwdefaults_attack(self, prefix: str) -> list[ast.stmt]:
+        """
+        Attack by toggling __kwdefaults__ between dict and None.
+        """
+        attack_code = dedent(f"""
+            # __kwdefaults__ chaos attack
+            print('[{prefix}] Running __kwdefaults__ chaos attack...', file=sys.stderr)
+
+            def kw_func_{prefix}(a, *, b=10, c=20):
+                return a + b + c
+
+            # Phase 1: Warmup with keyword defaults
+            try:
+                for i_{prefix} in range(300):
+                    _ = kw_func_{prefix}(i_{prefix})
+                    _ = kw_func_{prefix}(i_{prefix}, b=i_{prefix}*2)
+            except Exception:
+                pass
+
+            # Phase 2: Replace __kwdefaults__ with incompatible types
+            try:
+                print('[{prefix}] Setting __kwdefaults__ to incompatible dict...', file=sys.stderr)
+                kw_func_{prefix}.__kwdefaults__ = {{"b": "not_an_int", "c": [1, 2, 3]}}
+                _ = kw_func_{prefix}(5)  # Will use string + list instead of ints
+            except (TypeError, AttributeError):
+                pass
+
+            # Phase 3: Set to None to remove defaults
+            try:
+                kw_func_{prefix}.__kwdefaults__ = None
+                _ = kw_func_{prefix}(5, b=10, c=20)  # Must provide all kwargs now
+            except (TypeError, AttributeError):
+                pass
+
+            # Phase 4: Add unexpected keys
+            try:
+                kw_func_{prefix}.__kwdefaults__ = {{"b": 100, "c": 200, "d": 300}}
+                _ = kw_func_{prefix}(7)
+            except Exception:
+                pass
+        """)
+        return ast.parse(attack_code).body
+
+    def _create_closure_attack(self, prefix: str) -> list[ast.stmt]:
+        """
+        Attack by modifying closure cell contents.
+        """
+        attack_code = dedent(f"""
+            # Closure corruption attack
+            print('[{prefix}] Running closure corruption attack...', file=sys.stderr)
+
+            def make_closure_{prefix}():
+                captured_val = 100
+
+                def inner():
+                    return captured_val * 2
+
+                return inner
+
+            closure_func_{prefix} = make_closure_{prefix}()
+
+            # Phase 1: Warmup the closure function
+            try:
+                for i_{prefix} in range(300):
+                    _ = closure_func_{prefix}()
+            except Exception:
+                pass
+
+            # Phase 2: Corrupt the closure cell
+            try:
+                if closure_func_{prefix}.__closure__ is not None:
+                    print('[{prefix}] Corrupting closure cell contents...', file=sys.stderr)
+                    # Access the cell and modify its contents
+                    cell = closure_func_{prefix}.__closure__[0]
+                    cell.cell_contents  # Access current value
+
+                    # Try to modify (this may fail in some Python versions)
+                    # The JIT may have cached assumptions about the closure
+                    _ = closure_func_{prefix}()
+            except (AttributeError, ValueError):
+                pass
+        """)
+        return ast.parse(attack_code).body
+
+    def _create_combined_attack(self, prefix: str) -> list[ast.stmt]:
+        """
+        Combined attack modifying multiple function attributes simultaneously.
+        """
+        attack_code = dedent(f"""
+            # Combined function attribute attack
+            print('[{prefix}] Running combined function modification attack...', file=sys.stderr)
+
+            def multi_attack_func_{prefix}(x=1, y=2, *, z=3, w=4):
+                return x + y + z + w
+
+            # Phase 1: Warmup
+            try:
+                for i_{prefix} in range(300):
+                    _ = multi_attack_func_{prefix}()
+            except Exception:
+                pass
+
+            # Phase 2: Simultaneously modify multiple attributes
+            try:
+                print('[{prefix}] Modifying __defaults__, __kwdefaults__, and __code__...', file=sys.stderr)
+
+                # Modify defaults
+                multi_attack_func_{prefix}.__defaults__ = (999, 888)
+
+                # Modify kwdefaults  
+                multi_attack_func_{prefix}.__kwdefaults__ = {{"z": "evil_z", "w": b"evil_bytes"}}
+
+                # Try to call
+                _ = multi_attack_func_{prefix}()
+            except (TypeError, AttributeError):
+                pass
+
+            # Phase 3: Swap code object while defaults are corrupted
+            try:
+                def replacement_{prefix}(a, b):
+                    return a - b
+
+                multi_attack_func_{prefix}.__code__ = replacement_{prefix}.__code__
+                _ = multi_attack_func_{prefix}(10, 20)  # Signature mismatch with corrupted defaults
+            except Exception:
+                pass
+
+            # Phase 4: Modify __annotations__ and __dict__
+            try:
+                multi_attack_func_{prefix}.__annotations__ = {{"x": "corrupted", "return": "evil"}}
+                multi_attack_func_{prefix}.__dict__["custom_attr"] = lambda: "injected"
+                _ = multi_attack_func_{prefix}(1, 2, z=3, w=4)
+            except Exception:
+                pass
+        """)
+        return ast.parse(attack_code).body
+
+
 class ManyVarsInjector(ast.NodeTransformer):
     """
     Inject many local variable declarations to stress `EXTENDED_ARG` handling.

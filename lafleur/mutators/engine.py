@@ -75,16 +75,17 @@ from lafleur.mutators.scenarios_data import (
 )
 from lafleur.mutators.scenarios_runtime import (
     ClosureStompMutator,
+    EvalFrameHookMutator,
     FrameManipulator,
     GCInjector,
     GlobalInvalidator,
     SideEffectInjector,
     StressPatternInjector,
     WeakRefCallbackChaos,
-    EvalFrameHookMutator,
 )
 from lafleur.mutators.scenarios_types import (
     CodeObjectSwapper,
+    ComprehensiveFunctionMutator,
     DescriptorChaosGenerator,
     FunctionPatcher,
     InlineCachePolluter,
@@ -188,6 +189,7 @@ class ASTMutator:
             GCInjector,
             DictPolluter,
             FunctionPatcher,
+            ComprehensiveFunctionMutator,
             TraceBreaker,
             ExitStresser,
             MaxOperandMutator,

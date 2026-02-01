@@ -14,6 +14,7 @@ from unittest.mock import patch
 
 from lafleur.mutators.scenarios_types import (
     CodeObjectSwapper,
+    ComprehensiveFunctionMutator,
     DescriptorChaosGenerator,
     FunctionPatcher,
     InlineCachePolluter,
@@ -1169,6 +1170,342 @@ class TestCodeObjectSwapper(unittest.TestCase):
         # Should still be valid
         reparsed = ast.parse(result)
         self.assertIsInstance(reparsed, ast.Module)
+
+
+class TestComprehensiveFunctionMutator(unittest.TestCase):
+    """Test ComprehensiveFunctionMutator mutator."""
+
+    def setUp(self):
+        """Set random seed for reproducible tests."""
+        random.seed(42)
+
+    def test_injects_function_modification_attack(self):
+        """Test that function modification attack is injected."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.1):  # Below 0.15 threshold
+            with patch("random.choice", return_value="code_swap"):
+                mutator = ComprehensiveFunctionMutator()
+                mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should have function modification code
+        self.assertIn("__code__", result)
+
+    def test_code_swap_attack(self):
+        """Test code_swap attack scenario."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.1):
+            with patch("random.choice", return_value="code_swap"):
+                mutator = ComprehensiveFunctionMutator()
+                mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should have code swap components
+        self.assertIn("victim_func_", result)
+        self.assertIn("replacement_func_", result)
+        self.assertIn("__code__", result)
+
+    def test_defaults_mutation_attack(self):
+        """Test defaults_mutation attack scenario."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.1):
+            with patch("random.choice", return_value="defaults_mutation"):
+                mutator = ComprehensiveFunctionMutator()
+                mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should have defaults mutation
+        self.assertIn("__defaults__", result)
+        self.assertIn("target_func_", result)
+
+    def test_kwdefaults_chaos_attack(self):
+        """Test kwdefaults_chaos attack scenario."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.1):
+            with patch("random.choice", return_value="kwdefaults_chaos"):
+                mutator = ComprehensiveFunctionMutator()
+                mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should have kwdefaults modification
+        self.assertIn("__kwdefaults__", result)
+        self.assertIn("kw_func_", result)
+
+    def test_closure_corruption_attack(self):
+        """Test closure_corruption attack scenario."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.1):
+            with patch("random.choice", return_value="closure_corruption"):
+                mutator = ComprehensiveFunctionMutator()
+                mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should have closure modification
+        self.assertIn("__closure__", result)
+        self.assertIn("make_closure_", result)
+        self.assertIn("cell_contents", result)
+
+    def test_combined_attack(self):
+        """Test combined_attack scenario."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.1):
+            with patch("random.choice", return_value="combined_attack"):
+                mutator = ComprehensiveFunctionMutator()
+                mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should have multiple attribute modifications
+        self.assertIn("__defaults__", result)
+        self.assertIn("__kwdefaults__", result)
+        self.assertIn("__code__", result)
+
+    def test_includes_warmup_loop(self):
+        """Test that warmup loop is included."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.1):
+            mutator = ComprehensiveFunctionMutator()
+            mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should have warmup loops
+        self.assertIn("for", result)
+        self.assertIn("range(", result)
+
+    def test_includes_try_except_wrapper(self):
+        """Test that try/except wrapper is included for safety."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.1):
+            mutator = ComprehensiveFunctionMutator()
+            mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should have try/except for TypeError and AttributeError
+        self.assertIn("try:", result)
+        self.assertIn("except", result)
+
+    def test_skips_non_harness_functions(self):
+        """Test that non-harness functions are not mutated."""
+        code = dedent("""
+            def normal_function():
+                x = 1
+        """)
+        tree = ast.parse(code)
+        original = ast.unparse(tree)
+
+        with patch("random.random", return_value=0.1):
+            mutator = ComprehensiveFunctionMutator()
+            mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        self.assertEqual(original, result)
+
+    def test_no_mutation_with_low_probability(self):
+        """Test that mutation doesn't occur with low probability."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+        original = ast.unparse(tree)
+
+        with patch("random.random", return_value=0.9):  # Above 0.15 threshold
+            mutator = ComprehensiveFunctionMutator()
+            mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        self.assertEqual(original, result)
+
+    def test_produces_valid_code(self):
+        """Test that output is valid, parseable Python."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+                y = 2
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.1):
+            mutator = ComprehensiveFunctionMutator()
+            mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        reparsed = ast.parse(result)
+        self.assertIsInstance(reparsed, ast.Module)
+
+    def test_unique_prefixes(self):
+        """Test that unique prefixes are generated."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.1):
+            with patch("random.randint", return_value=8888):
+                mutator = ComprehensiveFunctionMutator()
+                mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should have unique prefix
+        self.assertIn("func_8888", result)
+
+    def test_preserves_original_function_body(self):
+        """Test that original function statements are preserved."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+                y = 2
+                z = x + y
+        """)
+        tree = ast.parse(code)
+        original_statements = ["x = 1", "y = 2", "z = x + y"]
+
+        with patch("random.random", return_value=0.1):
+            mutator = ComprehensiveFunctionMutator()
+            mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Original statements should still be present
+        for stmt in original_statements:
+            self.assertIn(stmt, result)
+
+    def test_handles_empty_function_body(self):
+        """Test handling of functions with only pass."""
+        code = dedent("""
+            def uop_harness_test():
+                pass
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.1):
+            mutator = ComprehensiveFunctionMutator()
+            mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should still be valid
+        reparsed = ast.parse(result)
+        self.assertIsInstance(reparsed, ast.Module)
+
+    def test_all_attack_types(self):
+        """Test that all attack types can be generated."""
+        attack_types = [
+            "code_swap",
+            "defaults_mutation",
+            "kwdefaults_chaos",
+            "combined_attack",
+            "closure_corruption",
+        ]
+
+        for attack_type in attack_types:
+            with self.subTest(attack_type=attack_type):
+                code = dedent("""
+                    def uop_harness_test():
+                        x = 1
+                """)
+                tree = ast.parse(code)
+
+                with patch("random.random", return_value=0.1):
+                    with patch("random.choice", return_value=attack_type):
+                        mutator = ComprehensiveFunctionMutator()
+                        mutated = mutator.visit(tree)
+
+                result = ast.unparse(mutated)
+                # Should have attack-specific code
+                self.assertIn("func_", result)
+
+    def test_code_swap_signature_mismatch(self):
+        """Test that code swap creates signature mismatch."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.1):
+            with patch("random.choice", return_value="code_swap"):
+                mutator = ComprehensiveFunctionMutator()
+                mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Victim has (a, b, c=10), replacement has (x)
+        self.assertIn("def victim_func_", result)
+        self.assertIn("def replacement_func_", result)
+
+    def test_defaults_type_mutation(self):
+        """Test that defaults are mutated to incompatible types."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.1):
+            with patch("random.choice", return_value="defaults_mutation"):
+                mutator = ComprehensiveFunctionMutator()
+                mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should mutate to string, list, dict
+        self.assertIn("string", result)
+
+    def test_combined_attack_modifies_multiple_attributes(self):
+        """Test that combined attack modifies multiple attributes."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.1):
+            with patch("random.choice", return_value="combined_attack"):
+                mutator = ComprehensiveFunctionMutator()
+                mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should have all three modifications
+        self.assertIn("__defaults__", result)
+        self.assertIn("__kwdefaults__", result)
+        self.assertIn("__annotations__", result)
 
 
 if __name__ == "__main__":

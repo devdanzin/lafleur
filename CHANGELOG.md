@@ -11,6 +11,7 @@ All notable changes to this project should be documented in this file.
 - A `PatternMatchingChaosMutator` that attacks JIT optimizations for structural pattern matching (`MATCH_MAPPING`, `MATCH_SEQUENCE`, `MATCH_CLASS`) by injecting classes with dynamic `__match_args__`, guards with side effects, type-switching subjects, walrus operators in guards, and converting `isinstance` checks and for-loop unpacking to match statements, by @devdanzin.
 - A `ClosureStompMutator` that attacks JIT closure optimizations by injecting helper functions to randomly corrupt `func.__closure__[i].cell_contents`, invalidating type/value assumptions for nested functions, by @devdanzin.
 - An `EvalFrameHookMutator` that targets the `set_eval_frame_func` rare event by installing/removing custom eval frame hooks mid-execution, by @devdanzin.
+- A `ComprehensiveFunctionMutator` that systematically attacks all function modification rare events, by @devdanzin.
 
 ### Enhanced
 

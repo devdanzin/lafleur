@@ -20,6 +20,7 @@ from lafleur.mutators.scenarios_runtime import (
     SideEffectInjector,
     StressPatternInjector,
     WeakRefCallbackChaos,
+    EvalFrameHookMutator,
     _create_class_reassignment_node,
     _create_dict_swap_node,
     _create_method_patch_node,
@@ -909,6 +910,264 @@ class TestClosureStompMutator(unittest.TestCase):
         # The helper body has "CHAOS_STR"
         if "CHAOS_STR" not in code:
             self.assertNotIn("CHAOS_STR", result)
+
+
+class TestEvalFrameHookMutator(unittest.TestCase):
+    """Test EvalFrameHookMutator mutator."""
+
+    def setUp(self):
+        """Set random seed for reproducible tests."""
+        random.seed(42)
+
+    def test_injects_eval_frame_attack(self):
+        """Test that eval frame attack is injected."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.1):  # Below 0.15 threshold
+            with patch("random.choice", return_value="frame_record_toggle"):
+                mutator = EvalFrameHookMutator()
+                mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should have eval frame attack code
+        self.assertIn("_testinternalcapi", result)
+        self.assertIn("set_eval_frame", result)
+
+    def test_imports_required_modules(self):
+        """Test that required modules are imported."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.1):
+            mutator = EvalFrameHookMutator()
+            mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should import test.support.import_helper
+        self.assertIn("import_helper", result)
+        self.assertIn("_testinternalcapi", result)
+
+    def test_frame_record_toggle_attack(self):
+        """Test frame_record_toggle attack scenario."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.1):
+            with patch("random.choice", return_value="frame_record_toggle"):
+                mutator = EvalFrameHookMutator()
+                mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should have frame recording setup
+        self.assertIn("set_eval_frame_record", result)
+        self.assertIn("set_eval_frame_default", result)
+        self.assertIn("frame_list_", result)
+
+    def test_custom_eval_install_attack(self):
+        """Test custom_eval_install attack scenario."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.1):
+            with patch("random.choice", return_value="custom_eval_install"):
+                mutator = EvalFrameHookMutator()
+                mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should have custom eval installation
+        self.assertIn("set_eval_frame_record", result)
+        self.assertIn("set_eval_frame_default", result)
+        self.assertIn("warmup_result_", result)
+
+    def test_eval_default_cycle_attack(self):
+        """Test eval_default_cycle attack scenario."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.1):
+            with patch("random.choice", return_value="eval_default_cycle"):
+                mutator = EvalFrameHookMutator()
+                mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should have cycling attack
+        self.assertIn("set_eval_frame_record", result)
+        self.assertIn("set_eval_frame_default", result)
+        self.assertIn("cycle_", result)
+
+    def test_includes_warmup_loop(self):
+        """Test that warmup loop is included."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.1):
+            mutator = EvalFrameHookMutator()
+            mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should have warmup/execution loops
+        self.assertIn("for", result)
+        self.assertIn("range(", result)
+
+    def test_includes_try_except_wrapper(self):
+        """Test that try/except wrapper is included for safety."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.1):
+            mutator = EvalFrameHookMutator()
+            mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should have try/except for AttributeError and RuntimeError
+        self.assertIn("try:", result)
+        self.assertIn("except", result)
+
+    def test_skips_non_harness_functions(self):
+        """Test that non-harness functions are not mutated."""
+        code = dedent("""
+            def normal_function():
+                x = 1
+        """)
+        tree = ast.parse(code)
+        original = ast.unparse(tree)
+
+        with patch("random.random", return_value=0.1):
+            mutator = EvalFrameHookMutator()
+            mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        self.assertEqual(original, result)
+
+    def test_no_mutation_with_low_probability(self):
+        """Test that mutation doesn't occur with low probability."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+        original = ast.unparse(tree)
+
+        with patch("random.random", return_value=0.9):  # Above 0.15 threshold
+            mutator = EvalFrameHookMutator()
+            mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        self.assertEqual(original, result)
+
+    def test_produces_valid_code(self):
+        """Test that output is valid, parseable Python."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+                y = 2
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.1):
+            mutator = EvalFrameHookMutator()
+            mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        reparsed = ast.parse(result)
+        self.assertIsInstance(reparsed, ast.Module)
+
+    def test_unique_prefixes(self):
+        """Test that unique prefixes are generated."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.1):
+            with patch("random.randint", return_value=7777):
+                mutator = EvalFrameHookMutator()
+                mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should have unique prefix
+        self.assertIn("eval_7777", result)
+
+    def test_preserves_original_function_body(self):
+        """Test that original function statements are preserved."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+                y = 2
+                z = x + y
+        """)
+        tree = ast.parse(code)
+        original_statements = ["x = 1", "y = 2", "z = x + y"]
+
+        with patch("random.random", return_value=0.1):
+            mutator = EvalFrameHookMutator()
+            mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Original statements should still be present
+        for stmt in original_statements:
+            self.assertIn(stmt, result)
+
+    def test_handles_empty_function_body(self):
+        """Test handling of functions with only pass."""
+        code = dedent("""
+            def uop_harness_test():
+                pass
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.1):
+            mutator = EvalFrameHookMutator()
+            mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should still be valid
+        reparsed = ast.parse(result)
+        self.assertIsInstance(reparsed, ast.Module)
+
+    def test_different_attack_types(self):
+        """Test that all three attack types can be generated."""
+        attack_types = ["frame_record_toggle", "custom_eval_install", "eval_default_cycle"]
+
+        for attack_type in attack_types:
+            with self.subTest(attack_type=attack_type):
+                code = dedent("""
+                    def uop_harness_test():
+                        x = 1
+                """)
+                tree = ast.parse(code)
+
+                with patch("random.random", return_value=0.1):
+                    with patch("random.choice", return_value=attack_type):
+                        mutator = EvalFrameHookMutator()
+                        mutated = mutator.visit(tree)
+
+                result = ast.unparse(mutated)
+                # Should have attack-specific code
+                self.assertIn("set_eval_frame", result)
 
 
 if __name__ == "__main__":

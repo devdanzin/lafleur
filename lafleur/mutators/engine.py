@@ -81,6 +81,7 @@ from lafleur.mutators.scenarios_runtime import (
     SideEffectInjector,
     StressPatternInjector,
     WeakRefCallbackChaos,
+    EvalFrameHookMutator,
 )
 from lafleur.mutators.scenarios_types import (
     CodeObjectSwapper,
@@ -206,6 +207,7 @@ class ASTMutator:
             SuperResolutionAttacker,
             CoroutineStateCorruptor,
             WeakRefCallbackChaos,
+            EvalFrameHookMutator,
             ExceptionHandlerMaze,
             BuiltinNamespaceCorruptor,
             CodeObjectSwapper,

@@ -674,3 +674,163 @@ class ClosureStompMutator(ast.NodeTransformer):
         # Note: We define the helper *at the site of use*. This might lead to redefinitions if used
         # multiple times, but that's safe in Python.
         return [node, helper_ast, call_ast]
+
+
+class EvalFrameHookMutator(ast.NodeTransformer):
+    """
+    Attacks JIT assumptions by installing/removing custom eval frame hooks.
+
+    This targets the set_eval_frame_func rare event by:
+    - Installing a custom frame evaluation function mid-execution
+    - Recording frame evaluations with _testinternalcapi.set_eval_frame_record
+    - Swapping between default and custom eval frames in hot loops
+    - Forcing deoptimization when frame eval assumptions change
+    """
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> ast.FunctionDef:
+        self.generic_visit(node)
+
+        if not node.name.startswith("uop_harness") or not node.body:
+            return node
+
+        if random.random() < 0.15:  # 15% chance
+            attack_type = random.choice(
+                ["frame_record_toggle", "custom_eval_install", "eval_default_cycle"]
+            )
+
+            p_prefix = f"eval_{random.randint(1000, 9999)}"
+
+            print(
+                f"    -> Injecting eval frame hook attack ({attack_type}) with prefix '{p_prefix}'",
+                file=sys.stderr,
+            )
+
+            if attack_type == "frame_record_toggle":
+                scenario_ast = self._create_frame_record_attack(p_prefix)
+            elif attack_type == "custom_eval_install":
+                scenario_ast = self._create_custom_eval_attack(p_prefix)
+            else:  # eval_default_cycle
+                scenario_ast = self._create_eval_cycle_attack(p_prefix)
+
+            # Import _testinternalcapi at the top of the function
+            import_node = ast.parse("from test.support import import_helper").body[0]
+            helper_import = ast.parse(
+                "_testinternalcapi = import_helper.import_module('_testinternalcapi')"
+            ).body[0]
+
+            # Inject the imports and scenario
+            injection_point = random.randint(0, len(node.body))
+            node.body[injection_point:injection_point] = [import_node, helper_import] + scenario_ast
+            ast.fix_missing_locations(node)
+
+        return node
+
+    def _create_frame_record_attack(self, prefix: str) -> list[ast.stmt]:
+        """
+        Create attack that uses set_eval_frame_record to track frame evaluations,
+        then toggles it on/off to force invalidation.
+        """
+        attack_code = dedent(f"""
+            # Eval frame record attack - toggling frame recording
+            print('[{prefix}] Running eval frame record attack...', file=sys.stderr)
+
+            frame_list_{prefix} = []
+
+            # Phase 1: Warmup without recording
+            for i_{prefix} in range(100):
+                try:
+                    _ = i_{prefix} * 2 + 1
+                except Exception:
+                    pass
+
+            # Phase 2: Install frame recording (triggers set_eval_frame_func)
+            try:
+                _testinternalcapi.set_eval_frame_record(frame_list_{prefix})
+
+                # Execute code while recording frames
+                for i_{prefix} in range(50):
+                    _ = i_{prefix} * 3 + 2
+
+                # Phase 3: Remove frame recording (triggers set_eval_frame_func again)
+                _testinternalcapi.set_eval_frame_default()
+
+                # Phase 4: Continue execution after hook removal
+                for i_{prefix} in range(50):
+                    _ = i_{prefix} * 4 + 3
+
+            except (AttributeError, RuntimeError):
+                # Gracefully handle if _testinternalcapi is not available
+                pass
+        """)
+        return ast.parse(attack_code).body
+
+    def _create_custom_eval_attack(self, prefix: str) -> list[ast.stmt]:
+        """
+        Create attack that installs a custom eval function mid-execution.
+        """
+        attack_code = dedent(f"""
+            # Custom eval frame attack - install custom evaluator
+            print('[{prefix}] Running custom eval frame attack...', file=sys.stderr)
+
+            # Phase 1: Warmup loop to get JIT compiled
+            warmup_result_{prefix} = 0
+            for i_{prefix} in range(200):
+                warmup_result_{prefix} += i_{prefix}
+
+            # Phase 2: Install frame recording to change eval behavior
+            frame_log_{prefix} = []
+            try:
+                _testinternalcapi.set_eval_frame_record(frame_log_{prefix})
+
+                # Execute the same pattern - JIT should deoptimize
+                attack_result_{prefix} = 0
+                for i_{prefix} in range(100):
+                    attack_result_{prefix} += i_{prefix}
+
+                # Restore default
+                _testinternalcapi.set_eval_frame_default()
+
+                # Verify results
+                if frame_log_{prefix}:
+                    print(f'[{prefix}] Captured {{len(frame_log_{prefix})}} frame evaluations', file=sys.stderr)
+
+            except (AttributeError, RuntimeError):
+                pass
+        """)
+        return ast.parse(attack_code).body
+
+    def _create_eval_cycle_attack(self, prefix: str) -> list[ast.stmt]:
+        """
+        Create attack that rapidly cycles between default and custom eval.
+        """
+        attack_code = dedent(f"""
+            # Eval frame cycling attack - rapid toggle
+            print('[{prefix}] Running eval frame cycling attack...', file=sys.stderr)
+
+            try:
+                cycle_result_{prefix} = 0
+                frame_buffer_{prefix} = []
+
+                # Rapidly cycle between eval modes to stress deoptimization
+                for cycle_{prefix} in range(20):
+                    # Install custom eval
+                    _testinternalcapi.set_eval_frame_record(frame_buffer_{prefix})
+
+                    # Do some work
+                    for i_{prefix} in range(10):
+                        cycle_result_{prefix} += i_{prefix}
+
+                    # Restore default eval
+                    _testinternalcapi.set_eval_frame_default()
+
+                    # Do more work
+                    for i_{prefix} in range(10):
+                        cycle_result_{prefix} -= i_{prefix} // 2
+
+                # Final restoration
+                _testinternalcapi.set_eval_frame_default()
+
+            except (AttributeError, RuntimeError):
+                pass
+        """)
+        return ast.parse(attack_code).body

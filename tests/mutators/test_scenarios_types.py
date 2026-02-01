@@ -13,9 +13,11 @@ from textwrap import dedent
 from unittest.mock import patch
 
 from lafleur.mutators.scenarios_types import (
+    BasesRewriteMutator,
     CodeObjectSwapper,
     ComprehensiveFunctionMutator,
     DescriptorChaosGenerator,
+    DynamicClassSwapper,
     FunctionPatcher,
     InlineCachePolluter,
     LoadAttrPolluter,
@@ -1506,6 +1508,612 @@ class TestComprehensiveFunctionMutator(unittest.TestCase):
         self.assertIn("__defaults__", result)
         self.assertIn("__kwdefaults__", result)
         self.assertIn("__annotations__", result)
+
+
+class TestDynamicClassSwapper(unittest.TestCase):
+    """Test DynamicClassSwapper mutator."""
+
+    def setUp(self):
+        """Set random seed for reproducible tests."""
+        random.seed(42)
+
+    def test_injects_class_swap_attack(self):
+        """Test that class swap attack is injected."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.1):  # Below 0.12 threshold
+            with patch("random.choice", return_value="builtin_swap"):
+                mutator = DynamicClassSwapper()
+                mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should have class swap code
+        self.assertIn("__class__", result)
+
+    def test_builtin_swap_attack(self):
+        """Test builtin_swap attack scenario."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.1):
+            with patch("random.choice", return_value="builtin_swap"):
+                mutator = DynamicClassSwapper()
+                mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should have builtin swap components
+        self.assertIn("UserClass_", result)
+        self.assertIn("IntSubclass_", result)
+        self.assertIn("StrSubclass_", result)
+        self.assertIn("__class__", result)
+
+    def test_slots_swap_attack(self):
+        """Test slots_swap attack scenario."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.1):
+            with patch("random.choice", return_value="slots_swap"):
+                mutator = DynamicClassSwapper()
+                mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should have slots swap components
+        self.assertIn("DictClass_", result)
+        self.assertIn("SlotsClass_", result)
+        self.assertIn("MixedClass_", result)
+        self.assertIn("__slots__", result)
+
+    def test_mro_depth_swap_attack(self):
+        """Test mro_depth_swap attack scenario."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.1):
+            with patch("random.choice", return_value="mro_depth_swap"):
+                mutator = DynamicClassSwapper()
+                mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should have MRO depth swap components
+        self.assertIn("Shallow_", result)
+        self.assertIn("Deep_", result)
+        self.assertIn("Diamond_", result)
+        self.assertIn("Level1_", result)
+
+    def test_incompatible_dict_swap_attack(self):
+        """Test incompatible_dict_swap attack scenario."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.1):
+            with patch("random.choice", return_value="incompatible_dict_swap"):
+                mutator = DynamicClassSwapper()
+                mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should have incompatible dict swap components
+        self.assertIn("ClassXY_", result)
+        self.assertIn("ClassABC_", result)
+        self.assertIn("ClassMixed_", result)
+
+    def test_includes_warmup_loop(self):
+        """Test that warmup loop is included."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.1):
+            mutator = DynamicClassSwapper()
+            mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should have warmup loops
+        self.assertIn("for", result)
+        self.assertIn("range(200)", result)
+
+    def test_includes_try_except_wrapper(self):
+        """Test that try/except wrapper is included for safety."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.1):
+            mutator = DynamicClassSwapper()
+            mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should have try/except for TypeError and AttributeError
+        self.assertIn("try:", result)
+        self.assertIn("except", result)
+        self.assertIn("TypeError", result)
+
+    def test_skips_non_harness_functions(self):
+        """Test that non-harness functions are not mutated."""
+        code = dedent("""
+            def normal_function():
+                x = 1
+        """)
+        tree = ast.parse(code)
+        original = ast.unparse(tree)
+
+        with patch("random.random", return_value=0.1):
+            mutator = DynamicClassSwapper()
+            mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        self.assertEqual(original, result)
+
+    def test_no_mutation_with_low_probability(self):
+        """Test that mutation doesn't occur with low probability."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+        original = ast.unparse(tree)
+
+        with patch("random.random", return_value=0.9):  # Above 0.12 threshold
+            mutator = DynamicClassSwapper()
+            mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        self.assertEqual(original, result)
+
+    def test_produces_valid_code(self):
+        """Test that output is valid, parseable Python."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+                y = 2
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.1):
+            mutator = DynamicClassSwapper()
+            mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        reparsed = ast.parse(result)
+        self.assertIsInstance(reparsed, ast.Module)
+
+    def test_unique_prefixes(self):
+        """Test that unique prefixes are generated."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.1):
+            with patch("random.randint", return_value=7777):
+                mutator = DynamicClassSwapper()
+                mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should have unique prefix
+        self.assertIn("swap_7777", result)
+
+    def test_preserves_original_function_body(self):
+        """Test that original function statements are preserved."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+                y = 2
+                z = x + y
+        """)
+        tree = ast.parse(code)
+        original_statements = ["x = 1", "y = 2", "z = x + y"]
+
+        with patch("random.random", return_value=0.1):
+            mutator = DynamicClassSwapper()
+            mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Original statements should still be present
+        for stmt in original_statements:
+            self.assertIn(stmt, result)
+
+    def test_handles_empty_function_body(self):
+        """Test handling of functions with only pass."""
+        code = dedent("""
+            def uop_harness_test():
+                pass
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.1):
+            mutator = DynamicClassSwapper()
+            mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should still be valid
+        reparsed = ast.parse(result)
+        self.assertIsInstance(reparsed, ast.Module)
+
+    def test_all_attack_types(self):
+        """Test that all attack types can be generated."""
+        attack_types = [
+            "builtin_swap",
+            "slots_swap",
+            "mro_depth_swap",
+            "incompatible_dict_swap",
+        ]
+
+        for attack_type in attack_types:
+            with self.subTest(attack_type=attack_type):
+                code = dedent("""
+                    def uop_harness_test():
+                        x = 1
+                """)
+                tree = ast.parse(code)
+
+                with patch("random.random", return_value=0.1):
+                    with patch("random.choice", return_value=attack_type):
+                        mutator = DynamicClassSwapper()
+                        mutated = mutator.visit(tree)
+
+                result = ast.unparse(mutated)
+                # Should have attack-specific code
+                self.assertIn("swap_", result)
+
+    def test_class_swap_after_warmup(self):
+        """Test that __class__ swaps happen after warmup."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.1):
+            with patch("random.choice", return_value="builtin_swap"):
+                mutator = DynamicClassSwapper()
+                mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Warmup should come before class swap
+        warmup_pos = result.find("range(200)")
+        swap_pos = result.find(".__class__ =")
+        self.assertLess(warmup_pos, swap_pos)
+
+
+class TestBasesRewriteMutator(unittest.TestCase):
+    """Test BasesRewriteMutator mutator."""
+
+    def setUp(self):
+        """Set random seed for reproducible tests."""
+        random.seed(42)
+
+    def test_injects_bases_attack(self):
+        """Test that bases attack is injected."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.1):  # Below 0.12 threshold
+            with patch("random.choice", return_value="bases_removal"):
+                mutator = BasesRewriteMutator()
+                mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should have bases modification code
+        self.assertIn("__bases__", result)
+
+    def test_bases_removal_attack(self):
+        """Test bases_removal attack scenario."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.1):
+            with patch("random.choice", return_value="bases_removal"):
+                mutator = BasesRewriteMutator()
+                mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should have bases removal components
+        self.assertIn("Base_", result)
+        self.assertIn("Derived_", result)
+        self.assertIn("__bases__ = (object,)", result)
+
+    def test_builtin_injection_attack(self):
+        """Test builtin_injection attack scenario."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.1):
+            with patch("random.choice", return_value="builtin_injection"):
+                mutator = BasesRewriteMutator()
+                mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should have builtin injection components
+        self.assertIn("BaseA_", result)
+        self.assertIn("BaseB_", result)
+        self.assertIn("IntMixin_", result)
+        self.assertIn("DictMixin_", result)
+
+    def test_inheritance_toggle_attack(self):
+        """Test inheritance_toggle attack scenario."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.1):
+            with patch("random.choice", return_value="inheritance_toggle"):
+                mutator = BasesRewriteMutator()
+                mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should have inheritance toggle components
+        self.assertIn("Parent1_", result)
+        self.assertIn("Parent2_", result)
+        self.assertIn("Parent3_", result)
+        self.assertIn("Child_", result)
+
+    def test_base_replacement_attack(self):
+        """Test base_replacement attack scenario."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.1):
+            with patch("random.choice", return_value="base_replacement"):
+                mutator = BasesRewriteMutator()
+                mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should have base replacement components
+        self.assertIn("OrigBase_", result)
+        self.assertIn("NewBase_", result)
+        self.assertIn("AltBase_", result)
+
+    def test_includes_warmup_loop(self):
+        """Test that warmup loop is included."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.1):
+            mutator = BasesRewriteMutator()
+            mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should have warmup loops
+        self.assertIn("for", result)
+        self.assertIn("range(200)", result)
+
+    def test_includes_try_except_wrapper(self):
+        """Test that try/except wrapper is included for safety."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.1):
+            mutator = BasesRewriteMutator()
+            mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should have try/except for TypeError and AttributeError
+        self.assertIn("try:", result)
+        self.assertIn("except", result)
+
+    def test_skips_non_harness_functions(self):
+        """Test that non-harness functions are not mutated."""
+        code = dedent("""
+            def normal_function():
+                x = 1
+        """)
+        tree = ast.parse(code)
+        original = ast.unparse(tree)
+
+        with patch("random.random", return_value=0.1):
+            mutator = BasesRewriteMutator()
+            mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        self.assertEqual(original, result)
+
+    def test_no_mutation_with_low_probability(self):
+        """Test that mutation doesn't occur with low probability."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+        original = ast.unparse(tree)
+
+        with patch("random.random", return_value=0.9):  # Above 0.12 threshold
+            mutator = BasesRewriteMutator()
+            mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        self.assertEqual(original, result)
+
+    def test_produces_valid_code(self):
+        """Test that output is valid, parseable Python."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+                y = 2
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.1):
+            mutator = BasesRewriteMutator()
+            mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        reparsed = ast.parse(result)
+        self.assertIsInstance(reparsed, ast.Module)
+
+    def test_unique_prefixes(self):
+        """Test that unique prefixes are generated."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.1):
+            with patch("random.randint", return_value=8888):
+                mutator = BasesRewriteMutator()
+                mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should have unique prefix
+        self.assertIn("bases_8888", result)
+
+    def test_preserves_original_function_body(self):
+        """Test that original function statements are preserved."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+                y = 2
+                z = x + y
+        """)
+        tree = ast.parse(code)
+        original_statements = ["x = 1", "y = 2", "z = x + y"]
+
+        with patch("random.random", return_value=0.1):
+            mutator = BasesRewriteMutator()
+            mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Original statements should still be present
+        for stmt in original_statements:
+            self.assertIn(stmt, result)
+
+    def test_handles_empty_function_body(self):
+        """Test handling of functions with only pass."""
+        code = dedent("""
+            def uop_harness_test():
+                pass
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.1):
+            mutator = BasesRewriteMutator()
+            mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should still be valid
+        reparsed = ast.parse(result)
+        self.assertIsInstance(reparsed, ast.Module)
+
+    def test_all_attack_types(self):
+        """Test that all attack types can be generated."""
+        attack_types = [
+            "bases_removal",
+            "builtin_injection",
+            "inheritance_toggle",
+            "base_replacement",
+        ]
+
+        for attack_type in attack_types:
+            with self.subTest(attack_type=attack_type):
+                code = dedent("""
+                    def uop_harness_test():
+                        x = 1
+                """)
+                tree = ast.parse(code)
+
+                with patch("random.random", return_value=0.1):
+                    with patch("random.choice", return_value=attack_type):
+                        mutator = BasesRewriteMutator()
+                        mutated = mutator.visit(tree)
+
+                result = ast.unparse(mutated)
+                # Should have attack-specific code
+                self.assertIn("bases_", result)
+
+    def test_bases_modification_after_warmup(self):
+        """Test that __bases__ modifications happen after warmup."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.1):
+            with patch("random.choice", return_value="bases_removal"):
+                mutator = BasesRewriteMutator()
+                mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Warmup should come before bases modification
+        warmup_pos = result.find("range(200)")
+        bases_pos = result.find(".__bases__ =")
+        self.assertLess(warmup_pos, bases_pos)
+
+    def test_method_calls_after_bases_change(self):
+        """Test that method calls are made after bases change."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.1):
+            mutator = BasesRewriteMutator()
+            mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should call methods after bases modification
+        self.assertIn(".method()", result)
+
+    def test_class_hierarchy_created(self):
+        """Test that class hierarchy is created properly."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.1):
+            with patch("random.choice", return_value="inheritance_toggle"):
+                mutator = BasesRewriteMutator()
+                mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should have class definitions with inheritance
+        self.assertIn("class Child_", result)
+        self.assertIn("(Parent1_", result)
 
 
 if __name__ == "__main__":

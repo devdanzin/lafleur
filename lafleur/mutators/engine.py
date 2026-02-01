@@ -84,9 +84,11 @@ from lafleur.mutators.scenarios_runtime import (
     WeakRefCallbackChaos,
 )
 from lafleur.mutators.scenarios_types import (
+    BasesRewriteMutator,
     CodeObjectSwapper,
     ComprehensiveFunctionMutator,
     DescriptorChaosGenerator,
+    DynamicClassSwapper,
     FunctionPatcher,
     InlineCachePolluter,
     LoadAttrPolluter,
@@ -204,6 +206,8 @@ class ASTMutator:
             YieldFromInjector,
             DescriptorChaosGenerator,
             MROShuffler,
+            BasesRewriteMutator,
+            DynamicClassSwapper,
             FrameManipulator,
             ComprehensionBomb,
             SuperResolutionAttacker,

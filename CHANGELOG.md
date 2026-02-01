@@ -12,6 +12,8 @@ All notable changes to this project should be documented in this file.
 - A `ClosureStompMutator` that attacks JIT closure optimizations by injecting helper functions to randomly corrupt `func.__closure__[i].cell_contents`, invalidating type/value assumptions for nested functions, by @devdanzin.
 - An `EvalFrameHookMutator` that targets the `set_eval_frame_func` rare event by installing/removing custom eval frame hooks mid-execution, by @devdanzin.
 - A `ComprehensiveFunctionMutator` that systematically attacks all function modification rare events, by @devdanzin.
+- A `DynamicClassSwapper` that aggressively swaps objects between incompatible classes (built-in type subclasses, classes with/without `__slots__`, different MRO depths, incompatible `__dict__` attributes) to stress JIT type guards and deoptimization logic, targeting the `set_class` rare event, by @devdanzin.
+- A `BasesRewriteMutator` that creatively manipulates `__bases__` tuples (removal, builtin injection, inheritance toggling, complete replacement) to attack MRO caching assumptions, targeting the `set_bases` rare event, by @devdanzin.
 
 ### Enhanced
 

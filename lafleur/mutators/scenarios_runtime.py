@@ -834,3 +834,393 @@ class EvalFrameHookMutator(ast.NodeTransformer):
                 pass
         """)
         return ast.parse(attack_code).body
+
+
+class RareEventStressTester(ast.NodeTransformer):
+    """
+    Meta-mutator that combines multiple rare event triggers in a single scenario.
+
+    This mutator chains together multiple JIT rare events (set_class, set_bases,
+    set_eval_frame_func, builtin_dict, func_modification) to stress the JIT's
+    ability to handle multiple invalidations in sequence.
+
+    The goal is to trigger complex deoptimization paths where multiple caches
+    become invalid simultaneously or in rapid succession.
+    """
+
+    # All rare event types we can trigger
+    RARE_EVENTS = [
+        "set_class",
+        "set_bases",
+        "set_eval_frame",
+        "builtin_dict",
+        "func_modification",
+    ]
+
+    # Combination patterns for multi-event attacks
+    EVENT_COMBINATIONS = [
+        ["set_class", "set_bases"],  # MRO-related events
+        ["builtin_dict", "func_modification"],  # Namespace/function events
+        ["set_eval_frame", "func_modification"],  # Execution model events
+        ["set_class", "builtin_dict", "func_modification"],  # Mixed
+        ["set_class", "set_bases", "set_eval_frame"],  # Type + eval events
+    ]
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> ast.FunctionDef:
+        """Inject rare event stress test into functions."""
+        self.generic_visit(node)
+
+        if not node.name.startswith("uop_harness"):
+            return node
+
+        if not node.body:
+            return node
+
+        if random.random() < 0.08:  # 8% chance (meta-mutator, lower probability)
+            p_prefix = f"rarestress_{random.randint(1000, 9999)}"
+
+            # Choose attack pattern: single event or combination
+            if random.random() < 0.4:  # 40% chance for single event
+                event = random.choice(self.RARE_EVENTS)
+                print(
+                    f"    -> Injecting single rare event stress test ({event}) into '{node.name}'",
+                    file=sys.stderr,
+                )
+                stress_nodes = self._create_single_event_attack(p_prefix, event)
+            else:  # 60% chance for combination
+                events = random.choice(self.EVENT_COMBINATIONS)
+                print(
+                    f"    -> Injecting rare event combination ({', '.join(events)}) "
+                    f"into '{node.name}'",
+                    file=sys.stderr,
+                )
+                stress_nodes = self._create_combination_attack(p_prefix, events)
+
+            # Inject at the beginning of the function body
+            node.body = stress_nodes + node.body
+            ast.fix_missing_locations(node)
+
+        return node
+
+    def _create_single_event_attack(self, prefix: str, event: str) -> list[ast.stmt]:
+        """Create a single rare event trigger attack."""
+        if event == "set_class":
+            return self._create_set_class_attack(prefix)
+        elif event == "set_bases":
+            return self._create_set_bases_attack(prefix)
+        elif event == "set_eval_frame":
+            return self._create_set_eval_frame_attack(prefix)
+        elif event == "builtin_dict":
+            return self._create_builtin_dict_attack(prefix)
+        elif event == "func_modification":
+            return self._create_func_modification_attack(prefix)
+        else:
+            return []
+
+    def _create_combination_attack(self, prefix: str, events: list[str]) -> list[ast.stmt]:
+        """Create an attack that triggers multiple rare events in sequence."""
+        attack_code = dedent(f"""
+            # Rare event combination attack: {", ".join(events)}
+            print('[{prefix}] Starting rare event combination attack...', file=sys.stderr)
+            import sys
+            import builtins
+        """)
+
+        # Phase 1: Warmup to establish JIT traces
+        attack_code += dedent(f"""
+            # Phase 1: Warmup to establish JIT traces
+            warmup_result_{prefix} = 0
+            for warm_{prefix} in range(200):
+                warmup_result_{prefix} += warm_{prefix}
+        """)
+
+        # Phase 2: Create objects/classes we'll mutate
+        attack_code += dedent(f"""
+            # Phase 2: Create mutable targets
+            class Target_{prefix}:
+                value = 42
+                def method(self):
+                    return self.value
+
+            class AltBase_{prefix}:
+                alt_value = 999
+
+            target_obj_{prefix} = Target_{prefix}()
+        """)
+
+        # Phase 3: Sequential rare event triggers
+        attack_code += dedent(f"""
+            # Phase 3: Sequential rare event triggers
+            print('[{prefix}] Triggering rare events...', file=sys.stderr)
+        """)
+
+        for i, event in enumerate(events):
+            if event == "set_class":
+                attack_code += dedent(f"""
+            # Event {i + 1}: set_class
+            print('[{prefix}] Triggering set_class...', file=sys.stderr)
+            class NewClass_{prefix}_{i}:
+                value = 100 + {i}
+            try:
+                target_obj_{prefix}.__class__ = NewClass_{prefix}_{i}
+                _ = target_obj_{prefix}.value
+            except Exception:
+                pass
+                """)
+            elif event == "set_bases":
+                attack_code += dedent(f"""
+            # Event {i + 1}: set_bases
+            print('[{prefix}] Triggering set_bases...', file=sys.stderr)
+            try:
+                Target_{prefix}.__bases__ = (AltBase_{prefix},)
+            except Exception:
+                pass
+                """)
+            elif event == "set_eval_frame":
+                attack_code += dedent(f"""
+            # Event {i + 1}: set_eval_frame
+            print('[{prefix}] Triggering set_eval_frame...', file=sys.stderr)
+            def dummy_trace_{prefix}_{i}(frame, event, arg):
+                return None
+            try:
+                sys.settrace(dummy_trace_{prefix}_{i})
+                for trace_iter_{prefix}_{i} in range(10):
+                    _ = trace_iter_{prefix}_{i} * 2
+                sys.settrace(None)
+            except Exception:
+                pass
+                """)
+            elif event == "builtin_dict":
+                attack_code += dedent(f"""
+            # Event {i + 1}: builtin_dict
+            print('[{prefix}] Triggering builtin_dict...', file=sys.stderr)
+            try:
+                builtins.__dict__['RARE_TEST_{prefix}_{i}'] = {i + 100}
+                _ = builtins.len([1, 2, 3])
+                del builtins.__dict__['RARE_TEST_{prefix}_{i}']
+            except Exception:
+                pass
+                """)
+            elif event == "func_modification":
+                attack_code += dedent(f"""
+            # Event {i + 1}: func_modification
+            print('[{prefix}] Triggering func_modification...', file=sys.stderr)
+            def target_func_{prefix}_{i}(x):
+                return x + 1
+            try:
+                # Warm up the function
+                for func_warm_{prefix}_{i} in range(50):
+                    _ = target_func_{prefix}_{i}(func_warm_{prefix}_{i})
+                # Modify __code__
+                def replacement_func_{prefix}_{i}(x):
+                    return x * 2
+                target_func_{prefix}_{i}.__code__ = replacement_func_{prefix}_{i}.__code__
+                # Use modified function
+                _ = target_func_{prefix}_{i}(10)
+            except Exception:
+                pass
+                """)
+
+        # Add final verification
+        attack_code += dedent(f"""
+            # Phase 4: Verification - use objects after rare events
+            print('[{prefix}] Verification phase...', file=sys.stderr)
+            try:
+                verify_result_{prefix} = 0
+                for verify_{prefix} in range(50):
+                    verify_result_{prefix} += verify_{prefix}
+            except Exception:
+                pass
+
+            print(f'[{prefix}] Rare event combination complete', file=sys.stderr)
+        """)
+
+        return ast.parse(attack_code).body
+
+    def _create_set_class_attack(self, prefix: str) -> list[ast.stmt]:
+        """Create a focused set_class rare event attack."""
+        attack_code = dedent(f"""
+            # Single rare event attack: set_class
+            print('[{prefix}] Running set_class stress test...', file=sys.stderr)
+
+            class OriginalClass_{prefix}:
+                value = 1
+                def compute(self):
+                    return self.value * 2
+
+            class AlternateClass_{prefix}:
+                value = 100
+                def compute(self):
+                    return self.value + 10
+
+            obj_{prefix} = OriginalClass_{prefix}()
+
+            # Phase 1: Warmup
+            for warm_{prefix} in range(200):
+                _ = obj_{prefix}.compute()
+                _ = obj_{prefix}.value
+
+            # Phase 2: Rapid class swapping
+            for swap_{prefix} in range(50):
+                try:
+                    if swap_{prefix} % 2 == 0:
+                        obj_{prefix}.__class__ = AlternateClass_{prefix}
+                    else:
+                        obj_{prefix}.__class__ = OriginalClass_{prefix}
+                    _ = obj_{prefix}.compute()
+                except Exception:
+                    pass
+
+            # Restore
+            try:
+                obj_{prefix}.__class__ = OriginalClass_{prefix}
+            except Exception:
+                pass
+        """)
+        return ast.parse(attack_code).body
+
+    def _create_set_bases_attack(self, prefix: str) -> list[ast.stmt]:
+        """Create a focused set_bases rare event attack."""
+        attack_code = dedent(f"""
+            # Single rare event attack: set_bases
+            print('[{prefix}] Running set_bases stress test...', file=sys.stderr)
+
+            class BaseA_{prefix}:
+                value_a = 10
+
+            class BaseB_{prefix}:
+                value_b = 20
+
+            class Target_{prefix}(BaseA_{prefix}):
+                pass
+
+            obj_{prefix} = Target_{prefix}()
+
+            # Phase 1: Warmup
+            for warm_{prefix} in range(200):
+                _ = obj_{prefix}.value_a
+
+            # Phase 2: Base swapping
+            for swap_{prefix} in range(30):
+                try:
+                    if swap_{prefix} % 2 == 0:
+                        Target_{prefix}.__bases__ = (BaseB_{prefix},)
+                    else:
+                        Target_{prefix}.__bases__ = (BaseA_{prefix},)
+                except Exception:
+                    pass
+
+            # Restore
+            try:
+                Target_{prefix}.__bases__ = (BaseA_{prefix},)
+            except Exception:
+                pass
+        """)
+        return ast.parse(attack_code).body
+
+    def _create_set_eval_frame_attack(self, prefix: str) -> list[ast.stmt]:
+        """Create a focused set_eval_frame rare event attack."""
+        attack_code = dedent(f"""
+            # Single rare event attack: set_eval_frame
+            print('[{prefix}] Running set_eval_frame stress test...', file=sys.stderr)
+            import sys
+
+            def trace_func_{prefix}(frame, event, arg):
+                return trace_func_{prefix}
+
+            # Phase 1: Warmup without trace
+            result_{prefix} = 0
+            for warm_{prefix} in range(200):
+                result_{prefix} += warm_{prefix}
+
+            # Phase 2: Rapid trace toggling
+            for toggle_{prefix} in range(30):
+                try:
+                    # Install trace
+                    sys.settrace(trace_func_{prefix})
+
+                    # Do work
+                    for work_{prefix} in range(10):
+                        result_{prefix} += work_{prefix}
+
+                    # Remove trace
+                    sys.settrace(None)
+
+                    # More work
+                    for more_work_{prefix} in range(10):
+                        result_{prefix} -= more_work_{prefix}
+                except Exception:
+                    pass
+
+            # Ensure trace is cleared
+            try:
+                sys.settrace(None)
+            except Exception:
+                pass
+        """)
+        return ast.parse(attack_code).body
+
+    def _create_builtin_dict_attack(self, prefix: str) -> list[ast.stmt]:
+        """Create a focused builtin_dict rare event attack."""
+        attack_code = dedent(f"""
+            # Single rare event attack: builtin_dict
+            print('[{prefix}] Running builtin_dict stress test...', file=sys.stderr)
+            import builtins
+
+            # Phase 1: Warmup using builtins
+            for warm_{prefix} in range(200):
+                _ = len([warm_{prefix}])
+                _ = isinstance(warm_{prefix}, int)
+
+            # Phase 2: Rapid builtin dict modifications
+            for mod_{prefix} in range(50):
+                try:
+                    key_{prefix} = f'RARE_BUILTIN_{{mod_{prefix}}}'
+                    builtins.__dict__[key_{prefix}] = mod_{prefix}
+                    # Use some builtins
+                    _ = len([1, 2, 3])
+                    _ = isinstance(1, int)
+                    # Remove key
+                    del builtins.__dict__[key_{prefix}]
+                except Exception:
+                    pass
+        """)
+        return ast.parse(attack_code).body
+
+    def _create_func_modification_attack(self, prefix: str) -> list[ast.stmt]:
+        """Create a focused func_modification rare event attack."""
+        attack_code = dedent(f"""
+            # Single rare event attack: func_modification
+            print('[{prefix}] Running func_modification stress test...', file=sys.stderr)
+
+            def target_func_{prefix}(x):
+                return x + 1
+
+            def alt_func_{prefix}(x):
+                return x * 2
+
+            def another_func_{prefix}(x):
+                return x - 1
+
+            # Phase 1: Warmup target function
+            for warm_{prefix} in range(200):
+                _ = target_func_{prefix}(warm_{prefix})
+
+            # Phase 2: Rapid __code__ swapping
+            funcs_{prefix} = [target_func_{prefix}, alt_func_{prefix}, another_func_{prefix}]
+            codes_{prefix} = [f.__code__ for f in funcs_{prefix}]
+
+            for swap_{prefix} in range(50):
+                try:
+                    target_func_{prefix}.__code__ = codes_{prefix}[swap_{prefix} % len(codes_{prefix})]
+                    _ = target_func_{prefix}(10)
+                except Exception:
+                    pass
+
+            # Restore original code
+            try:
+                target_func_{prefix}.__code__ = codes_{prefix}[0]
+            except Exception:
+                pass
+        """)
+        return ast.parse(attack_code).body

@@ -14,13 +14,14 @@ from unittest.mock import patch
 
 from lafleur.mutators.scenarios_runtime import (
     ClosureStompMutator,
+    EvalFrameHookMutator,
     FrameManipulator,
     GCInjector,
     GlobalInvalidator,
+    RareEventStressTester,
     SideEffectInjector,
     StressPatternInjector,
     WeakRefCallbackChaos,
-    EvalFrameHookMutator,
     _create_class_reassignment_node,
     _create_dict_swap_node,
     _create_method_patch_node,
@@ -1168,6 +1169,303 @@ class TestEvalFrameHookMutator(unittest.TestCase):
                 result = ast.unparse(mutated)
                 # Should have attack-specific code
                 self.assertIn("set_eval_frame", result)
+
+
+class TestRareEventStressTester(unittest.TestCase):
+    """Test RareEventStressTester meta-mutator."""
+
+    def setUp(self):
+        """Set random seed for reproducible tests."""
+        random.seed(42)
+
+    def test_has_rare_events_list(self):
+        """Test that RARE_EVENTS list is defined."""
+        mutator = RareEventStressTester()
+        self.assertTrue(hasattr(mutator, "RARE_EVENTS"))
+        self.assertGreater(len(mutator.RARE_EVENTS), 0)
+        expected_events = [
+            "set_class",
+            "set_bases",
+            "set_eval_frame",
+            "builtin_dict",
+            "func_modification",
+        ]
+        for event in expected_events:
+            self.assertIn(event, mutator.RARE_EVENTS)
+
+    def test_has_event_combinations(self):
+        """Test that EVENT_COMBINATIONS list is defined."""
+        mutator = RareEventStressTester()
+        self.assertTrue(hasattr(mutator, "EVENT_COMBINATIONS"))
+        self.assertGreater(len(mutator.EVENT_COMBINATIONS), 0)
+        # Each combination should have at least 2 events
+        for combo in mutator.EVENT_COMBINATIONS:
+            self.assertGreaterEqual(len(combo), 2)
+
+    def test_single_event_set_class(self):
+        """Test single event attack: set_class."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+
+        # 0.05 < 0.08 triggers, 0.1 < 0.4 for single event
+        with patch("random.random", side_effect=[0.05, 0.1]):
+            with patch("random.choice", return_value="set_class"):
+                with patch("random.randint", return_value=5000):
+                    mutator = RareEventStressTester()
+                    mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should have set_class attack markers
+        self.assertIn("rarestress_5000", result)
+        self.assertIn("set_class stress test", result)
+        self.assertIn("OriginalClass_rarestress_5000", result)
+        self.assertIn("AlternateClass_rarestress_5000", result)
+        self.assertIn("__class__", result)
+        # Verify code is valid
+        reparsed = ast.parse(result)
+        self.assertIsInstance(reparsed, ast.Module)
+
+    def test_single_event_set_bases(self):
+        """Test single event attack: set_bases."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", side_effect=[0.05, 0.1]):
+            with patch("random.choice", return_value="set_bases"):
+                with patch("random.randint", return_value=6000):
+                    mutator = RareEventStressTester()
+                    mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should have set_bases attack markers
+        self.assertIn("rarestress_6000", result)
+        self.assertIn("set_bases stress test", result)
+        self.assertIn("BaseA_rarestress_6000", result)
+        self.assertIn("BaseB_rarestress_6000", result)
+        self.assertIn("__bases__", result)
+        # Verify code is valid
+        reparsed = ast.parse(result)
+        self.assertIsInstance(reparsed, ast.Module)
+
+    def test_single_event_set_eval_frame(self):
+        """Test single event attack: set_eval_frame."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", side_effect=[0.05, 0.1]):
+            with patch("random.choice", return_value="set_eval_frame"):
+                with patch("random.randint", return_value=7000):
+                    mutator = RareEventStressTester()
+                    mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should have set_eval_frame attack markers
+        self.assertIn("rarestress_7000", result)
+        self.assertIn("set_eval_frame stress test", result)
+        self.assertIn("sys.settrace", result)
+        self.assertIn("trace_func_rarestress_7000", result)
+        # Verify code is valid
+        reparsed = ast.parse(result)
+        self.assertIsInstance(reparsed, ast.Module)
+
+    def test_single_event_builtin_dict(self):
+        """Test single event attack: builtin_dict."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", side_effect=[0.05, 0.1]):
+            with patch("random.choice", return_value="builtin_dict"):
+                with patch("random.randint", return_value=8000):
+                    mutator = RareEventStressTester()
+                    mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should have builtin_dict attack markers
+        self.assertIn("rarestress_8000", result)
+        self.assertIn("builtin_dict stress test", result)
+        self.assertIn("import builtins", result)
+        self.assertIn("builtins.__dict__", result)
+        # Verify code is valid
+        reparsed = ast.parse(result)
+        self.assertIsInstance(reparsed, ast.Module)
+
+    def test_single_event_func_modification(self):
+        """Test single event attack: func_modification."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", side_effect=[0.05, 0.1]):
+            with patch("random.choice", return_value="func_modification"):
+                with patch("random.randint", return_value=9000):
+                    mutator = RareEventStressTester()
+                    mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should have func_modification attack markers
+        self.assertIn("rarestress_9000", result)
+        self.assertIn("func_modification stress test", result)
+        self.assertIn("target_func_rarestress_9000", result)
+        self.assertIn("__code__", result)
+        # Verify code is valid
+        reparsed = ast.parse(result)
+        self.assertIsInstance(reparsed, ast.Module)
+
+    def test_combination_attack(self):
+        """Test combination attack with multiple events."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+
+        # 0.05 < 0.08 triggers, 0.5 > 0.4 for combination
+        with patch("random.random", side_effect=[0.05, 0.5]):
+            with patch("random.choice", return_value=["set_class", "set_bases"]):
+                with patch("random.randint", return_value=1234):
+                    mutator = RareEventStressTester()
+                    mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should have combination attack markers
+        self.assertIn("rarestress_1234", result)
+        self.assertIn("Starting rare event combination attack", result)
+        self.assertIn("Triggering set_class", result)
+        self.assertIn("Triggering set_bases", result)
+        self.assertIn("Verification phase", result)
+        # Verify code is valid
+        reparsed = ast.parse(result)
+        self.assertIsInstance(reparsed, ast.Module)
+
+    def test_combination_attack_three_events(self):
+        """Test combination attack with three events."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", side_effect=[0.05, 0.5]):
+            with patch(
+                "random.choice",
+                return_value=["set_class", "builtin_dict", "func_modification"],
+            ):
+                with patch("random.randint", return_value=4321):
+                    mutator = RareEventStressTester()
+                    mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should have all three event triggers
+        self.assertIn("Triggering set_class", result)
+        self.assertIn("Triggering builtin_dict", result)
+        self.assertIn("Triggering func_modification", result)
+        # Verify code is valid
+        reparsed = ast.parse(result)
+        self.assertIsInstance(reparsed, ast.Module)
+
+    def test_no_mutation_when_random_fails(self):
+        """Test that no mutation occurs when random check fails."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+        original = ast.unparse(tree)
+
+        with patch("random.random", return_value=0.5):  # > 0.08 threshold
+            mutator = RareEventStressTester()
+            mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        self.assertEqual(original, result)
+
+    def test_skips_non_harness_functions(self):
+        """Test that non-harness functions are not mutated."""
+        code = dedent("""
+            def normal_function():
+                x = 1
+        """)
+        tree = ast.parse(code)
+        original = ast.unparse(tree)
+
+        with patch("random.random", return_value=0.05):  # Would trigger
+            mutator = RareEventStressTester()
+            mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        self.assertEqual(original, result)
+
+    def test_skips_empty_functions(self):
+        """Test that empty functions are not mutated."""
+        code = dedent("""
+            def uop_harness_test():
+                pass
+        """)
+        tree = ast.parse(code)
+        # Remove the pass statement to create truly empty body
+        tree.body[0].body = []
+
+        with patch("random.random", return_value=0.05):  # Would trigger
+            mutator = RareEventStressTester()
+            mutated = mutator.visit(tree)
+
+        # Should have been skipped due to empty body
+        self.assertEqual(len(mutated.body[0].body), 0)
+
+    def test_all_single_events_produce_valid_code(self):
+        """Test that all single event types produce valid code."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+                y = 2
+        """)
+
+        for event in RareEventStressTester.RARE_EVENTS:
+            with self.subTest(event=event):
+                tree = ast.parse(code)
+                with patch("random.random", side_effect=[0.05, 0.1]):
+                    with patch("random.choice", return_value=event):
+                        with patch("random.randint", return_value=1000):
+                            mutator = RareEventStressTester()
+                            mutated = mutator.visit(tree)
+
+                result = ast.unparse(mutated)
+                reparsed = ast.parse(result)
+                self.assertIsInstance(reparsed, ast.Module)
+
+    def test_all_combinations_produce_valid_code(self):
+        """Test that all event combinations produce valid code."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+
+        for combo in RareEventStressTester.EVENT_COMBINATIONS:
+            with self.subTest(combo=combo):
+                tree = ast.parse(code)
+                with patch("random.random", side_effect=[0.05, 0.5]):
+                    with patch("random.choice", return_value=combo):
+                        with patch("random.randint", return_value=2000):
+                            mutator = RareEventStressTester()
+                            mutated = mutator.visit(tree)
+
+                result = ast.unparse(mutated)
+                reparsed = ast.parse(result)
+                self.assertIsInstance(reparsed, ast.Module)
 
 
 if __name__ == "__main__":

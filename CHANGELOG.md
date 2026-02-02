@@ -14,9 +14,11 @@ All notable changes to this project should be documented in this file.
 - A `ComprehensiveFunctionMutator` that systematically attacks all function modification rare events, by @devdanzin.
 - A `DynamicClassSwapper` that aggressively swaps objects between incompatible classes (built-in type subclasses, classes with/without `__slots__`, different MRO depths, incompatible `__dict__` attributes) to stress JIT type guards and deoptimization logic, targeting the `set_class` rare event, by @devdanzin.
 - A `BasesRewriteMutator` that creatively manipulates `__bases__` tuples (removal, builtin injection, inheritance toggling, complete replacement) to attack MRO caching assumptions, targeting the `set_bases` rare event, by @devdanzin.
+- A `TypeVersionInvalidator` that targets `_GUARD_TYPE_VERSION` by modifying class attributes at runtime (method injection, method replacement, attribute injection, dict modification) to invalidate JIT type caches, by @devdanzin.
 
 ### Enhanced
 
+- `BuiltinNamespaceCorruptor` with test_optimizer.py-inspired attacks: direct `__builtins__["KEY"]` style modifications, `ModuleType` vs dict representation handling, and high-frequency builtin corruption (corrupting `len`, `isinstance`, and `type` simultaneously), by @devdanzin.
 - `BloomFilterSaturator` with probe-based saturation detection, strategic global modifications, and multi-phase attacks (warmup, saturation, exploitation, verification) to better exploit the JIT's global variable tracking bloom filter, by @devdanzin.
 
 ### Fixed

@@ -1895,3 +1895,382 @@ class BasesRewriteMutator(ast.NodeTransformer):
                     pass
         """)
         return ast.parse(attack_code).body
+
+
+class TypeVersionInvalidator(ast.NodeTransformer):
+    """
+    Targets _GUARD_TYPE_VERSION by modifying class attributes at runtime.
+
+    The JIT uses type version numbers to cache:
+    - Method lookups
+    - Attribute access
+    - Type checks
+
+    This mutator invalidates those caches by modifying classes after
+    they've been JIT-compiled and cached.
+
+    Attack vectors:
+    - Inject new methods into classes
+    - Replace existing methods
+    - Add/modify class attributes
+    - Modify class __dict__
+    """
+
+    ATTACK_SCENARIOS = [
+        "method_injection",
+        "method_replacement",
+        "attribute_injection",
+        "dict_modification",
+    ]
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> ast.FunctionDef:
+        self.generic_visit(node)
+
+        if not node.name.startswith("uop_harness") or not node.body:
+            return node
+
+        if random.random() < 0.12:  # 12% probability
+            attack_type = random.choice(self.ATTACK_SCENARIOS)
+            p_prefix = f"typeversion_{random.randint(1000, 9999)}"
+
+            print(
+                f"    -> Injecting TypeVersionInvalidator ({attack_type}) with prefix '{p_prefix}'",
+                file=sys.stderr,
+            )
+
+            if attack_type == "method_injection":
+                scenario_ast = self._create_method_injection_attack(p_prefix)
+            elif attack_type == "method_replacement":
+                scenario_ast = self._create_method_replacement_attack(p_prefix)
+            elif attack_type == "attribute_injection":
+                scenario_ast = self._create_attribute_injection_attack(p_prefix)
+            else:  # dict_modification
+                scenario_ast = self._create_dict_modification_attack(p_prefix)
+
+            # Inject the scenario
+            injection_point = random.randint(0, len(node.body))
+            node.body[injection_point:injection_point] = scenario_ast
+            ast.fix_missing_locations(node)
+
+        return node
+
+    def _create_method_injection_attack(self, prefix: str) -> list[ast.stmt]:
+        """Inject new methods into a class after warmup."""
+        attack_code = dedent(f"""
+            # Type version invalidation - method injection
+            print('[{prefix}] Running method injection attack...', file=sys.stderr)
+
+            class TargetClass_{prefix}:
+                def __init__(self, value):
+                    self.value = value
+
+                def get_value(self):
+                    return self.value
+
+            obj_{prefix} = TargetClass_{prefix}(42)
+
+            # Phase 1: Warmup - JIT compiles with only get_value method
+            try:
+                for i_{prefix} in range(300):
+                    _ = obj_{prefix}.get_value()
+            except Exception:
+                pass
+
+            # Phase 2: Inject new methods (invalidates type version)
+            try:
+                print('[{prefix}] Injecting new methods...', file=sys.stderr)
+
+                # Method 1: Simple lambda
+                TargetClass_{prefix}.new_method = lambda self: "injected"
+
+                # Method 2: Full function
+                def injected_compute_{prefix}(self):
+                    return self.value * 100
+                TargetClass_{prefix}.compute = injected_compute_{prefix}
+
+                # Method 3: Property
+                TargetClass_{prefix}.double = property(lambda self: self.value * 2)
+
+                # Call the injected methods
+                _ = obj_{prefix}.new_method()
+                _ = obj_{prefix}.compute()
+                _ = obj_{prefix}.double
+
+            except (AttributeError, TypeError):
+                pass
+
+            # Phase 3: Continue calling original method
+            try:
+                for i_{prefix} in range(100):
+                    _ = obj_{prefix}.get_value()
+            except Exception:
+                pass
+
+            # Phase 4: Modify via type.__setattr__
+            try:
+                type.__setattr__(TargetClass_{prefix}, 'via_setattr', lambda self: "meta")
+                _ = obj_{prefix}.via_setattr()
+            except Exception:
+                pass
+
+            # Phase 5: Rapid method additions
+            for i_{prefix} in range(50):
+                try:
+                    setattr(TargetClass_{prefix}, f'dynamic_method_{{i_{prefix}}}', lambda self, x=i_{prefix}: x)
+                    _ = getattr(obj_{prefix}, f'dynamic_method_{{i_{prefix}}}')()
+                except Exception:
+                    pass
+        """)
+        return ast.parse(attack_code).body
+
+    def _create_method_replacement_attack(self, prefix: str) -> list[ast.stmt]:
+        """Replace existing methods with different implementations."""
+        attack_code = dedent(f"""
+            # Type version invalidation - method replacement
+            print('[{prefix}] Running method replacement attack...', file=sys.stderr)
+
+            class VictimClass_{prefix}:
+                def __init__(self):
+                    self.counter = 0
+
+                def compute(self):
+                    self.counter += 1
+                    return self.counter
+
+                def get_status(self):
+                    return "original"
+
+            obj_{prefix} = VictimClass_{prefix}()
+
+            # Phase 1: Warmup - JIT learns original method behavior
+            try:
+                for i_{prefix} in range(300):
+                    _ = obj_{prefix}.compute()
+                    _ = obj_{prefix}.get_status()
+            except Exception:
+                pass
+
+            # Phase 2: Replace compute method
+            try:
+                print('[{prefix}] Replacing compute method...', file=sys.stderr)
+
+                def new_compute_{prefix}(self):
+                    return "replaced!"
+
+                VictimClass_{prefix}.compute = new_compute_{prefix}
+                _ = obj_{prefix}.compute()  # Now returns string, not int
+            except (AttributeError, TypeError):
+                pass
+
+            # Phase 3: Replace with lambda
+            try:
+                print('[{prefix}] Replacing get_status with lambda...', file=sys.stderr)
+                VictimClass_{prefix}.get_status = lambda self: 999
+                _ = obj_{prefix}.get_status()  # Now returns int, not string
+            except (AttributeError, TypeError):
+                pass
+
+            # Phase 4: Replace with None (makes method uncallable)
+            try:
+                print('[{prefix}] Setting method to None...', file=sys.stderr)
+                VictimClass_{prefix}.compute = None
+                _ = obj_{prefix}.compute()  # Should fail
+            except (AttributeError, TypeError):
+                pass
+
+            # Phase 5: Restore and call again
+            try:
+                def restored_compute_{prefix}(self):
+                    return "restored"
+                VictimClass_{prefix}.compute = restored_compute_{prefix}
+                _ = obj_{prefix}.compute()
+            except Exception:
+                pass
+
+            # Phase 6: Rapid replacement cycle
+            for i_{prefix} in range(100):
+                try:
+                    if i_{prefix} % 2 == 0:
+                        VictimClass_{prefix}.compute = lambda self: i_{prefix}
+                    else:
+                        VictimClass_{prefix}.compute = lambda self: f"str_{{i_{prefix}}}"
+                    _ = obj_{prefix}.compute()
+                except Exception:
+                    pass
+        """)
+        return ast.parse(attack_code).body
+
+    def _create_attribute_injection_attack(self, prefix: str) -> list[ast.stmt]:
+        """Add class attributes after warmup."""
+        attack_code = dedent(f"""
+            # Type version invalidation - attribute injection
+            print('[{prefix}] Running attribute injection attack...', file=sys.stderr)
+
+            class AttrClass_{prefix}:
+                class_attr = "original"
+
+                def __init__(self):
+                    self.instance_attr = 100
+
+                def get_class_attr(self):
+                    return AttrClass_{prefix}.class_attr
+
+            obj_{prefix} = AttrClass_{prefix}()
+
+            # Phase 1: Warmup - JIT caches attribute access
+            try:
+                for i_{prefix} in range(300):
+                    _ = obj_{prefix}.get_class_attr()
+                    _ = AttrClass_{prefix}.class_attr
+                    _ = obj_{prefix}.instance_attr
+            except Exception:
+                pass
+
+            # Phase 2: Inject new class attributes
+            try:
+                print('[{prefix}] Injecting class attributes...', file=sys.stderr)
+
+                AttrClass_{prefix}.new_attr = "injected"
+                AttrClass_{prefix}.numeric_attr = 42
+                AttrClass_{prefix}.list_attr = [1, 2, 3]
+
+                _ = AttrClass_{prefix}.new_attr
+                _ = obj_{prefix}.numeric_attr  # Access via instance
+                _ = obj_{prefix}.list_attr
+            except (AttributeError, TypeError):
+                pass
+
+            # Phase 3: Inject descriptor
+            try:
+                print('[{prefix}] Injecting descriptor...', file=sys.stderr)
+
+                class Descriptor_{prefix}:
+                    def __get__(self, obj, owner):
+                        return "descriptor_value"
+                    def __set__(self, obj, value):
+                        pass
+
+                AttrClass_{prefix}.desc_attr = Descriptor_{prefix}()
+                _ = obj_{prefix}.desc_attr
+            except (AttributeError, TypeError):
+                pass
+
+            # Phase 4: Modify original class attribute
+            try:
+                print('[{prefix}] Modifying original class attribute...', file=sys.stderr)
+                AttrClass_{prefix}.class_attr = "modified"
+                _ = obj_{prefix}.get_class_attr()  # Should return "modified"
+            except Exception:
+                pass
+
+            # Phase 5: Inject __slots__ after the fact (should fail but stress JIT)
+            try:
+                AttrClass_{prefix}.__slots__ = ['x', 'y']
+            except (AttributeError, TypeError):
+                pass
+
+            # Phase 6: Rapid attribute injection
+            for i_{prefix} in range(50):
+                try:
+                    setattr(AttrClass_{prefix}, f'rapid_attr_{{i_{prefix}}}', i_{prefix} * 10)
+                    _ = getattr(obj_{prefix}, f'rapid_attr_{{i_{prefix}}}')
+                except Exception:
+                    pass
+        """)
+        return ast.parse(attack_code).body
+
+    def _create_dict_modification_attack(self, prefix: str) -> list[ast.stmt]:
+        """Modify class __dict__ after warmup."""
+        attack_code = dedent(f"""
+            # Type version invalidation - __dict__ modification
+            print('[{prefix}] Running __dict__ modification attack...', file=sys.stderr)
+
+            class DictVictim_{prefix}:
+                class_var = "original_class_var"
+
+                def __init__(self):
+                    self.instance_var = 100
+
+                def method(self):
+                    return "original_method"
+
+                def other_method(self):
+                    return DictVictim_{prefix}.class_var
+
+            obj_{prefix} = DictVictim_{prefix}()
+
+            # Phase 1: Warmup
+            try:
+                for i_{prefix} in range(300):
+                    _ = obj_{prefix}.method()
+                    _ = obj_{prefix}.other_method()
+                    _ = DictVictim_{prefix}.class_var
+            except Exception:
+                pass
+
+            # Phase 2: Access class __dict__ and modify it
+            try:
+                print('[{prefix}] Modifying class __dict__...', file=sys.stderr)
+
+                # Add new entries to __dict__
+                DictVictim_{prefix}.__dict__['injected_key'] = "injected_value"
+            except TypeError:
+                # mappingproxy doesn't support item assignment directly
+                # Use setattr instead
+                try:
+                    setattr(DictVictim_{prefix}, 'injected_key', "injected_value")
+                    _ = DictVictim_{prefix}.injected_key
+                except Exception:
+                    pass
+
+            # Phase 3: Iterate over __dict__ and modify via setattr
+            try:
+                print('[{prefix}] Bulk modifying via __dict__ iteration...', file=sys.stderr)
+                for key in list(DictVictim_{prefix}.__dict__.keys()):
+                    if not key.startswith('_'):
+                        try:
+                            # Try to "shadow" each attribute
+                            setattr(DictVictim_{prefix}, f'shadow_{{key}}', f'shadow_of_{{key}}')
+                        except Exception:
+                            pass
+            except Exception:
+                pass
+
+            # Phase 4: Replace method via vars()
+            try:
+                print('[{prefix}] Modifying via vars()...', file=sys.stderr)
+                vars(DictVictim_{prefix})  # This returns the __dict__
+                # Can't modify mappingproxy, but JIT might track this access
+            except Exception:
+                pass
+
+            # Phase 5: Delete and re-add attributes
+            try:
+                print('[{prefix}] Delete and re-add cycle...', file=sys.stderr)
+                original_method_{prefix} = DictVictim_{prefix}.method
+
+                del DictVictim_{prefix}.method
+                _ = obj_{prefix}.method()  # Should raise AttributeError
+            except AttributeError:
+                pass
+            except Exception:
+                pass
+
+            try:
+                # Re-add the method
+                DictVictim_{prefix}.method = lambda self: "re-added"
+                _ = obj_{prefix}.method()
+            except Exception:
+                pass
+
+            # Phase 6: Stress test with rapid modifications
+            for i_{prefix} in range(100):
+                try:
+                    setattr(DictVictim_{prefix}, f'stress_attr_{{i_{prefix}}}', i_{prefix})
+                    if i_{prefix} % 10 == 0:
+                        delattr(DictVictim_{prefix}, f'stress_attr_{{i_{prefix}}}')
+                    _ = obj_{prefix}.method()
+                except Exception:
+                    pass
+        """)
+        return ast.parse(attack_code).body

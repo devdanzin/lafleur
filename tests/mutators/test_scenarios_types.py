@@ -26,6 +26,7 @@ from lafleur.mutators.scenarios_types import (
     SuperResolutionAttacker,
     TypeInstabilityInjector,
     TypeIntrospectionMutator,
+    TypeVersionInvalidator,
 )
 from lafleur.mutators.utils import FuzzerSetupNormalizer
 
@@ -2114,6 +2115,290 @@ class TestBasesRewriteMutator(unittest.TestCase):
         # Should have class definitions with inheritance
         self.assertIn("class Child_", result)
         self.assertIn("(Parent1_", result)
+
+
+class TestTypeVersionInvalidator(unittest.TestCase):
+    """Test TypeVersionInvalidator mutator."""
+
+    def setUp(self):
+        """Set random seed for reproducible tests."""
+        random.seed(42)
+
+    def test_injects_type_version_attack(self):
+        """Test that type version attack is injected."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.1):  # Below 0.12 threshold
+            with patch("random.choice", return_value="method_injection"):
+                mutator = TypeVersionInvalidator()
+                mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should have type version attack code
+        self.assertIn("TargetClass_", result)
+
+    def test_method_injection_attack(self):
+        """Test method_injection attack scenario."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.1):
+            with patch("random.choice", return_value="method_injection"):
+                mutator = TypeVersionInvalidator()
+                mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should have method injection components
+        self.assertIn("TargetClass_", result)
+        self.assertIn("new_method", result)
+        self.assertIn("property", result)
+        self.assertIn("type.__setattr__", result)
+
+    def test_method_replacement_attack(self):
+        """Test method_replacement attack scenario."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.1):
+            with patch("random.choice", return_value="method_replacement"):
+                mutator = TypeVersionInvalidator()
+                mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should have method replacement components
+        self.assertIn("VictimClass_", result)
+        self.assertIn(".compute", result)
+        self.assertIn("replaced", result)
+
+    def test_attribute_injection_attack(self):
+        """Test attribute_injection attack scenario."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.1):
+            with patch("random.choice", return_value="attribute_injection"):
+                mutator = TypeVersionInvalidator()
+                mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should have attribute injection components
+        self.assertIn("AttrClass_", result)
+        self.assertIn("new_attr", result)
+        self.assertIn("Descriptor_", result)
+
+    def test_dict_modification_attack(self):
+        """Test dict_modification attack scenario."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.1):
+            with patch("random.choice", return_value="dict_modification"):
+                mutator = TypeVersionInvalidator()
+                mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should have dict modification components
+        self.assertIn("DictVictim_", result)
+        self.assertIn("__dict__", result)
+        self.assertIn("setattr", result)
+
+    def test_includes_warmup_loop(self):
+        """Test that warmup loop is included."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.1):
+            mutator = TypeVersionInvalidator()
+            mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should have warmup loops
+        self.assertIn("for", result)
+        self.assertIn("range(300)", result)
+
+    def test_includes_try_except_wrapper(self):
+        """Test that try/except wrapper is included for safety."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.1):
+            mutator = TypeVersionInvalidator()
+            mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should have try/except
+        self.assertIn("try:", result)
+        self.assertIn("except", result)
+
+    def test_skips_non_harness_functions(self):
+        """Test that non-harness functions are not mutated."""
+        code = dedent("""
+            def normal_function():
+                x = 1
+        """)
+        tree = ast.parse(code)
+        original = ast.unparse(tree)
+
+        with patch("random.random", return_value=0.1):
+            mutator = TypeVersionInvalidator()
+            mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        self.assertEqual(original, result)
+
+    def test_no_mutation_with_low_probability(self):
+        """Test that mutation doesn't occur with low probability."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+        original = ast.unparse(tree)
+
+        with patch("random.random", return_value=0.9):  # Above 0.12 threshold
+            mutator = TypeVersionInvalidator()
+            mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        self.assertEqual(original, result)
+
+    def test_produces_valid_code(self):
+        """Test that output is valid, parseable Python."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+                y = 2
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.1):
+            mutator = TypeVersionInvalidator()
+            mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        reparsed = ast.parse(result)
+        self.assertIsInstance(reparsed, ast.Module)
+
+    def test_unique_prefixes(self):
+        """Test that unique prefixes are generated."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.1):
+            with patch("random.randint", return_value=5555):
+                mutator = TypeVersionInvalidator()
+                mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should have unique prefix
+        self.assertIn("typeversion_5555", result)
+
+    def test_preserves_original_function_body(self):
+        """Test that original function statements are preserved."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+                y = 2
+                z = x + y
+        """)
+        tree = ast.parse(code)
+        original_statements = ["x = 1", "y = 2", "z = x + y"]
+
+        with patch("random.random", return_value=0.1):
+            mutator = TypeVersionInvalidator()
+            mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Original statements should still be present
+        for stmt in original_statements:
+            self.assertIn(stmt, result)
+
+    def test_handles_empty_function_body(self):
+        """Test handling of functions with only pass."""
+        code = dedent("""
+            def uop_harness_test():
+                pass
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.1):
+            mutator = TypeVersionInvalidator()
+            mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should still be valid
+        reparsed = ast.parse(result)
+        self.assertIsInstance(reparsed, ast.Module)
+
+    def test_all_attack_types(self):
+        """Test that all attack types can be generated."""
+        attack_types = [
+            "method_injection",
+            "method_replacement",
+            "attribute_injection",
+            "dict_modification",
+        ]
+
+        for attack_type in attack_types:
+            with self.subTest(attack_type=attack_type):
+                code = dedent("""
+                    def uop_harness_test():
+                        x = 1
+                """)
+                tree = ast.parse(code)
+
+                with patch("random.random", return_value=0.1):
+                    with patch("random.choice", return_value=attack_type):
+                        mutator = TypeVersionInvalidator()
+                        mutated = mutator.visit(tree)
+
+                result = ast.unparse(mutated)
+                # Should have attack-specific code
+                self.assertIn("typeversion_", result)
+
+    def test_modification_after_warmup(self):
+        """Test that modifications happen after warmup."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.1):
+            with patch("random.choice", return_value="method_injection"):
+                mutator = TypeVersionInvalidator()
+                mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Warmup should come before modification
+        warmup_pos = result.find("range(300)")
+        modify_pos = result.find("new_method")
+        self.assertLess(warmup_pos, modify_pos)
 
 
 if __name__ == "__main__":

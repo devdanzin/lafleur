@@ -474,6 +474,11 @@ class BuiltinNamespaceCorruptor(ast.NodeTransformer):
     Temporarily replaces a built-in function with a malicious version to
     attack JIT specializations for builtins. Ensures restoration via a
     try...finally block.
+
+    Enhanced with test_optimizer.py-inspired attacks:
+    - Direct __builtins__["KEY"] style modifications
+    - ModuleType vs dict representation handling
+    - High-frequency builtin corruption
     """
 
     ATTACK_SCENARIOS = [
@@ -509,6 +514,13 @@ class BuiltinNamespaceCorruptor(ast.NodeTransformer):
         },
     ]
 
+    # Enhanced attack types (test_optimizer.py inspired)
+    ENHANCED_ATTACKS = [
+        "direct_dict_modification",
+        "builtins_type_toggle",
+        "highfreq_builtin_corruption",
+    ]
+
     def visit_FunctionDef(self, node: ast.FunctionDef) -> ast.FunctionDef:
         self.generic_visit(node)
 
@@ -516,51 +528,239 @@ class BuiltinNamespaceCorruptor(ast.NodeTransformer):
             return node
 
         if random.random() < 0.15:  # 15% chance
-            attack = random.choice(self.ATTACK_SCENARIOS)
-            builtin_name = attack["builtin"]
-
             p_prefix = f"builtin_{random.randint(1000, 9999)}"
-            original_var_name = f"original_{builtin_name}_{p_prefix}"
 
-            print(f"    -> Injecting builtin corruption for '{builtin_name}'", file=sys.stderr)
+            # 30% chance to use enhanced attacks
+            if random.random() < 0.3:
+                attack_type = random.choice(self.ENHANCED_ATTACKS)
+                print(
+                    f"    -> Injecting enhanced builtin corruption ({attack_type}) "
+                    f"with prefix '{p_prefix}'",
+                    file=sys.stderr,
+                )
 
-            if "malicious_lambda" in attack:
-                # Simple case: build from a lambda
-                scenario_str = dedent(f"""
-                    {original_var_name} = builtins.{builtin_name}
-                    try:
-                        {attack["warm_up"]}
-                        builtins.{builtin_name} = {attack["malicious_lambda"]}
-                        {attack["trigger"]}
-                    except Exception:
-                        pass
-                    finally:
-                        builtins.{builtin_name} = {original_var_name}
-                """)
+                if attack_type == "direct_dict_modification":
+                    scenario_ast = self._create_direct_dict_attack(p_prefix)
+                elif attack_type == "builtins_type_toggle":
+                    scenario_ast = self._create_builtins_type_toggle_attack(p_prefix)
+                else:  # highfreq_builtin_corruption
+                    scenario_ast = self._create_highfreq_builtin_attack(p_prefix)
+
+                # Inject imports and scenario
+                imports = ast.parse("import builtins\nimport types").body
+                injection_point = random.randint(0, len(node.body))
+                node.body[injection_point:injection_point] = imports + scenario_ast
+                ast.fix_missing_locations(node)
             else:
-                # Complex case: build from setup and assignment strings
-                setup_code = attack["setup"].format(original_var_name=original_var_name)
-                scenario_str = dedent(f"""
+                # Original attack logic
+                attack = random.choice(self.ATTACK_SCENARIOS)
+                builtin_name = attack["builtin"]
+                original_var_name = f"original_{builtin_name}_{p_prefix}"
+
+                print(f"    -> Injecting builtin corruption for '{builtin_name}'", file=sys.stderr)
+
+                if "malicious_lambda" in attack:
+                    # Simple case: build from a lambda
+                    scenario_str = dedent(f"""
+                        {original_var_name} = builtins.{builtin_name}
+                        try:
+                            {attack["warm_up"]}
+                            builtins.{builtin_name} = {attack["malicious_lambda"]}
+                            {attack["trigger"]}
+                        except Exception:
+                            pass
+                        finally:
+                            builtins.{builtin_name} = {original_var_name}
+                    """)
+                else:
+                    # Complex case: build from setup and assignment strings
+                    setup_code = attack["setup"].format(original_var_name=original_var_name)
+                    scenario_str = dedent(f"""
 {indent(setup_code, prefix=" " * 20)}
-                    try:
-                        {attack["warm_up"]}
-                        {attack["malicious_assignment"]}
-                        {attack["trigger"]}
-                    except Exception:
-                        pass
-                    finally:
-                        builtins.{builtin_name} = {original_var_name}
-                """)
+                        try:
+                            {attack["warm_up"]}
+                            {attack["malicious_assignment"]}
+                            {attack["trigger"]}
+                        except Exception:
+                            pass
+                        finally:
+                            builtins.{builtin_name} = {original_var_name}
+                    """)
 
-            scenario_ast = ast.parse(scenario_str).body
+                scenario_ast = ast.parse(scenario_str).body
 
-            # Inject the scenario
-            node.body.insert(0, ast.Import(names=[ast.alias(name="builtins")]))
-            injection_point = random.randint(1, len(node.body))
-            node.body[injection_point:injection_point] = scenario_ast
-            ast.fix_missing_locations(node)
+                # Inject the scenario
+                node.body.insert(0, ast.Import(names=[ast.alias(name="builtins")]))
+                injection_point = random.randint(1, len(node.body))
+                node.body[injection_point:injection_point] = scenario_ast
+                ast.fix_missing_locations(node)
 
         return node
+
+    def _create_direct_dict_attack(self, prefix: str) -> list[ast.stmt]:
+        """Direct dictionary-style builtin modification (test_optimizer.py style)."""
+        attack_code = dedent(f"""
+            # Direct __builtins__ dict modification (test_optimizer.py style)
+            print('[{prefix}] Running direct dict builtin attack...', file=sys.stderr)
+
+            # Handle both dict and module representations
+            if isinstance(__builtins__, types.ModuleType):
+                builtins_dict_{prefix} = __builtins__.__dict__
+            else:
+                builtins_dict_{prefix} = __builtins__
+
+            # Phase 1: Warmup with standard len calls
+            try:
+                for i_{prefix} in range(200):
+                    _ = len([i_{prefix}])
+                    _ = isinstance(i_{prefix}, int)
+            except Exception:
+                pass
+
+            # Phase 2: Direct dict modification (triggers builtin_dict rare event)
+            try:
+                print('[{prefix}] Modifying builtins dict directly...', file=sys.stderr)
+                builtins_dict_{prefix}["FUZZER_FOO_{prefix}"] = 42
+                builtins_dict_{prefix}["FUZZER_BAR_{prefix}"] = lambda x: "evil"
+
+                # Use the builtins after modification
+                for i_{prefix} in range(50):
+                    _ = len([i_{prefix}])
+                    _ = isinstance(i_{prefix}, int)
+
+                # Clean up
+                del builtins_dict_{prefix}["FUZZER_FOO_{prefix}"]
+                del builtins_dict_{prefix}["FUZZER_BAR_{prefix}"]
+
+            except Exception:
+                pass
+
+            # Phase 3: Rapid add/delete cycle
+            try:
+                for i_{prefix} in range(100):
+                    key_{prefix} = f"FUZZER_RAPID_{{i_{prefix}}}"
+                    builtins_dict_{prefix}[key_{prefix}] = i_{prefix}
+                    _ = len([i_{prefix}])
+                    del builtins_dict_{prefix}[key_{prefix}]
+            except Exception:
+                pass
+        """)
+        return ast.parse(attack_code).body
+
+    def _create_builtins_type_toggle_attack(self, prefix: str) -> list[ast.stmt]:
+        """Toggle between __builtins__ as module vs dict."""
+        attack_code = dedent(f"""
+            # Builtins type toggle attack
+            print('[{prefix}] Running builtins type toggle...', file=sys.stderr)
+
+            # Detect current type
+            is_module_{prefix} = isinstance(__builtins__, types.ModuleType)
+            print(f'[{prefix}] __builtins__ is module: {{is_module_{prefix}}}', file=sys.stderr)
+
+            # Phase 1: Warmup
+            try:
+                for i_{prefix} in range(200):
+                    _ = len([i_{prefix}])
+                    _ = isinstance(1, int)
+                    _ = type(i_{prefix})
+            except Exception:
+                pass
+
+            # Phase 2: Access as different types
+            try:
+                if is_module_{prefix}:
+                    # Access as dict via __dict__
+                    print('[{prefix}] Accessing via module.__dict__...', file=sys.stderr)
+                    dict_view_{prefix} = __builtins__.__dict__
+                    dict_view_{prefix}["FUZZER_KEY_{prefix}"] = "evil_module"
+
+                    # Use builtins after modification
+                    for i_{prefix} in range(50):
+                        _ = len([i_{prefix}])
+
+                    del dict_view_{prefix}["FUZZER_KEY_{prefix}"]
+                else:
+                    # Already a dict, access directly
+                    print('[{prefix}] Accessing as dict directly...', file=sys.stderr)
+                    __builtins__["FUZZER_KEY_{prefix}"] = "evil_dict"
+
+                    # Use builtins after modification
+                    for i_{prefix} in range(50):
+                        _ = len([i_{prefix}])
+
+                    del __builtins__["FUZZER_KEY_{prefix}"]
+            except Exception:
+                pass
+
+            # Phase 3: Stress test with type checking
+            try:
+                for i_{prefix} in range(100):
+                    # Check type repeatedly to stress any caching
+                    _ = isinstance(__builtins__, types.ModuleType)
+                    _ = type(__builtins__)
+                    _ = len([i_{prefix}])
+            except Exception:
+                pass
+        """)
+        return ast.parse(attack_code).body
+
+    def _create_highfreq_builtin_attack(self, prefix: str) -> list[ast.stmt]:
+        """Corrupt frequently-accessed builtins simultaneously."""
+        attack_code = dedent(f"""
+            # High-frequency builtin corruption
+            print('[{prefix}] Corrupting frequently-used builtins...', file=sys.stderr)
+
+            # Save originals
+            original_len_{prefix} = builtins.len
+            original_isinstance_{prefix} = builtins.isinstance
+            original_type_{prefix} = builtins.type
+
+            try:
+                # Phase 1: Warmup with normal builtins
+                for i_{prefix} in range(200):
+                    _ = len([i_{prefix}])
+                    _ = isinstance(i_{prefix}, int)
+                    _ = type(i_{prefix})
+
+                # Phase 2: Corrupt multiple builtins simultaneously
+                print('[{prefix}] Corrupting len, isinstance, type...', file=sys.stderr)
+                builtins.len = lambda x: 999
+                builtins.isinstance = lambda obj, cls: False  # Always False!
+                builtins.type = lambda x: "corrupted_type"
+
+                # Phase 3: Attempt to use corrupted builtins
+                for i_{prefix} in range(50):
+                    try:
+                        _ = len([i_{prefix}])
+                        _ = isinstance(i_{prefix}, int)
+                        _ = type(i_{prefix})
+                    except Exception:
+                        pass
+
+                # Phase 4: Restore and corrupt again (rapid cycle)
+                for cycle_{prefix} in range(20):
+                    # Restore
+                    builtins.len = original_len_{prefix}
+                    builtins.isinstance = original_isinstance_{prefix}
+                    builtins.type = original_type_{prefix}
+
+                    _ = len([1, 2, 3])
+                    _ = isinstance(1, int)
+
+                    # Corrupt again
+                    builtins.len = lambda x: -1
+                    builtins.isinstance = lambda obj, cls: True  # Always True!
+
+                    _ = len([1, 2, 3])
+                    _ = isinstance("string", int)
+
+            finally:
+                # Always restore
+                builtins.len = original_len_{prefix}
+                builtins.isinstance = original_isinstance_{prefix}
+                builtins.type = original_type_{prefix}
+        """)
+        return ast.parse(attack_code).body
 
 
 def _create_chaotic_iterator_ast(class_name: str) -> ast.ClassDef:
@@ -935,7 +1135,19 @@ class BloomFilterSaturator(ast.NodeTransformer):
     the global modification tracking. The JIT stops watching globals after
     approximately 4096 mutations. We rapidly reach this limit ("Saturate") and
     then modify a watched global to trigger potential stale-cache bugs.
+
+    Enhanced with:
+    - Probe-based saturation detection
+    - Strategic global modifications when saturated
+    - Multi-phase attack patterns
     """
+
+    # Enhanced attack types
+    ENHANCED_ATTACKS = [
+        "saturation_probe",
+        "strategic_global_mod",
+        "multi_phase_attack",
+    ]
 
     def __init__(self):
         super().__init__()
@@ -976,31 +1188,215 @@ class BloomFilterSaturator(ast.NodeTransformer):
             return node
 
         if random.random() < 0.2:  # 20% chance
-            print(
-                f"    -> Injecting bloom filter saturation into '{node.name}'",
-                file=sys.stderr,
-            )
+            p_prefix = f"bloom_{random.randint(1000, 9999)}"
 
-            # Create the saturate-and-switch code
-            saturation_code = dedent("""
-                global _bloom_target, _bloom_noise_idx
-                if _bloom_target % 2 == 0: pass  # Bait: dependency on value
+            # 35% chance to use enhanced attacks
+            if random.random() < 0.35:
+                attack_type = random.choice(self.ENHANCED_ATTACKS)
+                print(
+                    f"    -> Injecting enhanced bloom filter attack ({attack_type}) "
+                    f"into '{node.name}'",
+                    file=sys.stderr,
+                )
 
-                # Noise: Thrash the globals dict
-                for _ in range(150):
-                    _bloom_noise_idx += 1
-                    globals()[f'_bloom_noise_{_bloom_noise_idx}'] = _bloom_noise_idx
+                if attack_type == "saturation_probe":
+                    saturation_nodes = self._create_saturation_probe_attack(p_prefix)
+                elif attack_type == "strategic_global_mod":
+                    saturation_nodes = self._create_strategic_global_attack(p_prefix)
+                else:  # multi_phase_attack
+                    saturation_nodes = self._create_multi_phase_attack(p_prefix)
 
-                # Switch: Invalidate the dependency
-                _bloom_target += 1
-            """)
-            saturation_nodes = ast.parse(saturation_code).body
+                # Inject at the beginning of the function body
+                node.body = saturation_nodes + node.body
+                ast.fix_missing_locations(node)
+            else:
+                # Original attack logic
+                print(
+                    f"    -> Injecting bloom filter saturation into '{node.name}'",
+                    file=sys.stderr,
+                )
 
-            # Inject at the beginning of the function body
-            node.body = saturation_nodes + node.body
-            ast.fix_missing_locations(node)
+                # Create the saturate-and-switch code
+                saturation_code = dedent("""
+                    global _bloom_target, _bloom_noise_idx
+                    if _bloom_target % 2 == 0: pass  # Bait: dependency on value
+
+                    # Noise: Thrash the globals dict
+                    for _ in range(150):
+                        _bloom_noise_idx += 1
+                        globals()[f'_bloom_noise_{_bloom_noise_idx}'] = _bloom_noise_idx
+
+                    # Switch: Invalidate the dependency
+                    _bloom_target += 1
+                """)
+                saturation_nodes = ast.parse(saturation_code).body
+
+                # Inject at the beginning of the function body
+                node.body = saturation_nodes + node.body
+                ast.fix_missing_locations(node)
 
         return node
+
+    def _create_saturation_probe_attack(self, prefix: str) -> list[ast.stmt]:
+        """Probe the bloom filter's state to detect saturation."""
+        attack_code = dedent(f"""
+            # Bloom filter saturation probe attack
+            print('[{prefix}] Probing bloom filter saturation...', file=sys.stderr)
+
+            global _bloom_target, _bloom_noise_idx
+
+            # Phase 1: Warmup - establish baseline behavior
+            for warm_{prefix} in range(100):
+                if _bloom_target % 2 == 0:
+                    pass  # Create dependency
+
+            # Phase 2: Probe for saturation
+            # The bloom filter has ~4096 slots. Create probe keys and check behavior.
+            saturation_detected_{prefix} = False
+            probe_count_{prefix} = 0
+
+            for probe_{prefix} in range(200):
+                # Create a unique probe key
+                probe_key_{prefix} = f'_bloom_probe_{{probe_{prefix}}}_{{id(object())}}'
+
+                # Check if this "new" key triggers false positive by testing assignment
+                try:
+                    globals()[probe_key_{prefix}] = probe_{prefix}
+                    probe_count_{prefix} += 1
+
+                    # If we've added many probes without JIT issues, filter might be saturated
+                    if probe_count_{prefix} > 150:
+                        saturation_detected_{prefix} = True
+                        print(f'[{prefix}] Bloom filter appears saturated after {{probe_count_{prefix}}} probes', file=sys.stderr)
+                        break
+                except Exception:
+                    pass
+
+            # Phase 3: If saturated, stress test
+            if saturation_detected_{prefix}:
+                print('[{prefix}] Exploiting saturated bloom filter...', file=sys.stderr)
+                # Rapid modifications to stressed filter
+                for stress_{prefix} in range(100):
+                    _bloom_noise_idx += 1
+                    globals()[f'_bloom_saturated_{{stress_{prefix}}}'] = stress_{prefix}
+                    # Check target value during stress
+                    _ = _bloom_target
+
+            # Switch target value
+            _bloom_target += 1
+        """)
+        return ast.parse(attack_code).body
+
+    def _create_strategic_global_attack(self, prefix: str) -> list[ast.stmt]:
+        """Strategically modify globals when filter is stressed."""
+        attack_code = dedent(f"""
+            # Strategic global modification attack
+            print('[{prefix}] Running strategic global modification...', file=sys.stderr)
+
+            global _bloom_target, _bloom_noise_idx
+
+            # Phase 1: Warmup with watched global access
+            original_target_{prefix} = _bloom_target
+            for warm_{prefix} in range(200):
+                _ = _bloom_target  # Access the watched global
+                _ = _bloom_noise_idx
+
+            # Phase 2: Saturate the bloom filter
+            print('[{prefix}] Saturating bloom filter...', file=sys.stderr)
+            for sat_{prefix} in range(500):
+                _bloom_noise_idx += 1
+                globals()[f'_bloom_strategic_{{sat_{prefix}}}'] = sat_{prefix}
+
+            # Phase 3: Strategic modifications to critical globals
+            print('[{prefix}] Modifying critical globals post-saturation...', file=sys.stderr)
+
+            # Modify multiple globals in rapid succession
+            critical_globals_{prefix} = ['_bloom_target', '_bloom_noise_idx']
+            for crit_{prefix} in critical_globals_{prefix}:
+                try:
+                    old_val_{prefix} = globals().get(crit_{prefix}, 0)
+                    globals()[crit_{prefix}] = old_val_{prefix} + 1
+                    # Immediately read back
+                    _ = globals()[crit_{prefix}]
+                except Exception:
+                    pass
+
+            # Phase 4: Add new "important" globals and modify them
+            for new_{prefix} in range(50):
+                key_{prefix} = f'_critical_global_{{new_{prefix}}}'
+                globals()[key_{prefix}] = new_{prefix}
+                # Modify immediately
+                globals()[key_{prefix}] = new_{prefix} * 2
+                # Delete
+                try:
+                    del globals()[key_{prefix}]
+                except KeyError:
+                    pass
+
+            # Access target after all modifications
+            _ = _bloom_target
+        """)
+        return ast.parse(attack_code).body
+
+    def _create_multi_phase_attack(self, prefix: str) -> list[ast.stmt]:
+        """Multi-phase attack: warmup, saturation, exploitation, verification."""
+        attack_code = dedent(f"""
+            # Multi-phase bloom filter attack
+            print('[{prefix}] Starting multi-phase bloom filter attack...', file=sys.stderr)
+
+            global _bloom_target, _bloom_noise_idx
+
+            # === PHASE 1: WARMUP ===
+            print('[{prefix}] Phase 1: Warmup...', file=sys.stderr)
+            warmup_result_{prefix} = 0
+            for warm_{prefix} in range(300):
+                # Establish JIT traces with global access
+                if _bloom_target % 2 == 0:
+                    warmup_result_{prefix} += 1
+                else:
+                    warmup_result_{prefix} -= 1
+                _ = _bloom_noise_idx
+
+            # === PHASE 2: SATURATION ===
+            print('[{prefix}] Phase 2: Saturating...', file=sys.stderr)
+            # Create many unique globals rapidly to fill the bloom filter
+            for sat_{prefix} in range(1000):
+                key_{prefix} = f'_bloom_sat_{{sat_{prefix}}}'
+                globals()[key_{prefix}] = sat_{prefix}
+                _bloom_noise_idx += 1
+
+            # === PHASE 3: EXPLOITATION ===
+            print('[{prefix}] Phase 3: Exploitation...', file=sys.stderr)
+
+            # Store original value
+            orig_target_{prefix} = _bloom_target
+
+            # Rapid toggle of the watched global
+            for exploit_{prefix} in range(100):
+                _bloom_target = exploit_{prefix}
+                # Force re-read
+                if _bloom_target != exploit_{prefix}:
+                    print(f'[{prefix}] Stale read detected!', file=sys.stderr)
+                # Add more noise
+                globals()[f'_exploit_noise_{{exploit_{prefix}}}'] = exploit_{prefix}
+
+            # === PHASE 4: VERIFICATION ===
+            print('[{prefix}] Phase 4: Verification...', file=sys.stderr)
+
+            # Verify we can still read globals correctly
+            final_target_{prefix} = _bloom_target
+            final_noise_{prefix} = _bloom_noise_idx
+
+            # One more warmup to trigger potential issues
+            for verify_{prefix} in range(50):
+                _ = _bloom_target
+                _ = _bloom_noise_idx
+                if _bloom_target % 3 == 0:
+                    _bloom_target += 1
+
+            print(f'[{prefix}] Attack complete. Target: {{_bloom_target}}, Noise idx: {{_bloom_noise_idx}}', file=sys.stderr)
+        """)
+        return ast.parse(attack_code).body
 
 
 class StackCacheThrasher(ast.NodeTransformer):

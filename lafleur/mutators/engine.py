@@ -98,6 +98,7 @@ from lafleur.mutators.scenarios_types import (
     SuperResolutionAttacker,
     TypeInstabilityInjector,
     TypeIntrospectionMutator,
+    TypeVersionInvalidator,
 )
 from lafleur.mutators.utils import RedundantStatementSanitizer
 from lafleur.mutators.helper_injection import HelperFunctionInjector
@@ -209,6 +210,7 @@ class ASTMutator:
             MROShuffler,
             BasesRewriteMutator,
             DynamicClassSwapper,
+            TypeVersionInvalidator,
             FrameManipulator,
             ComprehensionBomb,
             SuperResolutionAttacker,

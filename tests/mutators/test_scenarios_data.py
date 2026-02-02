@@ -77,7 +77,8 @@ class TestBuiltinNamespaceCorruptor(unittest.TestCase):
         """)
         tree = ast.parse(code)
 
-        with patch("random.random", return_value=0.1):
+        # First random < 0.15 triggers, second random > 0.3 uses original attack
+        with patch("random.random", side_effect=[0.1, 0.5]):
             mutator = BuiltinNamespaceCorruptor()
             mutated = mutator.visit(tree)
 
@@ -112,7 +113,8 @@ class TestBuiltinNamespaceCorruptor(unittest.TestCase):
         """)
         tree = ast.parse(code)
 
-        with patch("random.random", return_value=0.1):
+        # First random < 0.15 triggers, second random > 0.3 uses original attack
+        with patch("random.random", side_effect=[0.1, 0.5]):
             mutator = BuiltinNamespaceCorruptor()
             mutated = mutator.visit(tree)
 
@@ -160,7 +162,8 @@ class TestBuiltinNamespaceCorruptor(unittest.TestCase):
         """)
         tree = ast.parse(code)
 
-        with patch("random.random", return_value=0.1):
+        # First random < 0.15 triggers, second random > 0.3 uses original attack
+        with patch("random.random", side_effect=[0.1, 0.5]):
             with patch("random.choice") as mock_choice:
                 # Mock to return isinstance scenario
                 mock_choice.return_value = {
@@ -274,6 +277,188 @@ class TestBuiltinNamespaceCorruptor(unittest.TestCase):
             has_lambda = "malicious_lambda" in scenario
             has_setup = "setup" in scenario and "malicious_assignment" in scenario
             self.assertTrue(has_lambda or has_setup)
+
+    def test_has_enhanced_attacks_list(self):
+        """Test that ENHANCED_ATTACKS list is defined."""
+        mutator = BuiltinNamespaceCorruptor()
+        self.assertTrue(hasattr(mutator, "ENHANCED_ATTACKS"))
+        self.assertGreater(len(mutator.ENHANCED_ATTACKS), 0)
+        expected_attacks = [
+            "direct_dict_modification",
+            "builtins_type_toggle",
+            "highfreq_builtin_corruption",
+        ]
+        for attack in expected_attacks:
+            self.assertIn(attack, mutator.ENHANCED_ATTACKS)
+
+    def test_enhanced_attack_direct_dict_modification(self):
+        """Test that direct_dict_modification attack is injected correctly."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+                y = 2
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", side_effect=[0.1, 0.1]):  # trigger, use enhanced
+            with patch(
+                "random.choice",
+                side_effect=lambda x: "direct_dict_modification"
+                if x == BuiltinNamespaceCorruptor.ENHANCED_ATTACKS
+                else x[0],
+            ):
+                with patch("random.randint", return_value=5000):
+                    mutator = BuiltinNamespaceCorruptor()
+                    mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should have direct dict modification markers
+        self.assertIn("builtins_dict_builtin_5000", result)
+        self.assertIn("FUZZER_FOO_builtin_5000", result)
+        self.assertIn("FUZZER_BAR_builtin_5000", result)
+        # Should have types import for ModuleType check
+        self.assertIn("import types", result)
+        self.assertIn("types.ModuleType", result)
+        # Verify code is valid
+        reparsed = ast.parse(result)
+        self.assertIsInstance(reparsed, ast.Module)
+
+    def test_enhanced_attack_builtins_type_toggle(self):
+        """Test that builtins_type_toggle attack is injected correctly."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", side_effect=[0.1, 0.1]):  # trigger, use enhanced
+            with patch(
+                "random.choice",
+                side_effect=lambda x: "builtins_type_toggle"
+                if x == BuiltinNamespaceCorruptor.ENHANCED_ATTACKS
+                else x[0],
+            ):
+                with patch("random.randint", return_value=6000):
+                    mutator = BuiltinNamespaceCorruptor()
+                    mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should have type toggle markers
+        self.assertIn("is_module_builtin_6000", result)
+        self.assertIn("FUZZER_KEY_builtin_6000", result)
+        self.assertIn("types.ModuleType", result)
+        # Should detect current type
+        self.assertIn("isinstance(__builtins__, types.ModuleType)", result)
+        # Verify code is valid
+        reparsed = ast.parse(result)
+        self.assertIsInstance(reparsed, ast.Module)
+
+    def test_enhanced_attack_highfreq_builtin_corruption(self):
+        """Test that highfreq_builtin_corruption attack is injected correctly."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", side_effect=[0.1, 0.1]):  # trigger, use enhanced
+            with patch(
+                "random.choice",
+                side_effect=lambda x: "highfreq_builtin_corruption"
+                if x == BuiltinNamespaceCorruptor.ENHANCED_ATTACKS
+                else x[0],
+            ):
+                with patch("random.randint", return_value=7000):
+                    mutator = BuiltinNamespaceCorruptor()
+                    mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should save originals for len, isinstance, type
+        self.assertIn("original_len_builtin_7000", result)
+        self.assertIn("original_isinstance_builtin_7000", result)
+        self.assertIn("original_type_builtin_7000", result)
+        # Should corrupt multiple builtins
+        self.assertIn("builtins.len = lambda", result)
+        self.assertIn("builtins.isinstance = lambda", result)
+        self.assertIn("builtins.type = lambda", result)
+        # Verify code is valid
+        reparsed = ast.parse(result)
+        self.assertIsInstance(reparsed, ast.Module)
+
+    def test_enhanced_attack_restores_builtins(self):
+        """Test that enhanced attacks restore builtins in finally block."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", side_effect=[0.1, 0.1]):
+            with patch(
+                "random.choice",
+                side_effect=lambda x: "highfreq_builtin_corruption"
+                if x == BuiltinNamespaceCorruptor.ENHANCED_ATTACKS
+                else x[0],
+            ):
+                with patch("random.randint", return_value=8000):
+                    mutator = BuiltinNamespaceCorruptor()
+                    mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should have finally block restoring builtins
+        self.assertIn("finally:", result)
+        self.assertIn("builtins.len = original_len_builtin_8000", result)
+        self.assertIn("builtins.isinstance = original_isinstance_builtin_8000", result)
+        self.assertIn("builtins.type = original_type_builtin_8000", result)
+
+    def test_enhanced_attacks_produce_valid_code(self):
+        """Test that all enhanced attack types produce valid, parseable code."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+                y = 2
+                z = x + y
+        """)
+
+        for attack_type in BuiltinNamespaceCorruptor.ENHANCED_ATTACKS:
+            tree = ast.parse(code)
+            with patch("random.random", side_effect=[0.1, 0.1]):
+                with patch(
+                    "random.choice",
+                    side_effect=lambda x, at=attack_type: at
+                    if x == BuiltinNamespaceCorruptor.ENHANCED_ATTACKS
+                    else x[0],
+                ):
+                    with patch("random.randint", return_value=9000):
+                        mutator = BuiltinNamespaceCorruptor()
+                        mutated = mutator.visit(tree)
+
+            result = ast.unparse(mutated)
+            # All attack types should produce valid code
+            reparsed = ast.parse(result)
+            self.assertIsInstance(reparsed, ast.Module)
+
+    def test_enhanced_attack_probability(self):
+        """Test that enhanced attacks have 30% selection probability."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+
+        # random.random() returns 0.4 (> 0.3) so should use original attack
+        with patch("random.random", side_effect=[0.1, 0.4]):  # trigger=0.1, enhanced=0.4
+            with patch("random.randint", return_value=1000):
+                mutator = BuiltinNamespaceCorruptor()
+                mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should use original attack format (has original_len or original_range etc)
+        has_original = any(f"original_{b}" in result for b in ["len", "range", "isinstance", "sum"])
+        self.assertTrue(has_original)
+        # Should NOT have enhanced attack markers
+        self.assertNotIn("builtins_dict_", result)
+        self.assertNotIn("is_module_", result)
 
 
 class TestComprehensionBomb(unittest.TestCase):
@@ -1049,7 +1234,9 @@ class TestBloomFilterSaturator(unittest.TestCase):
         """)
         tree = ast.parse(code)
 
-        with patch("random.random", return_value=0.1):  # Below 0.2 threshold
+        # First random < 0.2 triggers module vars, second < 0.2 triggers function,
+        # third > 0.35 uses original attack
+        with patch("random.random", side_effect=[0.1, 0.1, 0.5]):
             mutator = BloomFilterSaturator()
             mutated = mutator.visit(tree)
 
@@ -1075,7 +1262,8 @@ class TestBloomFilterSaturator(unittest.TestCase):
         """)
         tree = ast.parse(code)
 
-        with patch("random.random", return_value=0.1):
+        # Use original attack (third random > 0.35)
+        with patch("random.random", side_effect=[0.1, 0.1, 0.5]):
             mutator = BloomFilterSaturator()
             mutated = mutator.visit(tree)
 
@@ -1094,7 +1282,8 @@ class TestBloomFilterSaturator(unittest.TestCase):
         """)
         tree = ast.parse(code)
 
-        with patch("random.random", return_value=0.1):
+        # Use original attack (third random > 0.35)
+        with patch("random.random", side_effect=[0.1, 0.1, 0.5]):
             mutator = BloomFilterSaturator()
             mutated = mutator.visit(tree)
 
@@ -1115,7 +1304,8 @@ class TestBloomFilterSaturator(unittest.TestCase):
         """)
         tree = ast.parse(code)
 
-        with patch("random.random", return_value=0.1):
+        # Use original attack (third random > 0.35)
+        with patch("random.random", side_effect=[0.1, 0.1, 0.5]):
             mutator = BloomFilterSaturator()
             mutated = mutator.visit(tree)
 
@@ -1157,6 +1347,165 @@ class TestBloomFilterSaturator(unittest.TestCase):
         # Should be parseable
         reparsed = ast.parse(result)
         self.assertIsInstance(reparsed, ast.Module)
+
+    def test_has_enhanced_attacks_list(self):
+        """Test that ENHANCED_ATTACKS list is defined."""
+        mutator = BloomFilterSaturator()
+        self.assertTrue(hasattr(mutator, "ENHANCED_ATTACKS"))
+        self.assertGreater(len(mutator.ENHANCED_ATTACKS), 0)
+        expected_attacks = [
+            "saturation_probe",
+            "strategic_global_mod",
+            "multi_phase_attack",
+        ]
+        for attack in expected_attacks:
+            self.assertIn(attack, mutator.ENHANCED_ATTACKS)
+
+    def test_enhanced_attack_saturation_probe(self):
+        """Test that saturation_probe attack is injected correctly."""
+        code = dedent("""
+            _bloom_target = 0
+            _bloom_noise_idx = 0
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+
+        # Trigger module vars (0.1), trigger function (0.1), use enhanced (0.1 < 0.35)
+        with patch("random.random", side_effect=[0.1, 0.1, 0.1]):
+            with patch(
+                "random.choice",
+                side_effect=lambda x: "saturation_probe"
+                if x == BloomFilterSaturator.ENHANCED_ATTACKS
+                else x[0],
+            ):
+                with patch("random.randint", return_value=5000):
+                    mutator = BloomFilterSaturator()
+                    mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should have saturation probe markers
+        self.assertIn("bloom_5000", result)
+        self.assertIn("Probing bloom filter saturation", result)
+        self.assertIn("saturation_detected_bloom_5000", result)
+        self.assertIn("probe_count_bloom_5000", result)
+        # Verify code is valid
+        reparsed = ast.parse(result)
+        self.assertIsInstance(reparsed, ast.Module)
+
+    def test_enhanced_attack_strategic_global_mod(self):
+        """Test that strategic_global_mod attack is injected correctly."""
+        code = dedent("""
+            _bloom_target = 0
+            _bloom_noise_idx = 0
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", side_effect=[0.1, 0.1, 0.1]):
+            with patch(
+                "random.choice",
+                side_effect=lambda x: "strategic_global_mod"
+                if x == BloomFilterSaturator.ENHANCED_ATTACKS
+                else x[0],
+            ):
+                with patch("random.randint", return_value=6000):
+                    mutator = BloomFilterSaturator()
+                    mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should have strategic global modification markers
+        self.assertIn("bloom_6000", result)
+        self.assertIn("Running strategic global modification", result)
+        self.assertIn("critical_globals_bloom_6000", result)
+        self.assertIn("_critical_global_", result)
+        # Verify code is valid
+        reparsed = ast.parse(result)
+        self.assertIsInstance(reparsed, ast.Module)
+
+    def test_enhanced_attack_multi_phase(self):
+        """Test that multi_phase_attack is injected correctly."""
+        code = dedent("""
+            _bloom_target = 0
+            _bloom_noise_idx = 0
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", side_effect=[0.1, 0.1, 0.1]):
+            with patch(
+                "random.choice",
+                side_effect=lambda x: "multi_phase_attack"
+                if x == BloomFilterSaturator.ENHANCED_ATTACKS
+                else x[0],
+            ):
+                with patch("random.randint", return_value=7000):
+                    mutator = BloomFilterSaturator()
+                    mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should have multi-phase attack markers
+        self.assertIn("bloom_7000", result)
+        self.assertIn("Phase 1: Warmup", result)
+        self.assertIn("Phase 2: Saturating", result)
+        self.assertIn("Phase 3: Exploitation", result)
+        self.assertIn("Phase 4: Verification", result)
+        # Verify code is valid
+        reparsed = ast.parse(result)
+        self.assertIsInstance(reparsed, ast.Module)
+
+    def test_enhanced_attacks_produce_valid_code(self):
+        """Test that all enhanced attack types produce valid, parseable code."""
+        code = dedent("""
+            _bloom_target = 0
+            _bloom_noise_idx = 0
+            def uop_harness_test():
+                x = 1
+                y = 2
+        """)
+
+        for attack_type in BloomFilterSaturator.ENHANCED_ATTACKS:
+            tree = ast.parse(code)
+            with patch("random.random", side_effect=[0.1, 0.1, 0.1]):
+                with patch(
+                    "random.choice",
+                    side_effect=lambda x, at=attack_type: at
+                    if x == BloomFilterSaturator.ENHANCED_ATTACKS
+                    else x[0],
+                ):
+                    with patch("random.randint", return_value=9000):
+                        mutator = BloomFilterSaturator()
+                        mutated = mutator.visit(tree)
+
+            result = ast.unparse(mutated)
+            # All attack types should produce valid code
+            reparsed = ast.parse(result)
+            self.assertIsInstance(reparsed, ast.Module)
+
+    def test_enhanced_attack_probability(self):
+        """Test that enhanced attacks have 35% selection probability."""
+        code = dedent("""
+            _bloom_target = 0
+            _bloom_noise_idx = 0
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+
+        # third random.random() > 0.35 so uses original attack
+        with patch("random.random", side_effect=[0.1, 0.1, 0.5]):
+            mutator = BloomFilterSaturator()
+            mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should use original attack format
+        self.assertIn("for _ in range(150):", result)
+        # Should NOT have enhanced attack markers
+        self.assertNotIn("saturation_detected_", result)
+        self.assertNotIn("Phase 1: Warmup", result)
+        self.assertNotIn("critical_globals_", result)
 
 
 class TestStackCacheThrasher(unittest.TestCase):

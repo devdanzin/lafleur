@@ -14,6 +14,7 @@ All notable changes to this project should be documented in this file.
 - A `ComprehensiveFunctionMutator` that systematically attacks all function modification rare events, by @devdanzin.
 - A `DynamicClassSwapper` that aggressively swaps objects between incompatible classes (built-in type subclasses, classes with/without `__slots__`, different MRO depths, incompatible `__dict__` attributes) to stress JIT type guards and deoptimization logic, targeting the `set_class` rare event, by @devdanzin.
 - A `BasesRewriteMutator` that creatively manipulates `__bases__` tuples (removal, builtin injection, inheritance toggling, complete replacement) to attack MRO caching assumptions, targeting the `set_bases` rare event, by @devdanzin.
+- A `RareEventStressTester` meta-mutator that chains multiple JIT rare events (`set_class`, `set_bases`, `set_eval_frame_func`, `builtin_dict`, `func_modification`) in sequence to stress the JIT's ability to handle multiple invalidations, by @devdanzin.
 
 ### Enhanced
 

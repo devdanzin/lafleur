@@ -1049,7 +1049,9 @@ class TestBloomFilterSaturator(unittest.TestCase):
         """)
         tree = ast.parse(code)
 
-        with patch("random.random", return_value=0.1):  # Below 0.2 threshold
+        # First random < 0.2 triggers module vars, second < 0.2 triggers function,
+        # third > 0.35 uses original attack
+        with patch("random.random", side_effect=[0.1, 0.1, 0.5]):
             mutator = BloomFilterSaturator()
             mutated = mutator.visit(tree)
 
@@ -1075,7 +1077,8 @@ class TestBloomFilterSaturator(unittest.TestCase):
         """)
         tree = ast.parse(code)
 
-        with patch("random.random", return_value=0.1):
+        # Use original attack (third random > 0.35)
+        with patch("random.random", side_effect=[0.1, 0.1, 0.5]):
             mutator = BloomFilterSaturator()
             mutated = mutator.visit(tree)
 
@@ -1094,7 +1097,8 @@ class TestBloomFilterSaturator(unittest.TestCase):
         """)
         tree = ast.parse(code)
 
-        with patch("random.random", return_value=0.1):
+        # Use original attack (third random > 0.35)
+        with patch("random.random", side_effect=[0.1, 0.1, 0.5]):
             mutator = BloomFilterSaturator()
             mutated = mutator.visit(tree)
 
@@ -1115,7 +1119,8 @@ class TestBloomFilterSaturator(unittest.TestCase):
         """)
         tree = ast.parse(code)
 
-        with patch("random.random", return_value=0.1):
+        # Use original attack (third random > 0.35)
+        with patch("random.random", side_effect=[0.1, 0.1, 0.5]):
             mutator = BloomFilterSaturator()
             mutated = mutator.visit(tree)
 
@@ -1157,6 +1162,165 @@ class TestBloomFilterSaturator(unittest.TestCase):
         # Should be parseable
         reparsed = ast.parse(result)
         self.assertIsInstance(reparsed, ast.Module)
+
+    def test_has_enhanced_attacks_list(self):
+        """Test that ENHANCED_ATTACKS list is defined."""
+        mutator = BloomFilterSaturator()
+        self.assertTrue(hasattr(mutator, "ENHANCED_ATTACKS"))
+        self.assertGreater(len(mutator.ENHANCED_ATTACKS), 0)
+        expected_attacks = [
+            "saturation_probe",
+            "strategic_global_mod",
+            "multi_phase_attack",
+        ]
+        for attack in expected_attacks:
+            self.assertIn(attack, mutator.ENHANCED_ATTACKS)
+
+    def test_enhanced_attack_saturation_probe(self):
+        """Test that saturation_probe attack is injected correctly."""
+        code = dedent("""
+            _bloom_target = 0
+            _bloom_noise_idx = 0
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+
+        # Trigger module vars (0.1), trigger function (0.1), use enhanced (0.1 < 0.35)
+        with patch("random.random", side_effect=[0.1, 0.1, 0.1]):
+            with patch(
+                "random.choice",
+                side_effect=lambda x: "saturation_probe"
+                if x == BloomFilterSaturator.ENHANCED_ATTACKS
+                else x[0],
+            ):
+                with patch("random.randint", return_value=5000):
+                    mutator = BloomFilterSaturator()
+                    mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should have saturation probe markers
+        self.assertIn("bloom_5000", result)
+        self.assertIn("Probing bloom filter saturation", result)
+        self.assertIn("saturation_detected_bloom_5000", result)
+        self.assertIn("probe_count_bloom_5000", result)
+        # Verify code is valid
+        reparsed = ast.parse(result)
+        self.assertIsInstance(reparsed, ast.Module)
+
+    def test_enhanced_attack_strategic_global_mod(self):
+        """Test that strategic_global_mod attack is injected correctly."""
+        code = dedent("""
+            _bloom_target = 0
+            _bloom_noise_idx = 0
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", side_effect=[0.1, 0.1, 0.1]):
+            with patch(
+                "random.choice",
+                side_effect=lambda x: "strategic_global_mod"
+                if x == BloomFilterSaturator.ENHANCED_ATTACKS
+                else x[0],
+            ):
+                with patch("random.randint", return_value=6000):
+                    mutator = BloomFilterSaturator()
+                    mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should have strategic global modification markers
+        self.assertIn("bloom_6000", result)
+        self.assertIn("Running strategic global modification", result)
+        self.assertIn("critical_globals_bloom_6000", result)
+        self.assertIn("_critical_global_", result)
+        # Verify code is valid
+        reparsed = ast.parse(result)
+        self.assertIsInstance(reparsed, ast.Module)
+
+    def test_enhanced_attack_multi_phase(self):
+        """Test that multi_phase_attack is injected correctly."""
+        code = dedent("""
+            _bloom_target = 0
+            _bloom_noise_idx = 0
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", side_effect=[0.1, 0.1, 0.1]):
+            with patch(
+                "random.choice",
+                side_effect=lambda x: "multi_phase_attack"
+                if x == BloomFilterSaturator.ENHANCED_ATTACKS
+                else x[0],
+            ):
+                with patch("random.randint", return_value=7000):
+                    mutator = BloomFilterSaturator()
+                    mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should have multi-phase attack markers
+        self.assertIn("bloom_7000", result)
+        self.assertIn("Phase 1: Warmup", result)
+        self.assertIn("Phase 2: Saturating", result)
+        self.assertIn("Phase 3: Exploitation", result)
+        self.assertIn("Phase 4: Verification", result)
+        # Verify code is valid
+        reparsed = ast.parse(result)
+        self.assertIsInstance(reparsed, ast.Module)
+
+    def test_enhanced_attacks_produce_valid_code(self):
+        """Test that all enhanced attack types produce valid, parseable code."""
+        code = dedent("""
+            _bloom_target = 0
+            _bloom_noise_idx = 0
+            def uop_harness_test():
+                x = 1
+                y = 2
+        """)
+
+        for attack_type in BloomFilterSaturator.ENHANCED_ATTACKS:
+            tree = ast.parse(code)
+            with patch("random.random", side_effect=[0.1, 0.1, 0.1]):
+                with patch(
+                    "random.choice",
+                    side_effect=lambda x, at=attack_type: at
+                    if x == BloomFilterSaturator.ENHANCED_ATTACKS
+                    else x[0],
+                ):
+                    with patch("random.randint", return_value=9000):
+                        mutator = BloomFilterSaturator()
+                        mutated = mutator.visit(tree)
+
+            result = ast.unparse(mutated)
+            # All attack types should produce valid code
+            reparsed = ast.parse(result)
+            self.assertIsInstance(reparsed, ast.Module)
+
+    def test_enhanced_attack_probability(self):
+        """Test that enhanced attacks have 35% selection probability."""
+        code = dedent("""
+            _bloom_target = 0
+            _bloom_noise_idx = 0
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+
+        # third random.random() > 0.35 so uses original attack
+        with patch("random.random", side_effect=[0.1, 0.1, 0.5]):
+            mutator = BloomFilterSaturator()
+            mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should use original attack format
+        self.assertIn("for _ in range(150):", result)
+        # Should NOT have enhanced attack markers
+        self.assertNotIn("saturation_detected_", result)
+        self.assertNotIn("Phase 1: Warmup", result)
+        self.assertNotIn("critical_globals_", result)
 
 
 class TestStackCacheThrasher(unittest.TestCase):

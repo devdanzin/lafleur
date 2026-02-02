@@ -935,7 +935,19 @@ class BloomFilterSaturator(ast.NodeTransformer):
     the global modification tracking. The JIT stops watching globals after
     approximately 4096 mutations. We rapidly reach this limit ("Saturate") and
     then modify a watched global to trigger potential stale-cache bugs.
+
+    Enhanced with:
+    - Probe-based saturation detection
+    - Strategic global modifications when saturated
+    - Multi-phase attack patterns
     """
+
+    # Enhanced attack types
+    ENHANCED_ATTACKS = [
+        "saturation_probe",
+        "strategic_global_mod",
+        "multi_phase_attack",
+    ]
 
     def __init__(self):
         super().__init__()
@@ -976,31 +988,215 @@ class BloomFilterSaturator(ast.NodeTransformer):
             return node
 
         if random.random() < 0.2:  # 20% chance
-            print(
-                f"    -> Injecting bloom filter saturation into '{node.name}'",
-                file=sys.stderr,
-            )
+            p_prefix = f"bloom_{random.randint(1000, 9999)}"
 
-            # Create the saturate-and-switch code
-            saturation_code = dedent("""
-                global _bloom_target, _bloom_noise_idx
-                if _bloom_target % 2 == 0: pass  # Bait: dependency on value
+            # 35% chance to use enhanced attacks
+            if random.random() < 0.35:
+                attack_type = random.choice(self.ENHANCED_ATTACKS)
+                print(
+                    f"    -> Injecting enhanced bloom filter attack ({attack_type}) "
+                    f"into '{node.name}'",
+                    file=sys.stderr,
+                )
 
-                # Noise: Thrash the globals dict
-                for _ in range(150):
-                    _bloom_noise_idx += 1
-                    globals()[f'_bloom_noise_{_bloom_noise_idx}'] = _bloom_noise_idx
+                if attack_type == "saturation_probe":
+                    saturation_nodes = self._create_saturation_probe_attack(p_prefix)
+                elif attack_type == "strategic_global_mod":
+                    saturation_nodes = self._create_strategic_global_attack(p_prefix)
+                else:  # multi_phase_attack
+                    saturation_nodes = self._create_multi_phase_attack(p_prefix)
 
-                # Switch: Invalidate the dependency
-                _bloom_target += 1
-            """)
-            saturation_nodes = ast.parse(saturation_code).body
+                # Inject at the beginning of the function body
+                node.body = saturation_nodes + node.body
+                ast.fix_missing_locations(node)
+            else:
+                # Original attack logic
+                print(
+                    f"    -> Injecting bloom filter saturation into '{node.name}'",
+                    file=sys.stderr,
+                )
 
-            # Inject at the beginning of the function body
-            node.body = saturation_nodes + node.body
-            ast.fix_missing_locations(node)
+                # Create the saturate-and-switch code
+                saturation_code = dedent("""
+                    global _bloom_target, _bloom_noise_idx
+                    if _bloom_target % 2 == 0: pass  # Bait: dependency on value
+
+                    # Noise: Thrash the globals dict
+                    for _ in range(150):
+                        _bloom_noise_idx += 1
+                        globals()[f'_bloom_noise_{_bloom_noise_idx}'] = _bloom_noise_idx
+
+                    # Switch: Invalidate the dependency
+                    _bloom_target += 1
+                """)
+                saturation_nodes = ast.parse(saturation_code).body
+
+                # Inject at the beginning of the function body
+                node.body = saturation_nodes + node.body
+                ast.fix_missing_locations(node)
 
         return node
+
+    def _create_saturation_probe_attack(self, prefix: str) -> list[ast.stmt]:
+        """Probe the bloom filter's state to detect saturation."""
+        attack_code = dedent(f"""
+            # Bloom filter saturation probe attack
+            print('[{prefix}] Probing bloom filter saturation...', file=sys.stderr)
+
+            global _bloom_target, _bloom_noise_idx
+
+            # Phase 1: Warmup - establish baseline behavior
+            for warm_{prefix} in range(100):
+                if _bloom_target % 2 == 0:
+                    pass  # Create dependency
+
+            # Phase 2: Probe for saturation
+            # The bloom filter has ~4096 slots. Create probe keys and check behavior.
+            saturation_detected_{prefix} = False
+            probe_count_{prefix} = 0
+
+            for probe_{prefix} in range(200):
+                # Create a unique probe key
+                probe_key_{prefix} = f'_bloom_probe_{{probe_{prefix}}}_{{id(object())}}'
+
+                # Check if this "new" key triggers false positive by testing assignment
+                try:
+                    globals()[probe_key_{prefix}] = probe_{prefix}
+                    probe_count_{prefix} += 1
+
+                    # If we've added many probes without JIT issues, filter might be saturated
+                    if probe_count_{prefix} > 150:
+                        saturation_detected_{prefix} = True
+                        print(f'[{prefix}] Bloom filter appears saturated after {{probe_count_{prefix}}} probes', file=sys.stderr)
+                        break
+                except Exception:
+                    pass
+
+            # Phase 3: If saturated, stress test
+            if saturation_detected_{prefix}:
+                print('[{prefix}] Exploiting saturated bloom filter...', file=sys.stderr)
+                # Rapid modifications to stressed filter
+                for stress_{prefix} in range(100):
+                    _bloom_noise_idx += 1
+                    globals()[f'_bloom_saturated_{{stress_{prefix}}}'] = stress_{prefix}
+                    # Check target value during stress
+                    _ = _bloom_target
+
+            # Switch target value
+            _bloom_target += 1
+        """)
+        return ast.parse(attack_code).body
+
+    def _create_strategic_global_attack(self, prefix: str) -> list[ast.stmt]:
+        """Strategically modify globals when filter is stressed."""
+        attack_code = dedent(f"""
+            # Strategic global modification attack
+            print('[{prefix}] Running strategic global modification...', file=sys.stderr)
+
+            global _bloom_target, _bloom_noise_idx
+
+            # Phase 1: Warmup with watched global access
+            original_target_{prefix} = _bloom_target
+            for warm_{prefix} in range(200):
+                _ = _bloom_target  # Access the watched global
+                _ = _bloom_noise_idx
+
+            # Phase 2: Saturate the bloom filter
+            print('[{prefix}] Saturating bloom filter...', file=sys.stderr)
+            for sat_{prefix} in range(500):
+                _bloom_noise_idx += 1
+                globals()[f'_bloom_strategic_{{sat_{prefix}}}'] = sat_{prefix}
+
+            # Phase 3: Strategic modifications to critical globals
+            print('[{prefix}] Modifying critical globals post-saturation...', file=sys.stderr)
+
+            # Modify multiple globals in rapid succession
+            critical_globals_{prefix} = ['_bloom_target', '_bloom_noise_idx']
+            for crit_{prefix} in critical_globals_{prefix}:
+                try:
+                    old_val_{prefix} = globals().get(crit_{prefix}, 0)
+                    globals()[crit_{prefix}] = old_val_{prefix} + 1
+                    # Immediately read back
+                    _ = globals()[crit_{prefix}]
+                except Exception:
+                    pass
+
+            # Phase 4: Add new "important" globals and modify them
+            for new_{prefix} in range(50):
+                key_{prefix} = f'_critical_global_{{new_{prefix}}}'
+                globals()[key_{prefix}] = new_{prefix}
+                # Modify immediately
+                globals()[key_{prefix}] = new_{prefix} * 2
+                # Delete
+                try:
+                    del globals()[key_{prefix}]
+                except KeyError:
+                    pass
+
+            # Access target after all modifications
+            _ = _bloom_target
+        """)
+        return ast.parse(attack_code).body
+
+    def _create_multi_phase_attack(self, prefix: str) -> list[ast.stmt]:
+        """Multi-phase attack: warmup, saturation, exploitation, verification."""
+        attack_code = dedent(f"""
+            # Multi-phase bloom filter attack
+            print('[{prefix}] Starting multi-phase bloom filter attack...', file=sys.stderr)
+
+            global _bloom_target, _bloom_noise_idx
+
+            # === PHASE 1: WARMUP ===
+            print('[{prefix}] Phase 1: Warmup...', file=sys.stderr)
+            warmup_result_{prefix} = 0
+            for warm_{prefix} in range(300):
+                # Establish JIT traces with global access
+                if _bloom_target % 2 == 0:
+                    warmup_result_{prefix} += 1
+                else:
+                    warmup_result_{prefix} -= 1
+                _ = _bloom_noise_idx
+
+            # === PHASE 2: SATURATION ===
+            print('[{prefix}] Phase 2: Saturating...', file=sys.stderr)
+            # Create many unique globals rapidly to fill the bloom filter
+            for sat_{prefix} in range(1000):
+                key_{prefix} = f'_bloom_sat_{{sat_{prefix}}}'
+                globals()[key_{prefix}] = sat_{prefix}
+                _bloom_noise_idx += 1
+
+            # === PHASE 3: EXPLOITATION ===
+            print('[{prefix}] Phase 3: Exploitation...', file=sys.stderr)
+
+            # Store original value
+            orig_target_{prefix} = _bloom_target
+
+            # Rapid toggle of the watched global
+            for exploit_{prefix} in range(100):
+                _bloom_target = exploit_{prefix}
+                # Force re-read
+                if _bloom_target != exploit_{prefix}:
+                    print(f'[{prefix}] Stale read detected!', file=sys.stderr)
+                # Add more noise
+                globals()[f'_exploit_noise_{{exploit_{prefix}}}'] = exploit_{prefix}
+
+            # === PHASE 4: VERIFICATION ===
+            print('[{prefix}] Phase 4: Verification...', file=sys.stderr)
+
+            # Verify we can still read globals correctly
+            final_target_{prefix} = _bloom_target
+            final_noise_{prefix} = _bloom_noise_idx
+
+            # One more warmup to trigger potential issues
+            for verify_{prefix} in range(50):
+                _ = _bloom_target
+                _ = _bloom_noise_idx
+                if _bloom_target % 3 == 0:
+                    _bloom_target += 1
+
+            print(f'[{prefix}] Attack complete. Target: {{_bloom_target}}, Noise idx: {{_bloom_noise_idx}}', file=sys.stderr)
+        """)
+        return ast.parse(attack_code).body
 
 
 class StackCacheThrasher(ast.NodeTransformer):

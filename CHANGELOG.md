@@ -19,6 +19,7 @@ All notable changes to this project should be documented in this file.
 ### Enhanced
 
 - `BuiltinNamespaceCorruptor` with test_optimizer.py-inspired attacks: direct `__builtins__["KEY"]` style modifications, `ModuleType` vs dict representation handling, and high-frequency builtin corruption (corrupting `len`, `isinstance`, and `type` simultaneously), by @devdanzin.
+- `BloomFilterSaturator` with probe-based saturation detection, strategic global modifications, and multi-phase attacks (warmup, saturation, exploitation, verification) to better exploit the JIT's global variable tracking bloom filter, by @devdanzin.
 
 ### Fixed
 

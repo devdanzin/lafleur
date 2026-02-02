@@ -18,6 +18,7 @@ All notable changes to this project should be documented in this file.
 
 ### Enhanced
 
+- `BuiltinNamespaceCorruptor` with test_optimizer.py-inspired attacks: direct `__builtins__["KEY"]` style modifications, `ModuleType` vs dict representation handling, and high-frequency builtin corruption (corrupting `len`, `isinstance`, and `type` simultaneously), by @devdanzin.
 
 ### Fixed
 

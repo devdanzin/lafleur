@@ -442,6 +442,96 @@ class TestCorpusManager(unittest.TestCase):
         result = self.corpus_manager._is_subsumed_by(file_a_meta, file_b_meta)
         self.assertFalse(result)
 
+    def test_not_subsumed_when_equal_metrics(self):
+        """Equal size and time should not count as 'more efficient'."""
+        file_a_meta = {
+            "lineage_coverage_profile": {"f1": {"edges": {0, 1}}},
+            "file_size_bytes": 500,
+            "execution_time_ms": 50,
+        }
+        file_b_meta = {
+            "lineage_coverage_profile": {"f1": {"edges": {0, 1, 2}}},
+            "file_size_bytes": 500,
+            "execution_time_ms": 50,
+        }
+        result = self.corpus_manager._is_subsumed_by(file_a_meta, file_b_meta)
+        self.assertFalse(result)
+
+    def test_subsumed_when_strictly_faster_same_size(self):
+        """B is a proper superset, same size, strictly faster — subsumes."""
+        file_a_meta = {
+            "lineage_coverage_profile": {"f1": {"edges": {0, 1}}},
+            "file_size_bytes": 500,
+            "execution_time_ms": 100,
+        }
+        file_b_meta = {
+            "lineage_coverage_profile": {"f1": {"edges": {0, 1, 2}}},
+            "file_size_bytes": 500,
+            "execution_time_ms": 50,
+        }
+        result = self.corpus_manager._is_subsumed_by(file_a_meta, file_b_meta)
+        self.assertTrue(result)
+
+    def test_subsumed_when_strictly_smaller_same_speed(self):
+        """B is a proper superset, same speed, strictly smaller — subsumes."""
+        file_a_meta = {
+            "lineage_coverage_profile": {"f1": {"edges": {0, 1}}},
+            "file_size_bytes": 1000,
+            "execution_time_ms": 50,
+        }
+        file_b_meta = {
+            "lineage_coverage_profile": {"f1": {"edges": {0, 1, 2}}},
+            "file_size_bytes": 500,
+            "execution_time_ms": 50,
+        }
+        result = self.corpus_manager._is_subsumed_by(file_a_meta, file_b_meta)
+        self.assertTrue(result)
+
+    def test_subsumed_when_better_in_both(self):
+        """B is a proper superset, strictly faster AND smaller — subsumes."""
+        file_a_meta = {
+            "lineage_coverage_profile": {"f1": {"edges": {0, 1}}},
+            "file_size_bytes": 1000,
+            "execution_time_ms": 100,
+        }
+        file_b_meta = {
+            "lineage_coverage_profile": {"f1": {"edges": {0, 1, 2}}},
+            "file_size_bytes": 500,
+            "execution_time_ms": 50,
+        }
+        result = self.corpus_manager._is_subsumed_by(file_a_meta, file_b_meta)
+        self.assertTrue(result)
+
+    def test_not_subsumed_when_faster_but_larger(self):
+        """B is faster but larger — not Pareto dominant."""
+        file_a_meta = {
+            "lineage_coverage_profile": {"f1": {"edges": {0, 1}}},
+            "file_size_bytes": 500,
+            "execution_time_ms": 100,
+        }
+        file_b_meta = {
+            "lineage_coverage_profile": {"f1": {"edges": {0, 1, 2}}},
+            "file_size_bytes": 600,
+            "execution_time_ms": 50,
+        }
+        result = self.corpus_manager._is_subsumed_by(file_a_meta, file_b_meta)
+        self.assertFalse(result)
+
+    def test_not_subsumed_when_smaller_but_slower(self):
+        """B is smaller but slower — not Pareto dominant."""
+        file_a_meta = {
+            "lineage_coverage_profile": {"f1": {"edges": {0, 1}}},
+            "file_size_bytes": 1000,
+            "execution_time_ms": 50,
+        }
+        file_b_meta = {
+            "lineage_coverage_profile": {"f1": {"edges": {0, 1, 2}}},
+            "file_size_bytes": 500,
+            "execution_time_ms": 100,
+        }
+        result = self.corpus_manager._is_subsumed_by(file_a_meta, file_b_meta)
+        self.assertFalse(result)
+
     @patch("lafleur.corpus_manager.save_coverage_state")
     @patch("lafleur.corpus_manager.CORPUS_DIR")
     def test_synchronize_removes_missing_files(self, mock_corpus_dir, mock_save):

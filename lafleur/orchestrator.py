@@ -18,6 +18,7 @@ import socket
 import sys
 
 from datetime import datetime, timezone
+from enum import Enum, auto
 from pathlib import Path
 from textwrap import dedent
 
@@ -32,6 +33,15 @@ from lafleur.mutation_controller import MutationController
 from lafleur.mutators import ASTMutator
 from lafleur.metadata import generate_run_metadata
 from lafleur.utils import TeeLogger, load_run_stats
+
+
+class FlowControl(Enum):
+    """Signals returned by _handle_analysis_data to control the mutation loop."""
+
+    NONE = auto()  # No interesting result; continue to next run
+    BREAK = auto()  # Major find (new coverage or divergence); stop runs for this mutation
+    CONTINUE = auto()  # Crash found; stop runs but continue mutations
+
 
 # --- Paths for Fuzzer Outputs (relative to current working directory) ---
 # This allows running multiple fuzzer instances from different directories.
@@ -283,7 +293,7 @@ class LafleurOrchestrator:
 
     def _handle_analysis_data(
         self, analysis_data: dict, i: int, parent_metadata: dict, nojit_cv: float | None
-    ) -> str | None:
+    ) -> FlowControl:
         """Process the result from analyze_run and update fuzzer state."""
         status = analysis_data.get("status")
 
@@ -301,10 +311,10 @@ class LafleurOrchestrator:
                 f"  [***] SUCCESS! Mutation #{i + 1} found a correctness divergence. Moving to next parent."
             )
             analysis_data["new_filename"] = "divergence"  # Placeholder
-            return "BREAK"  # A divergence is a major find, move to the next parent
+            return FlowControl.BREAK  # A divergence is a major find, move to the next parent
         elif status == "CRASH":
             self.run_stats["crashes_found"] = self.run_stats.get("crashes_found", 0) + 1
-            return "CONTINUE"
+            return FlowControl.CONTINUE
         elif status == "NEW_COVERAGE":
             print(f"  [***] SUCCESS! Mutation #{i + 1} found new coverage. Moving to next parent.")
             new_filename = self.corpus_manager.add_new_file(
@@ -340,14 +350,14 @@ class LafleurOrchestrator:
                         )
 
             analysis_data["new_filename"] = new_filename
-            return "BREAK"
+            return FlowControl.BREAK
         else:  # NO_CHANGE
             parent_metadata["mutations_since_last_find"] = (
                 parent_metadata.get("mutations_since_last_find", 0) + 1
             )
             if parent_metadata["mutations_since_last_find"] > 599:
                 parent_metadata["is_sterile"] = True
-            return None
+            return FlowControl.NONE
 
     def _cleanup_log_file(
         self, child_log_path: Path, parent_id: str, mutation_seed: int, run_num: int
@@ -471,7 +481,7 @@ class LafleurOrchestrator:
                     continue
 
                 # --- Inner Multi-Run Loop ---
-                flow_control: str | None = ""
+                flow_control = FlowControl.NONE
                 for run_num in range(num_runs):
                     child_source_path = (
                         TMP_DIR / f"child_{session_id}_{mutation_id}_{run_num + 1}.py"
@@ -519,7 +529,7 @@ class LafleurOrchestrator:
                             analysis_data, mutation_index, parent_metadata, nojit_cv
                         )
 
-                        if flow_control == "BREAK" or flow_control == "CONTINUE":
+                        if flow_control in (FlowControl.BREAK, FlowControl.CONTINUE):
                             if analysis_data.get("status") == "NEW_COVERAGE":
                                 found_new_coverage_in_cycle = True
 
@@ -570,7 +580,7 @@ class LafleurOrchestrator:
 
                 if found_new_coverage_in_cycle and is_deepening_session:
                     break
-                elif flow_control == "BREAK":
+                elif flow_control == FlowControl.BREAK:
                     return  # For breadth mode, a single find ends the entire session
 
             # Exit condition for the while True loop

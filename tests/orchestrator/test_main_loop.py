@@ -20,6 +20,8 @@ from lafleur.orchestrator import (
     FlowControl,
     LafleurOrchestrator,
     ParentContext,
+    _format_run_header,
+    _format_run_summary,
 )
 
 
@@ -1300,6 +1302,89 @@ class TestCleanupLogFile(unittest.TestCase):
                     stderr_output = mock_stderr.getvalue()
                     self.assertIn("Warning: Could not process temp file", stderr_output)
                     self.assertIn("disk full", stderr_output)
+
+
+class TestFormatRunHeader(unittest.TestCase):
+    """Test _format_run_header formatting function."""
+
+    def test_contains_key_fields(self):
+        """Header contains instance name, run ID, hostname, and timeout."""
+        result = _format_run_header(
+            instance_name="stoic-darwin",
+            run_id="run-abc-123",
+            orchestrator_log_path=Path("/logs/run.log"),
+            timestamp_iso="2026-01-01T00:00:00",
+            timeout=15,
+            start_stats={"total_mutations": 42},
+        )
+
+        self.assertIn("stoic-darwin", result)
+        self.assertIn("run-abc-123", result)
+        self.assertIn("15 seconds", result)
+        self.assertIn('"total_mutations": 42', result)
+        self.assertIn("LAFLEUR FUZZER RUN", result)
+
+    def test_handles_empty_stats(self):
+        """Header works with empty start_stats dict."""
+        result = _format_run_header(
+            instance_name="test",
+            run_id="id",
+            orchestrator_log_path=Path("/tmp/test.log"),
+            timestamp_iso="2026-01-01T00:00:00",
+            timeout=10,
+            start_stats={},
+        )
+
+        self.assertIn("{}", result)
+        self.assertIsInstance(result, str)
+
+
+class TestFormatRunSummary(unittest.TestCase):
+    """Test _format_run_summary formatting function."""
+
+    @patch("lafleur.orchestrator.load_run_stats")
+    def test_contains_termination_reason_and_deltas(self, mock_load):
+        """Summary contains the termination reason and computed deltas."""
+        mock_load.return_value = {
+            "total_mutations": 150,
+            "new_coverage_finds": 5,
+            "crashes_found": 2,
+        }
+        start = {"total_mutations": 100, "new_coverage_finds": 3, "crashes_found": 1}
+        run_start = datetime.now()
+
+        result = _format_run_summary("Completed", run_start, start)
+
+        self.assertIn("Completed", result)
+        self.assertIn("FUZZING RUN SUMMARY", result)
+        # 150 - 100 = 50
+        self.assertIn("50", result)
+        # 5 - 3 = 2
+        self.assertIn("New Coverage:      2", result)
+        # 2 - 1 = 1
+        self.assertIn("New Crashes:       1", result)
+
+    @patch("lafleur.orchestrator.load_run_stats")
+    def test_handles_zero_duration(self, mock_load):
+        """Summary handles zero-duration run without division error."""
+        mock_load.return_value = {}
+        start = {}
+        run_start = datetime.now()
+
+        result = _format_run_summary("Completed", run_start, start)
+
+        self.assertIn("Execs per Second: 0.00", result)
+
+    @patch("lafleur.orchestrator.load_run_stats")
+    def test_handles_missing_stats_keys(self, mock_load):
+        """Summary handles missing keys in start and end stats gracefully."""
+        mock_load.return_value = {"total_mutations": 10}
+        start = {}
+
+        result = _format_run_summary("KeyboardInterrupt", datetime.now(), start)
+
+        self.assertIn("KeyboardInterrupt", result)
+        self.assertIn("Total Executions: 10", result)
 
 
 class TestMain(unittest.TestCase):

@@ -854,21 +854,27 @@ class TestHandleAnalysisDataFlowControl(unittest.TestCase):
         self.orchestrator.timing_fuzz = False
         self.parent_metadata = {}
 
-    def test_divergence_returns_break(self):
-        """DIVERGENCE status returns FlowControl.BREAK."""
+    def test_divergence_returns_break_with_filename(self):
+        """DIVERGENCE status returns FlowControl.BREAK and 'divergence' filename."""
         data = {"status": "DIVERGENCE", "mutation_info": {}}
         with patch("sys.stdout", new_callable=io.StringIO):
-            result = self.orchestrator._handle_analysis_data(data, 0, self.parent_metadata, None)
-        self.assertEqual(result, FlowControl.BREAK)
+            flow, filename = self.orchestrator._handle_analysis_data(
+                data, 0, self.parent_metadata, None
+            )
+        self.assertEqual(flow, FlowControl.BREAK)
+        self.assertEqual(filename, "divergence")
 
-    def test_crash_returns_continue(self):
-        """CRASH status returns FlowControl.CONTINUE."""
+    def test_crash_returns_continue_no_filename(self):
+        """CRASH status returns FlowControl.CONTINUE and None filename."""
         data = {"status": "CRASH", "mutation_info": {}}
-        result = self.orchestrator._handle_analysis_data(data, 0, self.parent_metadata, None)
-        self.assertEqual(result, FlowControl.CONTINUE)
+        flow, filename = self.orchestrator._handle_analysis_data(
+            data, 0, self.parent_metadata, None
+        )
+        self.assertEqual(flow, FlowControl.CONTINUE)
+        self.assertIsNone(filename)
 
-    def test_new_coverage_returns_break(self):
-        """NEW_COVERAGE status returns FlowControl.BREAK."""
+    def test_new_coverage_returns_break_with_filename(self):
+        """NEW_COVERAGE status returns FlowControl.BREAK and the new filename."""
         data = {
             "status": "NEW_COVERAGE",
             "mutation_info": {},
@@ -881,14 +887,39 @@ class TestHandleAnalysisDataFlowControl(unittest.TestCase):
             "mutation_seed": 42,
         }
         with patch("sys.stdout", new_callable=io.StringIO):
-            result = self.orchestrator._handle_analysis_data(data, 0, self.parent_metadata, None)
-        self.assertEqual(result, FlowControl.BREAK)
+            flow, filename = self.orchestrator._handle_analysis_data(
+                data, 0, self.parent_metadata, None
+            )
+        self.assertEqual(flow, FlowControl.BREAK)
+        self.assertEqual(filename, "new_child.py")
 
-    def test_no_change_returns_none(self):
-        """NO_CHANGE status returns FlowControl.NONE."""
+    def test_no_change_returns_none_no_filename(self):
+        """NO_CHANGE status returns FlowControl.NONE and None filename."""
         data = {"status": "NO_CHANGE", "mutation_info": {}}
-        result = self.orchestrator._handle_analysis_data(data, 0, self.parent_metadata, None)
-        self.assertEqual(result, FlowControl.NONE)
+        flow, filename = self.orchestrator._handle_analysis_data(
+            data, 0, self.parent_metadata, None
+        )
+        self.assertEqual(flow, FlowControl.NONE)
+        self.assertIsNone(filename)
+
+    def test_analysis_data_not_mutated(self):
+        """analysis_data dict is not mutated with new_filename key."""
+        data = {
+            "status": "NEW_COVERAGE",
+            "mutation_info": {},
+            "core_code": "x = 1",
+            "baseline_coverage": {},
+            "content_hash": "abc",
+            "coverage_hash": "def",
+            "execution_time_ms": 100,
+            "parent_id": "parent.py",
+            "mutation_seed": 42,
+        }
+        original_keys = set(data.keys())
+        with patch("sys.stdout", new_callable=io.StringIO):
+            self.orchestrator._handle_analysis_data(data, 0, self.parent_metadata, None)
+        self.assertNotIn("new_filename", data)
+        self.assertEqual(set(data.keys()), original_keys)
 
 
 class TestPrepareParentContext(unittest.TestCase):

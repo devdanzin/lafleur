@@ -325,8 +325,13 @@ class LafleurOrchestrator:
 
     def _handle_analysis_data(
         self, analysis_data: dict, i: int, parent_metadata: dict, nojit_cv: float | None
-    ) -> FlowControl:
-        """Process the result from analyze_run and update fuzzer state."""
+    ) -> tuple[FlowControl, str | None]:
+        """Process the result from analyze_run and update fuzzer state.
+
+        Returns:
+            A tuple of (flow_control, new_filename). new_filename is set for
+            NEW_COVERAGE and DIVERGENCE statuses, None otherwise.
+        """
         status = analysis_data.get("status")
 
         if status in ("DIVERGENCE", "NEW_COVERAGE"):
@@ -342,11 +347,10 @@ class LafleurOrchestrator:
             print(
                 f"  [***] SUCCESS! Mutation #{i + 1} found a correctness divergence. Moving to next parent."
             )
-            analysis_data["new_filename"] = "divergence"  # Placeholder
-            return FlowControl.BREAK  # A divergence is a major find, move to the next parent
+            return FlowControl.BREAK, "divergence"
         elif status == "CRASH":
             self.run_stats["crashes_found"] = self.run_stats.get("crashes_found", 0) + 1
-            return FlowControl.CONTINUE
+            return FlowControl.CONTINUE, None
         elif status == "NEW_COVERAGE":
             print(f"  [***] SUCCESS! Mutation #{i + 1} found new coverage. Moving to next parent.")
             new_filename = self.corpus_manager.add_new_file(
@@ -363,15 +367,14 @@ class LafleurOrchestrator:
 
             self._check_timing_regression(analysis_data, new_filename, nojit_cv)
 
-            analysis_data["new_filename"] = new_filename
-            return FlowControl.BREAK
+            return FlowControl.BREAK, new_filename
         else:  # NO_CHANGE
             parent_metadata["mutations_since_last_find"] = (
                 parent_metadata.get("mutations_since_last_find", 0) + 1
             )
             if parent_metadata["mutations_since_last_find"] > CORPUS_STERILITY_LIMIT:
                 parent_metadata["is_sterile"] = True
-            return FlowControl.NONE
+            return FlowControl.NONE, None
 
     def _check_timing_regression(
         self,
@@ -558,7 +561,7 @@ class LafleurOrchestrator:
                 )
 
                 nojit_cv = exec_result.nojit_cv
-                flow_control = self._handle_analysis_data(
+                flow_control, returned_filename = self._handle_analysis_data(
                     analysis_data, mutation_index, ctx.parent_metadata, nojit_cv
                 )
 
@@ -580,7 +583,7 @@ class LafleurOrchestrator:
                         )
                         ctx.parent_metadata["mutations_since_last_find"] = 0
 
-                        new_child_filename = analysis_data.get("new_filename")
+                        new_child_filename = returned_filename
                     break  # Break inner multi-run loop
             finally:
                 if child_source_path.exists():

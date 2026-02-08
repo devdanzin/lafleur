@@ -467,7 +467,6 @@ class ScoringManager:
         mutation_seed: int,
         parent_file_size: int,
         parent_lineage_edge_count: int,
-        is_differential_mode: bool = False,
     ) -> dict:
         """Orchestrate the analysis of a run and return a dictionary of findings."""
         if self.artifact_manager is None or self.corpus_manager is None:

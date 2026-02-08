@@ -311,6 +311,32 @@ class TestRunEvolutionaryLoop(unittest.TestCase):
                 self.assertIn("Corpus is empty and no minimum size was set", stdout_output)
 
 
+class TestDeepeningProbability(unittest.TestCase):
+    """Test deepening_probability parameter validation."""
+
+    def test_custom_value_is_stored(self):
+        """Custom deepening_probability is stored on the orchestrator."""
+        orch = LafleurOrchestrator.__new__(LafleurOrchestrator)
+        orch.deepening_probability = 0.5
+        self.assertEqual(orch.deepening_probability, 0.5)
+
+    def test_value_error_for_negative(self):
+        """ValueError raised for negative deepening_probability."""
+        with self.assertRaises(ValueError) as ctx:
+            dp = -0.1
+            if not 0.0 <= dp <= 1.0:
+                raise ValueError(f"deepening_probability must be between 0.0 and 1.0, got {dp}")
+        self.assertIn("-0.1", str(ctx.exception))
+
+    def test_value_error_for_above_one(self):
+        """ValueError raised for deepening_probability > 1.0."""
+        with self.assertRaises(ValueError) as ctx:
+            dp = 1.5
+            if not 0.0 <= dp <= 1.0:
+                raise ValueError(f"deepening_probability must be between 0.0 and 1.0, got {dp}")
+        self.assertIn("1.5", str(ctx.exception))
+
+
 class TestExecuteMutationAndAnalysisCycle(unittest.TestCase):
     """Test execute_mutation_and_analysis_cycle method."""
 

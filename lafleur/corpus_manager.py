@@ -503,12 +503,13 @@ class CorpusManager:
         time_a = file_a_meta.get("execution_time_ms", float("inf"))
         time_b = file_b_meta.get("execution_time_ms", float("inf"))
 
-        if size_b <= size_a and time_b <= time_a:
-            # If B is smaller/faster in both, it's definitely better.
-            return True
-
-        # We could add more nuanced heuristics here, but this is a solid start.
-        return False
+        # Pareto dominance: B must be no worse in any dimension AND strictly
+        # better in at least one. This correctly handles cases where B is much
+        # faster but marginally larger (or vice versa), while rejecting files
+        # that are identical in all metrics.
+        no_worse = (size_b <= size_a) and (time_b <= time_a)
+        strictly_better = (size_b < size_a) or (time_b < time_a)
+        return no_worse and strictly_better
 
     def prune_corpus(self, dry_run: bool = True):
         """

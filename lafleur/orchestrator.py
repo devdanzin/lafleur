@@ -108,8 +108,6 @@ class LafleurOrchestrator:
         num_runs: int = 1,
         use_dynamic_runs: bool = False,
         keep_tmp_logs: bool = False,
-        prune_corpus_flag: bool = False,
-        force_prune: bool = False,
         timing_fuzz: bool = False,
         session_fuzz: bool = False,
         max_timeout_log_size: int = 400,
@@ -223,11 +221,6 @@ class LafleurOrchestrator:
         self.corpus_manager.synchronize(
             self.scoring_manager.analyze_run, self.scoring_manager._build_lineage_profile
         )
-
-        if prune_corpus_flag:
-            self.corpus_manager.prune_corpus(dry_run=not force_prune)
-            print("[*] Pruning complete. Exiting.")
-            sys.exit(0)
 
         self.mutations_since_last_find = 0
         self.global_seed_counter = self.run_stats.get("global_seed_counter", 0)
@@ -820,14 +813,17 @@ Initial Stats:
             num_runs=args.runs,
             use_dynamic_runs=args.dynamic_runs,
             keep_tmp_logs=args.keep_tmp_logs,
-            prune_corpus_flag=args.prune_corpus,
-            force_prune=args.force,
             timing_fuzz=args.timing_fuzz,
             session_fuzz=args.session_fuzz,
             max_timeout_log_size=args.max_timeout_log_size,
             max_crash_log_size=args.max_crash_log_size,
             target_python=args.target_python,
         )
+        if args.prune_corpus:
+            orchestrator.corpus_manager.prune_corpus(dry_run=not args.force)
+            print("[*] Pruning complete. Exiting.")
+            sys.exit(0)
+
         orchestrator.run_evolutionary_loop()
     except KeyboardInterrupt:
         print("\n[!] Fuzzing stopped by user.")

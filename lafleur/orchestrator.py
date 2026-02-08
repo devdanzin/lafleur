@@ -113,6 +113,7 @@ class LafleurOrchestrator:
         max_timeout_log_size: int = 400,
         max_crash_log_size: int = 400,
         target_python: str = sys.executable,
+        deepening_probability: float = 0.2,
     ):
         """Initialize the orchestrator and the corpus manager."""
         self.differential_testing = differential_testing
@@ -120,7 +121,11 @@ class LafleurOrchestrator:
         self.base_runs = num_runs
         self.use_dynamic_runs = use_dynamic_runs
         self.keep_tmp_logs = keep_tmp_logs
-        self.deepening_probability = 0.2
+        if not 0.0 <= deepening_probability <= 1.0:
+            raise ValueError(
+                f"deepening_probability must be between 0.0 and 1.0, got {deepening_probability}"
+            )
+        self.deepening_probability = deepening_probability
         self.ast_mutator = ASTMutator()
         self.timeout = timeout
         self.max_timeout_log_bytes = max_timeout_log_size * 1024 * 1024
@@ -799,6 +804,12 @@ def main():
         help="Enable session fuzzing mode. Scripts run in a persistent process to preserve JIT state.",
     )
     parser.add_argument(
+        "--deepening-probability",
+        type=float,
+        default=0.2,
+        help="Probability of choosing a depth-first deepening session vs. breadth-first. (Default: 0.2)",
+    )
+    parser.add_argument(
         "--max-timeout-log-size",
         type=int,
         default=400,
@@ -875,6 +886,7 @@ def main():
             max_timeout_log_size=args.max_timeout_log_size,
             max_crash_log_size=args.max_crash_log_size,
             target_python=args.target_python,
+            deepening_probability=args.deepening_probability,
         )
         if args.prune_corpus:
             orchestrator.corpus_manager.prune_corpus(dry_run=not args.force)

@@ -416,7 +416,7 @@ class LafleurOrchestrator:
             while mutation_index < max_mutations:
                 mutation_index += 1
                 mutation_id += 1
-                self.run_stats["total_mutations"] += 1
+                self.run_stats["total_mutations"] = self.run_stats.get("total_mutations", 0) + 1
                 self.mutations_since_last_find += 1
                 mutations_since_last_find_in_session += 1
 
@@ -492,9 +492,12 @@ class LafleurOrchestrator:
                                 found_new_coverage_in_cycle = True
 
                                 # --- Update stats and logs on every find ---
-                                self.run_stats["new_coverage_finds"] += 1
-                                self.run_stats["sum_of_mutations_per_find"] += (
-                                    self.mutations_since_last_find
+                                self.run_stats["new_coverage_finds"] = (
+                                    self.run_stats.get("new_coverage_finds", 0) + 1
+                                )
+                                self.run_stats["sum_of_mutations_per_find"] = (
+                                    self.run_stats.get("sum_of_mutations_per_find", 0)
+                                    + self.mutations_since_last_find
                                 )
                                 self.mutations_since_last_find = 0
                                 parent_metadata["total_finds"] = (

@@ -41,6 +41,17 @@ class CorpusScheduler:
     def __init__(self, coverage_state: CoverageManager):
         """Initialize the scheduler with the current coverage state."""
         self.coverage_state = coverage_state
+        self._cached_scores: dict[str, float] | None = None
+
+    def invalidate_scores(self) -> None:
+        """Mark the score cache as stale.
+
+        Call this whenever the corpus composition or global coverage changes.
+        Slow-moving metadata changes (sterility, fertility) do NOT need to
+        invalidate — a one-session lag in reflecting these is negligible
+        for parent selection quality.
+        """
+        self._cached_scores = None
 
     def _calculate_rarity_score(self, file_metadata: dict[str, Any]) -> float:
         """
@@ -60,7 +71,10 @@ class CorpusScheduler:
         return rarity_score
 
     def calculate_scores(self) -> dict[str, float]:
-        """Iterate through the corpus and calculate a score for each file."""
+        """Return cached scores if available, otherwise recalculate."""
+        if self._cached_scores is not None:
+            return self._cached_scores
+
         scores = {}
         for filename, metadata in self.coverage_state.state.get("per_file_coverage", {}).items():
             score = self.BASE_SCORE
@@ -94,6 +108,7 @@ class CorpusScheduler:
 
             scores[filename] = max(self.MIN_SCORE, score)
 
+        self._cached_scores = scores
         return scores
 
 
@@ -188,6 +203,9 @@ class CorpusManager:
             for metadata in self.coverage_state.state.get("per_file_coverage", {}).values()
             if "content_hash" in metadata and "coverage_hash" in metadata
         }
+
+        # Invalidate score cache — corpus may have changed
+        self.scheduler.invalidate_scores()
 
         # 5. Save the synchronized state.
         save_coverage_state(self.coverage_state.state)
@@ -363,6 +381,9 @@ class CorpusManager:
         # The manager is now responsible for saving the state it modifies.
         save_coverage_state(self.coverage_state.state)
 
+        # Invalidate score cache — corpus composition has changed
+        self.scheduler.invalidate_scores()
+
         return new_filename
 
     def generate_new_seed(
@@ -537,5 +558,6 @@ class CorpusManager:
             for filename in files_to_prune:
                 (CORPUS_DIR / filename).unlink()
                 del self.coverage_state.state["per_file_coverage"][filename]
+            self.scheduler.invalidate_scores()
             save_coverage_state(self.coverage_state.state)
             print("[+] Corpus pruning complete.")

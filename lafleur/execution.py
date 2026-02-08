@@ -19,23 +19,12 @@ from textwrap import dedent, indent
 from typing import TYPE_CHECKING
 
 from lafleur.coverage import PROTO_TRACE_REGEX, OPTIMIZED_TRACE_REGEX
-from lafleur.utils import ExecutionResult
+from lafleur.utils import ExecutionResult, FUZZING_ENV
 
 if TYPE_CHECKING:
     from lafleur.artifacts import ArtifactManager
     from lafleur.corpus_manager import CorpusManager
 
-
-# Environment variables for JIT execution with debug logging
-ENV = os.environ.copy()
-ENV.update(
-    {
-        "PYTHON_LLTRACE": "2",
-        "PYTHON_OPT_DEBUG": "4",
-        "PYTHON_JIT": "1",
-        "ASAN_OPTIONS": "detect_leaks=0",
-    }
-)
 
 # Session fuzzing: The Mixer strategy
 MIXER_PROBABILITY = 0.3  # 30% chance to prepend polluter scripts
@@ -260,7 +249,7 @@ class ExecutionManager:
             # Run Non-JIT
             nojit_run = None
             try:
-                nojit_env = ENV.copy()
+                nojit_env = FUZZING_ENV.copy()
                 nojit_env["PYTHON_JIT"] = "0"
                 # Disable debug logs for a clean stderr comparison
                 nojit_env["PYTHON_LLTRACE"] = "0"
@@ -280,7 +269,7 @@ class ExecutionManager:
             # Run JIT
             jit_run = None
             try:
-                jit_env = ENV.copy()
+                jit_env = FUZZING_ENV.copy()
                 jit_env["PYTHON_JIT"] = "1"
                 jit_env["PYTHON_LLTRACE"] = "0"
                 jit_env["PYTHON_OPT_DEBUG"] = "0"
@@ -421,7 +410,7 @@ class ExecutionManager:
                     stdout=log_file,
                     stderr=subprocess.STDOUT,
                     timeout=self.timeout,
-                    env=ENV,  # Use the global ENV with debug flags for coverage
+                    env=FUZZING_ENV,  # Use the global env with debug flags for coverage
                 )
                 end_time = time.monotonic()
 
@@ -478,7 +467,7 @@ class ExecutionManager:
         """)
 
         # Use the exact environment we rely on for coverage
-        env = ENV.copy()
+        env = FUZZING_ENV.copy()
 
         try:
             # Run the stimulus

@@ -345,193 +345,6 @@ class TestCorpusManager(unittest.TestCase):
                 execution_timeout=10,
             )
 
-    def test_is_subsumed_by_superset_and_smaller(self):
-        """Test that file A is subsumed by B if B has superset coverage and is smaller."""
-        # File A metadata
-        file_a_meta = {
-            "lineage_coverage_profile": {"f1": {"edges": {0, 1}, "uops": [], "rare_events": []}},
-            "file_size_bytes": 1000,
-            "execution_time_ms": 100,
-        }
-
-        # File B metadata - superset of edges and smaller
-        file_b_meta = {
-            "lineage_coverage_profile": {"f1": {"edges": {0, 1, 2}, "uops": [], "rare_events": []}},
-            "file_size_bytes": 500,  # Smaller
-            "execution_time_ms": 50,  # Faster
-        }
-
-        # File A should be subsumed by B
-        result = self.corpus_manager._is_subsumed_by(file_a_meta, file_b_meta)
-        self.assertTrue(result)
-
-    def test_is_subsumed_by_superset_but_larger(self):
-        """Test that file A is NOT subsumed by B if B is larger/slower despite superset."""
-        # File A metadata
-        file_a_meta = {
-            "lineage_coverage_profile": {"f1": {"edges": {0, 1}, "uops": [], "rare_events": []}},
-            "file_size_bytes": 500,
-            "execution_time_ms": 50,
-        }
-
-        # File B metadata - superset but larger and slower
-        file_b_meta = {
-            "lineage_coverage_profile": {"f1": {"edges": {0, 1, 2}, "uops": [], "rare_events": []}},
-            "file_size_bytes": 2000,  # Larger
-            "execution_time_ms": 200,  # Slower
-        }
-
-        # File A should NOT be subsumed (B is not more efficient)
-        result = self.corpus_manager._is_subsumed_by(file_a_meta, file_b_meta)
-        self.assertFalse(result)
-
-    def test_is_subsumed_by_not_proper_subset(self):
-        """Test that files with equal or disjoint coverage are not subsumed."""
-        # File A and B have same coverage
-        file_a_meta = {
-            "lineage_coverage_profile": {"f1": {"edges": {0, 1, 2}, "uops": [], "rare_events": []}},
-            "file_size_bytes": 500,
-            "execution_time_ms": 50,
-        }
-
-        file_b_meta = {
-            "lineage_coverage_profile": {"f1": {"edges": {0, 1, 2}, "uops": [], "rare_events": []}},
-            "file_size_bytes": 400,
-            "execution_time_ms": 40,
-        }
-
-        # Not a proper subset (they're equal)
-        result = self.corpus_manager._is_subsumed_by(file_a_meta, file_b_meta)
-        self.assertFalse(result)
-
-    def test_is_subsumed_by_empty_edges(self):
-        """Test that files with empty edge sets are never subsumed."""
-        file_a_meta = {
-            "lineage_coverage_profile": {"f1": {"edges": set(), "uops": [], "rare_events": []}},
-            "file_size_bytes": 500,
-            "execution_time_ms": 50,
-        }
-
-        file_b_meta = {
-            "lineage_coverage_profile": {"f1": {"edges": {0, 1, 2}, "uops": [], "rare_events": []}},
-            "file_size_bytes": 100,
-            "execution_time_ms": 10,
-        }
-
-        # Empty edge set should not be subsumed
-        result = self.corpus_manager._is_subsumed_by(file_a_meta, file_b_meta)
-        self.assertFalse(result)
-
-    def test_is_subsumed_by_partial_overlap(self):
-        """Test that partial overlap (not subset) is not subsumption."""
-        file_a_meta = {
-            "lineage_coverage_profile": {"f1": {"edges": {0, 1, 5}, "uops": [], "rare_events": []}},
-            "file_size_bytes": 500,
-            "execution_time_ms": 50,
-        }
-
-        file_b_meta = {
-            "lineage_coverage_profile": {
-                "f1": {"edges": {0, 1, 2, 3}, "uops": [], "rare_events": []}
-            },
-            "file_size_bytes": 400,
-            "execution_time_ms": 40,
-        }
-
-        # A has edge 5 which B doesn't have, so not a subset
-        result = self.corpus_manager._is_subsumed_by(file_a_meta, file_b_meta)
-        self.assertFalse(result)
-
-    def test_not_subsumed_when_equal_metrics(self):
-        """Equal size and time should not count as 'more efficient'."""
-        file_a_meta = {
-            "lineage_coverage_profile": {"f1": {"edges": {0, 1}}},
-            "file_size_bytes": 500,
-            "execution_time_ms": 50,
-        }
-        file_b_meta = {
-            "lineage_coverage_profile": {"f1": {"edges": {0, 1, 2}}},
-            "file_size_bytes": 500,
-            "execution_time_ms": 50,
-        }
-        result = self.corpus_manager._is_subsumed_by(file_a_meta, file_b_meta)
-        self.assertFalse(result)
-
-    def test_subsumed_when_strictly_faster_same_size(self):
-        """B is a proper superset, same size, strictly faster — subsumes."""
-        file_a_meta = {
-            "lineage_coverage_profile": {"f1": {"edges": {0, 1}}},
-            "file_size_bytes": 500,
-            "execution_time_ms": 100,
-        }
-        file_b_meta = {
-            "lineage_coverage_profile": {"f1": {"edges": {0, 1, 2}}},
-            "file_size_bytes": 500,
-            "execution_time_ms": 50,
-        }
-        result = self.corpus_manager._is_subsumed_by(file_a_meta, file_b_meta)
-        self.assertTrue(result)
-
-    def test_subsumed_when_strictly_smaller_same_speed(self):
-        """B is a proper superset, same speed, strictly smaller — subsumes."""
-        file_a_meta = {
-            "lineage_coverage_profile": {"f1": {"edges": {0, 1}}},
-            "file_size_bytes": 1000,
-            "execution_time_ms": 50,
-        }
-        file_b_meta = {
-            "lineage_coverage_profile": {"f1": {"edges": {0, 1, 2}}},
-            "file_size_bytes": 500,
-            "execution_time_ms": 50,
-        }
-        result = self.corpus_manager._is_subsumed_by(file_a_meta, file_b_meta)
-        self.assertTrue(result)
-
-    def test_subsumed_when_better_in_both(self):
-        """B is a proper superset, strictly faster AND smaller — subsumes."""
-        file_a_meta = {
-            "lineage_coverage_profile": {"f1": {"edges": {0, 1}}},
-            "file_size_bytes": 1000,
-            "execution_time_ms": 100,
-        }
-        file_b_meta = {
-            "lineage_coverage_profile": {"f1": {"edges": {0, 1, 2}}},
-            "file_size_bytes": 500,
-            "execution_time_ms": 50,
-        }
-        result = self.corpus_manager._is_subsumed_by(file_a_meta, file_b_meta)
-        self.assertTrue(result)
-
-    def test_not_subsumed_when_faster_but_larger(self):
-        """B is faster but larger — not Pareto dominant."""
-        file_a_meta = {
-            "lineage_coverage_profile": {"f1": {"edges": {0, 1}}},
-            "file_size_bytes": 500,
-            "execution_time_ms": 100,
-        }
-        file_b_meta = {
-            "lineage_coverage_profile": {"f1": {"edges": {0, 1, 2}}},
-            "file_size_bytes": 600,
-            "execution_time_ms": 50,
-        }
-        result = self.corpus_manager._is_subsumed_by(file_a_meta, file_b_meta)
-        self.assertFalse(result)
-
-    def test_not_subsumed_when_smaller_but_slower(self):
-        """B is smaller but slower — not Pareto dominant."""
-        file_a_meta = {
-            "lineage_coverage_profile": {"f1": {"edges": {0, 1}}},
-            "file_size_bytes": 1000,
-            "execution_time_ms": 50,
-        }
-        file_b_meta = {
-            "lineage_coverage_profile": {"f1": {"edges": {0, 1, 2}}},
-            "file_size_bytes": 500,
-            "execution_time_ms": 100,
-        }
-        result = self.corpus_manager._is_subsumed_by(file_a_meta, file_b_meta)
-        self.assertFalse(result)
-
     @patch("lafleur.corpus_manager.save_coverage_state")
     @patch("lafleur.corpus_manager.CORPUS_DIR")
     def test_synchronize_removes_missing_files(self, mock_corpus_dir, mock_save):
@@ -766,6 +579,381 @@ class TestCorpusManagerPruneCorpus(unittest.TestCase):
         self.assertNotIn("test1.py", self.state["per_file_coverage"])
         self.assertIn("test2.py", self.state["per_file_coverage"])
         self.assertFalse((corpus_dir / "test1.py").exists())
+
+
+class TestBuildEdgeIndex(unittest.TestCase):
+    """Tests for _build_edge_index helper."""
+
+    def setUp(self):
+        self.state = {
+            "global_coverage": {"edges": {}, "uops": {}, "rare_events": {}},
+            "per_file_coverage": {},
+        }
+        self.coverage_manager = CoverageManager(self.state)
+        self.run_stats = {"corpus_file_counter": 0}
+
+        with patch("lafleur.corpus_manager.CORPUS_DIR"), patch("lafleur.corpus_manager.TMP_DIR"):
+            self.corpus_manager = CorpusManager(
+                coverage_state=self.coverage_manager,
+                run_stats=self.run_stats,
+                fusil_path="",
+                get_boilerplate_func=lambda: "",
+                execution_timeout=10,
+            )
+
+    def test_empty_corpus(self):
+        """Empty input returns empty dicts."""
+        file_edges, edge_to_files = self.corpus_manager._build_edge_index({})
+        self.assertEqual(file_edges, {})
+        self.assertEqual(dict(edge_to_files), {})
+
+    def test_single_file(self):
+        """One file with edges {1, 2, 3}."""
+        all_files = {
+            "a.py": {"lineage_coverage_profile": {"f1": {"edges": {1, 2, 3}}}},
+        }
+        file_edges, edge_to_files = self.corpus_manager._build_edge_index(all_files)
+        self.assertEqual(file_edges["a.py"], {1, 2, 3})
+        for edge in (1, 2, 3):
+            self.assertIn("a.py", edge_to_files[edge])
+
+    def test_shared_edges(self):
+        """Two files sharing edge 1."""
+        all_files = {
+            "a.py": {"lineage_coverage_profile": {"f1": {"edges": {1, 2}}}},
+            "b.py": {"lineage_coverage_profile": {"f1": {"edges": {1, 3}}}},
+        }
+        file_edges, edge_to_files = self.corpus_manager._build_edge_index(all_files)
+        self.assertEqual(edge_to_files[1], {"a.py", "b.py"})
+        self.assertEqual(edge_to_files[2], {"a.py"})
+        self.assertEqual(edge_to_files[3], {"b.py"})
+
+    def test_disjoint_edges(self):
+        """Two files with no shared edges."""
+        all_files = {
+            "a.py": {"lineage_coverage_profile": {"f1": {"edges": {1, 2}}}},
+            "b.py": {"lineage_coverage_profile": {"f1": {"edges": {3, 4}}}},
+        }
+        file_edges, edge_to_files = self.corpus_manager._build_edge_index(all_files)
+        self.assertEqual(edge_to_files[1], {"a.py"})
+        self.assertEqual(edge_to_files[3], {"b.py"})
+
+
+class TestFindSubsumerCandidates(unittest.TestCase):
+    """Tests for _find_subsumer_candidates helper."""
+
+    def setUp(self):
+        self.state = {
+            "global_coverage": {"edges": {}, "uops": {}, "rare_events": {}},
+            "per_file_coverage": {},
+        }
+        self.coverage_manager = CoverageManager(self.state)
+        self.run_stats = {"corpus_file_counter": 0}
+
+        with patch("lafleur.corpus_manager.CORPUS_DIR"), patch("lafleur.corpus_manager.TMP_DIR"):
+            self.corpus_manager = CorpusManager(
+                coverage_state=self.coverage_manager,
+                run_stats=self.run_stats,
+                fusil_path="",
+                get_boilerplate_func=lambda: "",
+                execution_timeout=10,
+            )
+
+    def _make_index(self, all_files):
+        """Helper to build edge index from file metadata."""
+        return self.corpus_manager._build_edge_index(all_files)
+
+    def test_returns_proper_supersets(self):
+        """Only files with strictly more edges should be returned."""
+        all_files = {
+            "a.py": {"lineage_coverage_profile": {"f1": {"edges": {1, 2}}}},
+            "b.py": {"lineage_coverage_profile": {"f1": {"edges": {1, 2, 3}}}},
+            "c.py": {"lineage_coverage_profile": {"f1": {"edges": {1, 2}}}},
+        }
+        file_edges, edge_to_files = self._make_index(all_files)
+        candidates = self.corpus_manager._find_subsumer_candidates(
+            "a.py", file_edges["a.py"], file_edges, edge_to_files, set()
+        )
+        self.assertEqual(candidates, {"b.py"})
+
+    def test_excludes_self(self):
+        """File A should not appear in its own candidate set."""
+        all_files = {
+            "a.py": {"lineage_coverage_profile": {"f1": {"edges": {1, 2}}}},
+            "b.py": {"lineage_coverage_profile": {"f1": {"edges": {1, 2, 3}}}},
+        }
+        file_edges, edge_to_files = self._make_index(all_files)
+        candidates = self.corpus_manager._find_subsumer_candidates(
+            "a.py", file_edges["a.py"], file_edges, edge_to_files, set()
+        )
+        self.assertNotIn("a.py", candidates)
+
+    def test_excludes_pruned_files(self):
+        """Files already marked for pruning should be excluded."""
+        all_files = {
+            "a.py": {"lineage_coverage_profile": {"f1": {"edges": {1, 2}}}},
+            "b.py": {"lineage_coverage_profile": {"f1": {"edges": {1, 2, 3}}}},
+        }
+        file_edges, edge_to_files = self._make_index(all_files)
+        candidates = self.corpus_manager._find_subsumer_candidates(
+            "a.py", file_edges["a.py"], file_edges, edge_to_files, {"b.py"}
+        )
+        self.assertEqual(candidates, set())
+
+    def test_empty_edges(self):
+        """File with no edges returns empty set."""
+        all_files = {
+            "a.py": {"lineage_coverage_profile": {}},
+            "b.py": {"lineage_coverage_profile": {"f1": {"edges": {1, 2, 3}}}},
+        }
+        file_edges, edge_to_files = self._make_index(all_files)
+        candidates = self.corpus_manager._find_subsumer_candidates(
+            "a.py", file_edges["a.py"], file_edges, edge_to_files, set()
+        )
+        self.assertEqual(candidates, set())
+
+    def test_no_common_supersets(self):
+        """Files with disjoint edges return empty set."""
+        all_files = {
+            "a.py": {"lineage_coverage_profile": {"f1": {"edges": {1, 2}}}},
+            "b.py": {"lineage_coverage_profile": {"f1": {"edges": {3, 4, 5}}}},
+        }
+        file_edges, edge_to_files = self._make_index(all_files)
+        candidates = self.corpus_manager._find_subsumer_candidates(
+            "a.py", file_edges["a.py"], file_edges, edge_to_files, set()
+        )
+        self.assertEqual(candidates, set())
+
+    def test_rarest_edge_first(self):
+        """Correctness with edges of varying frequency."""
+        # Edge 1 is common (in many files), edge 2 is rare (in few files)
+        all_files = {
+            "a.py": {"lineage_coverage_profile": {"f1": {"edges": {1, 2}}}},
+            "b.py": {"lineage_coverage_profile": {"f1": {"edges": {1, 2, 3}}}},
+        }
+        # Add many files that have edge 1 but not edge 2
+        for i in range(20):
+            all_files[f"noise_{i}.py"] = {
+                "lineage_coverage_profile": {"f1": {"edges": {1, 100 + i}}}
+            }
+        file_edges, edge_to_files = self._make_index(all_files)
+        candidates = self.corpus_manager._find_subsumer_candidates(
+            "a.py", file_edges["a.py"], file_edges, edge_to_files, set()
+        )
+        self.assertEqual(candidates, {"b.py"})
+
+
+class TestPruneCorpusScalability(unittest.TestCase):
+    """Tests for the inverted-index-based prune_corpus."""
+
+    def setUp(self):
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.temp_path = Path(self.temp_dir.name)
+
+        self.state = {
+            "global_coverage": {"edges": {}, "uops": {}, "rare_events": {}},
+            "per_file_coverage": {},
+        }
+        self.coverage_manager = CoverageManager(self.state)
+        self.run_stats = {"corpus_file_counter": 0}
+
+        with patch("lafleur.corpus_manager.CORPUS_DIR", self.temp_path / "corpus"):
+            with patch("lafleur.corpus_manager.TMP_DIR", self.temp_path / "tmp"):
+                self.corpus_manager = CorpusManager(
+                    coverage_state=self.coverage_manager,
+                    run_stats=self.run_stats,
+                    fusil_path="",
+                    get_boilerplate_func=lambda: "",
+                    execution_timeout=10,
+                )
+
+    def tearDown(self):
+        self.temp_dir.cleanup()
+
+    def test_prune_identifies_subsumed_files(self):
+        """A is subsumed by B (proper superset + Pareto dominant). C is disjoint."""
+        self.state["per_file_coverage"]["a.py"] = {
+            "lineage_coverage_profile": {"f1": {"edges": {1, 2}}},
+            "file_size_bytes": 1000,
+            "execution_time_ms": 100,
+        }
+        self.state["per_file_coverage"]["b.py"] = {
+            "lineage_coverage_profile": {"f1": {"edges": {1, 2, 3}}},
+            "file_size_bytes": 500,
+            "execution_time_ms": 50,
+        }
+        self.state["per_file_coverage"]["c.py"] = {
+            "lineage_coverage_profile": {"f1": {"edges": {4, 5}}},
+            "file_size_bytes": 500,
+            "execution_time_ms": 50,
+        }
+
+        self.corpus_manager.prune_corpus(dry_run=True)
+
+        # All still present (dry run), but A would be pruned
+        self.assertIn("a.py", self.state["per_file_coverage"])
+        self.assertIn("b.py", self.state["per_file_coverage"])
+        self.assertIn("c.py", self.state["per_file_coverage"])
+
+    def test_prune_respects_pareto_dominance(self):
+        """B has more edges but is slower — A should NOT be pruned."""
+        self.state["per_file_coverage"]["a.py"] = {
+            "lineage_coverage_profile": {"f1": {"edges": {1, 2}}},
+            "file_size_bytes": 500,
+            "execution_time_ms": 50,
+        }
+        self.state["per_file_coverage"]["b.py"] = {
+            "lineage_coverage_profile": {"f1": {"edges": {1, 2, 3}}},
+            "file_size_bytes": 400,
+            "execution_time_ms": 60,
+        }
+
+        self.corpus_manager.prune_corpus(dry_run=True)
+        self.assertEqual(len(self.state["per_file_coverage"]), 2)
+
+    def test_prune_equal_metrics_not_subsumed(self):
+        """B has more edges but identical metrics — A should NOT be pruned."""
+        self.state["per_file_coverage"]["a.py"] = {
+            "lineage_coverage_profile": {"f1": {"edges": {1, 2}}},
+            "file_size_bytes": 500,
+            "execution_time_ms": 50,
+        }
+        self.state["per_file_coverage"]["b.py"] = {
+            "lineage_coverage_profile": {"f1": {"edges": {1, 2, 3}}},
+            "file_size_bytes": 500,
+            "execution_time_ms": 50,
+        }
+
+        self.corpus_manager.prune_corpus(dry_run=True)
+        self.assertEqual(len(self.state["per_file_coverage"]), 2)
+
+    def test_prune_empty_edges_never_pruned(self):
+        """Files with no edges should never be pruned."""
+        self.state["per_file_coverage"]["empty.py"] = {
+            "lineage_coverage_profile": {},
+            "file_size_bytes": 100,
+            "execution_time_ms": 10,
+        }
+        self.state["per_file_coverage"]["full.py"] = {
+            "lineage_coverage_profile": {"f1": {"edges": {1, 2, 3}}},
+            "file_size_bytes": 50,
+            "execution_time_ms": 5,
+        }
+
+        self.corpus_manager.prune_corpus(dry_run=True)
+        self.assertIn("empty.py", self.state["per_file_coverage"])
+
+    def test_prune_dry_run_does_not_delete(self):
+        """Dry run should not remove files or mutate metadata."""
+        corpus_dir = self.temp_path / "corpus"
+        corpus_dir.mkdir(parents=True, exist_ok=True)
+        (corpus_dir / "a.py").write_text("# a")
+        (corpus_dir / "b.py").write_text("# b")
+
+        self.state["per_file_coverage"]["a.py"] = {
+            "lineage_coverage_profile": {"f1": {"edges": {1, 2}}},
+            "file_size_bytes": 1000,
+            "execution_time_ms": 100,
+        }
+        self.state["per_file_coverage"]["b.py"] = {
+            "lineage_coverage_profile": {"f1": {"edges": {1, 2, 3}}},
+            "file_size_bytes": 500,
+            "execution_time_ms": 50,
+        }
+
+        with patch("lafleur.corpus_manager.CORPUS_DIR", corpus_dir):
+            self.corpus_manager.prune_corpus(dry_run=True)
+
+        self.assertTrue((corpus_dir / "a.py").exists())
+        self.assertIn("a.py", self.state["per_file_coverage"])
+        self.assertNotIn("subsumed_children_count", self.state["per_file_coverage"]["b.py"])
+
+    @patch("lafleur.corpus_manager.save_coverage_state")
+    def test_prune_actually_deletes_in_non_dry_run(self, mock_save):
+        """Non-dry-run should delete files, update state, and invalidate cache."""
+        corpus_dir = self.temp_path / "corpus"
+        corpus_dir.mkdir(parents=True, exist_ok=True)
+        (corpus_dir / "a.py").write_text("# a")
+        (corpus_dir / "b.py").write_text("# b")
+
+        self.state["per_file_coverage"]["a.py"] = {
+            "lineage_coverage_profile": {"f1": {"edges": {1, 2}}},
+            "file_size_bytes": 1000,
+            "execution_time_ms": 100,
+        }
+        self.state["per_file_coverage"]["b.py"] = {
+            "lineage_coverage_profile": {"f1": {"edges": {1, 2, 3}}},
+            "file_size_bytes": 500,
+            "execution_time_ms": 50,
+        }
+
+        # Pre-populate the cache
+        self.corpus_manager.scheduler._cached_scores = {"a.py": 50.0, "b.py": 80.0}
+
+        with patch("lafleur.corpus_manager.CORPUS_DIR", corpus_dir):
+            self.corpus_manager.prune_corpus(dry_run=False)
+
+        self.assertFalse((corpus_dir / "a.py").exists())
+        self.assertNotIn("a.py", self.state["per_file_coverage"])
+        self.assertIn("b.py", self.state["per_file_coverage"])
+        mock_save.assert_called_once()
+        self.assertIsNone(self.corpus_manager.scheduler._cached_scores)
+
+    def test_prune_progress_logging(self):
+        """Progress message should appear for large corpora."""
+        # Create 2001 files with empty edges (quickly skipped)
+        for i in range(2001):
+            self.state["per_file_coverage"][f"file_{i}.py"] = {
+                "lineage_coverage_profile": {},
+                "file_size_bytes": 100,
+                "execution_time_ms": 10,
+            }
+
+        from io import StringIO
+
+        with patch("sys.stdout", new_callable=StringIO) as mock_out:
+            self.corpus_manager.prune_corpus(dry_run=True)
+
+        self.assertIn("Pruning progress: 2000/2001", mock_out.getvalue())
+
+    @patch("lafleur.corpus_manager.save_coverage_state")
+    def test_prune_handles_large_corpus(self, mock_save):
+        """100 subsumed files among 500 should all be identified."""
+        corpus_dir = self.temp_path / "corpus"
+        corpus_dir.mkdir(parents=True, exist_ok=True)
+
+        # Create 400 "base" files with unique disjoint edge sets
+        for i in range(400):
+            base_edge = i * 10
+            self.state["per_file_coverage"][f"base_{i}.py"] = {
+                "lineage_coverage_profile": {
+                    "f1": {"edges": {base_edge, base_edge + 1, base_edge + 2}}
+                },
+                "file_size_bytes": 500,
+                "execution_time_ms": 50,
+            }
+            (corpus_dir / f"base_{i}.py").write_text(f"# base {i}")
+
+        # Create 100 "subsumed" files: each has a subset of a base file's edges
+        for i in range(100):
+            base_edge = i * 10
+            self.state["per_file_coverage"][f"sub_{i}.py"] = {
+                "lineage_coverage_profile": {"f1": {"edges": {base_edge, base_edge + 1}}},
+                "file_size_bytes": 1000,
+                "execution_time_ms": 100,
+            }
+            (corpus_dir / f"sub_{i}.py").write_text(f"# sub {i}")
+
+        with patch("lafleur.corpus_manager.CORPUS_DIR", corpus_dir):
+            self.corpus_manager.prune_corpus(dry_run=False)
+
+        # All 100 subsumed files should be gone
+        remaining = set(self.state["per_file_coverage"].keys())
+        for i in range(100):
+            self.assertNotIn(f"sub_{i}.py", remaining)
+        # All 400 base files should remain
+        for i in range(400):
+            self.assertIn(f"base_{i}.py", remaining)
 
 
 class TestCorpusManagerGetFilesToAnalyze(unittest.TestCase):

@@ -1377,7 +1377,7 @@ class TestFormatRunSummary(unittest.TestCase):
             "crashes_found": 2,
         }
         start = {"total_mutations": 100, "new_coverage_finds": 3, "crashes_found": 1}
-        run_start = datetime.now()
+        run_start = datetime.now(timezone.utc)
 
         result = _format_run_summary("Completed", run_start, start)
 
@@ -1395,7 +1395,7 @@ class TestFormatRunSummary(unittest.TestCase):
         """Summary handles zero-duration run without division error."""
         mock_load.return_value = {}
         start = {}
-        run_start = datetime.now()
+        run_start = datetime.now(timezone.utc)
 
         result = _format_run_summary("Completed", run_start, start)
 
@@ -1407,7 +1407,7 @@ class TestFormatRunSummary(unittest.TestCase):
         mock_load.return_value = {"total_mutations": 10}
         start = {}
 
-        result = _format_run_summary("KeyboardInterrupt", datetime.now(), start)
+        result = _format_run_summary("KeyboardInterrupt", datetime.now(timezone.utc), start)
 
         self.assertIn("KeyboardInterrupt", result)
         self.assertIn("Total Executions: 10", result)

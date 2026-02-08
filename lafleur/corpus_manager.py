@@ -142,9 +142,6 @@ class CorpusManager:
         since the last run.
         """
         print("[*] Synchronizing corpus directory with state file...")
-        if not CORPUS_DIR.exists():
-            CORPUS_DIR.mkdir(parents=True, exist_ok=True)
-
         disk_files = {p.name for p in CORPUS_DIR.glob("*.py")}
         state_files = set(self.coverage_state.state["per_file_coverage"].keys())
 

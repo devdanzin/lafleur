@@ -525,6 +525,135 @@ class TestRunSpamStage(unittest.TestCase):
         self.assertEqual(mutation_info["strategy"], "spam")
 
 
+class TestRunSniperStage(unittest.TestCase):
+    """Test _run_sniper_stage method."""
+
+    def setUp(self):
+        """Set up minimal MutationController instance."""
+        self.controller = MutationController.__new__(MutationController)
+        self.controller.ast_mutator = MagicMock()
+
+        # Create mock transformer for havoc fallback
+        self.mock_transformer = MagicMock()
+        self.mock_transformer.__name__ = "MockTransformer"
+        self.mock_transformer.return_value.visit = MagicMock(side_effect=lambda x: x)
+        self.controller.ast_mutator.transformers = [self.mock_transformer]
+
+        # Mock score_tracker (needed by havoc fallback)
+        self.controller.score_tracker = MagicMock()
+        self.controller.score_tracker.attempts = defaultdict(int)
+        self.controller.score_tracker.get_weights.return_value = [1.0]
+
+        self.tree = ast.parse(
+            dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        )
+
+    def test_fallback_strategy_is_sniper_fallback_not_havoc(self):
+        """When watched_keys is empty, strategy should be 'sniper_fallback', not 'havoc'."""
+        with patch("lafleur.mutation_controller.RANDOM.randint", return_value=1):
+            with patch(
+                "lafleur.mutation_controller.random.choices",
+                return_value=[self.mock_transformer],
+            ):
+                with patch("sys.stderr", new_callable=io.StringIO):
+                    _, mutation_info = self.controller._run_sniper_stage(
+                        self.tree, seed=42, watched_keys=[]
+                    )
+
+        self.assertEqual(mutation_info["strategy"], "sniper_fallback")
+
+    def test_fallback_with_none_watched_keys(self):
+        """When watched_keys is None, strategy should be 'sniper_fallback'."""
+        with patch("lafleur.mutation_controller.RANDOM.randint", return_value=1):
+            with patch(
+                "lafleur.mutation_controller.random.choices",
+                return_value=[self.mock_transformer],
+            ):
+                with patch("sys.stderr", new_callable=io.StringIO):
+                    _, mutation_info = self.controller._run_sniper_stage(
+                        self.tree, seed=42, watched_keys=None
+                    )
+
+        self.assertEqual(mutation_info["strategy"], "sniper_fallback")
+
+    def test_normal_path_strategy_is_sniper(self):
+        """When watched_keys are provided, strategy should be 'sniper'."""
+        with patch("sys.stderr", new_callable=io.StringIO):
+            _, mutation_info = self.controller._run_sniper_stage(
+                self.tree, seed=42, watched_keys=["LOAD_ATTR", "STORE_FAST"]
+            )
+
+        self.assertEqual(mutation_info["strategy"], "sniper")
+
+
+class TestRunHelperSniperStage(unittest.TestCase):
+    """Test _run_helper_sniper_stage method."""
+
+    def setUp(self):
+        """Set up minimal MutationController instance."""
+        self.controller = MutationController.__new__(MutationController)
+        self.controller.ast_mutator = MagicMock()
+
+        # Create mock transformer for havoc fallback
+        self.mock_transformer = MagicMock()
+        self.mock_transformer.__name__ = "MockTransformer"
+        self.mock_transformer.return_value.visit = MagicMock(side_effect=lambda x: x)
+        self.controller.ast_mutator.transformers = [self.mock_transformer]
+
+        # Mock score_tracker (needed by havoc fallback)
+        self.controller.score_tracker = MagicMock()
+        self.controller.score_tracker.attempts = defaultdict(int)
+        self.controller.score_tracker.get_weights.return_value = [1.0]
+
+        self.tree = ast.parse(
+            dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        )
+
+    def test_fallback_strategy_is_helper_sniper_fallback(self):
+        """When no helpers detected, strategy should be 'helper_sniper_fallback'."""
+        with patch("lafleur.mutation_controller.HelperFunctionInjector") as mock_injector_cls:
+            mock_injector = MagicMock()
+            mock_injector_cls.return_value = mock_injector
+            mock_injector.visit.return_value = self.tree
+            mock_injector.helpers_injected = []  # No helpers detected
+
+            with patch("lafleur.mutation_controller.RANDOM.randint", return_value=1):
+                with patch(
+                    "lafleur.mutation_controller.random.choices",
+                    return_value=[self.mock_transformer],
+                ):
+                    with patch("sys.stderr", new_callable=io.StringIO):
+                        _, mutation_info = self.controller._run_helper_sniper_stage(
+                            self.tree, seed=42
+                        )
+
+        self.assertEqual(mutation_info["strategy"], "helper_sniper_fallback")
+
+    def test_normal_path_strategy_is_helper_sniper(self):
+        """When helpers are detected, strategy should be 'helper_sniper'."""
+        with patch("lafleur.mutation_controller.HelperFunctionInjector") as mock_injector_cls:
+            mock_injector = MagicMock()
+            mock_injector_cls.return_value = mock_injector
+            mock_injector.visit.return_value = self.tree
+            mock_injector.helpers_injected = ["_jit_helper_foo"]
+
+            with patch("lafleur.mutation_controller.SniperMutator") as mock_sniper_cls:
+                mock_sniper = MagicMock()
+                mock_sniper_cls.return_value = mock_sniper
+                mock_sniper.visit.return_value = self.tree
+
+                with patch("sys.stderr", new_callable=io.StringIO):
+                    _, mutation_info = self.controller._run_helper_sniper_stage(self.tree, seed=42)
+
+        self.assertEqual(mutation_info["strategy"], "helper_sniper")
+
+
 class TestRunSlicing(unittest.TestCase):
     """Test _run_slicing method."""
 

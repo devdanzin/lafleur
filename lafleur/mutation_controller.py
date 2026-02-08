@@ -287,8 +287,11 @@ class MutationController:
     ) -> tuple[ast.AST, dict[str, Any]]:
         """Apply the SniperMutator if watched keys are available."""
         if not watched_keys:
-            # Fallback to havoc if no intelligence available
-            return self._run_havoc_stage(base_ast, seed=seed, **kwargs)
+            # Fallback to havoc, but track under sniper so the score tracker
+            # correctly attributes the attempt to the strategy that was selected.
+            result_ast, mutation_info = self._run_havoc_stage(base_ast, seed=seed, **kwargs)
+            mutation_info["strategy"] = "sniper_fallback"
+            return result_ast, mutation_info
 
         print(
             f"  [~] Running SNIPER stage (Targets: {', '.join(watched_keys[:3])})...",
@@ -331,7 +334,9 @@ class MutationController:
         if not detected_helpers:
             # No helpers available, fall back to havoc
             print("  [!] No helpers available, falling back to havoc", file=sys.stderr)
-            return self._run_havoc_stage(base_ast, seed=seed, **kwargs)
+            result_ast, mutation_info = self._run_havoc_stage(base_ast, seed=seed, **kwargs)
+            mutation_info["strategy"] = "helper_sniper_fallback"
+            return result_ast, mutation_info
 
         print(
             f"  [~] Detected {len(detected_helpers)} helper(s): {detected_helpers}",

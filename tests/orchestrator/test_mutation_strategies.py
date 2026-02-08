@@ -815,5 +815,48 @@ class TestRunSplicingStage(unittest.TestCase):
             self.assertIn("SPLICING", mock_stderr.getvalue())
 
 
+class TestSplicingWithoutCorpusManager(unittest.TestCase):
+    """Test _run_splicing_stage when corpus_manager is None."""
+
+    def setUp(self):
+        """Set up MutationController with no corpus_manager."""
+        self.controller = MutationController.__new__(MutationController)
+        self.controller.corpus_manager = None
+
+    def test_returns_original_ast_when_corpus_manager_is_none(self):
+        """Splicing returns the original AST unchanged when corpus_manager is None."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+
+        with patch("sys.stderr", new_callable=io.StringIO) as mock_stderr:
+            result = self.controller._run_splicing_stage(tree.body)
+
+        self.assertEqual(result, tree.body)
+        self.assertIn("Splicing unavailable", mock_stderr.getvalue())
+
+    def test_splicing_works_after_corpus_manager_set(self):
+        """Splicing works normally after corpus_manager is set post-construction."""
+        self.controller.corpus_manager = MagicMock()
+        self.controller.corpus_manager.select_parent.return_value = None
+        self.controller._get_core_code = MagicMock()
+
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+
+        with patch("sys.stderr", new_callable=io.StringIO):
+            result = self.controller._run_splicing_stage(tree.body)
+
+        # With select_parent returning None, it returns the original
+        self.assertEqual(result, tree.body)
+        # But corpus_manager.select_parent was called (guard passed)
+        self.controller.corpus_manager.select_parent.assert_called_once()
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

@@ -54,7 +54,7 @@ class MutationController:
         self,
         ast_mutator: "ASTMutator",
         score_tracker: "MutatorScoreTracker",
-        corpus_manager: "CorpusManager",
+        corpus_manager: "CorpusManager | None" = None,
         differential_testing: bool = False,
     ):
         """
@@ -63,12 +63,13 @@ class MutationController:
         Args:
             ast_mutator: ASTMutator instance for applying transformations
             score_tracker: MutatorScoreTracker for adaptive strategy selection
-            corpus_manager: CorpusManager for parent selection in splicing
+            corpus_manager: CorpusManager for parent selection in splicing.
+                Can be None at construction and set later via the corpus_manager attribute.
             differential_testing: Whether differential testing mode is enabled
         """
         self.ast_mutator = ast_mutator
         self.score_tracker = score_tracker
-        self.corpus_manager = corpus_manager
+        self.corpus_manager: CorpusManager | None = corpus_manager
         self.differential_testing = differential_testing
         self.boilerplate_code: str | None = None
 
@@ -304,6 +305,10 @@ class MutationController:
     ) -> ast.AST | list[ast.stmt]:
         """Perform a crossover by splicing the harness from a second parent."""
         print("  [~] Attempting SPLICING stage...", file=__import__("sys").stderr)
+
+        if self.corpus_manager is None:
+            print("  [!] Splicing unavailable: no corpus_manager set.", file=sys.stderr)
+            return base_core_ast
 
         # Handle both Module and list inputs
         if isinstance(base_core_ast, ast.Module):

@@ -141,11 +141,9 @@ class LafleurOrchestrator:
         self.score_tracker = MutatorScoreTracker(ast_mutator.transformers)
 
         # Initialize the mutation controller for managing mutation strategies
-        # Note: corpus_manager is set to a placeholder and updated after CorpusManager init
         self.mutation_controller = MutationController(
             ast_mutator=ast_mutator,
             score_tracker=self.score_tracker,
-            corpus_manager=None,  # type: ignore[arg-type]  # Set after CorpusManager init
             differential_testing=differential_testing,
         )
 
@@ -159,7 +157,7 @@ class LafleurOrchestrator:
             target_python=target_python,
         )
 
-        # Now set the corpus_manager reference in mutation_controller
+        # Set the corpus_manager after CorpusManager is created (breaks circular dependency)
         self.mutation_controller.corpus_manager = self.corpus_manager
 
         fingerprinter = CrashFingerprinter()

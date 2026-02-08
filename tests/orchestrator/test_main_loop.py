@@ -15,7 +15,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from lafleur.mutation_controller import MutationController
-from lafleur.orchestrator import LafleurOrchestrator
+from lafleur.orchestrator import FlowControl, LafleurOrchestrator
 
 
 class TestCalculateMutations(unittest.TestCase):
@@ -581,6 +581,58 @@ class TestRunStatsKeyErrorWithEmptyStats(unittest.TestCase):
         self.assertEqual(self.orchestrator.run_stats["total_mutations"], 1)
         self.assertEqual(self.orchestrator.run_stats["new_coverage_finds"], 1)
         self.assertEqual(self.orchestrator.run_stats["sum_of_mutations_per_find"], 6)
+
+
+class TestHandleAnalysisDataFlowControl(unittest.TestCase):
+    """Test that _handle_analysis_data returns the correct FlowControl member."""
+
+    def setUp(self):
+        self.orchestrator = LafleurOrchestrator.__new__(LafleurOrchestrator)
+        self.orchestrator.run_stats = {}
+        self.orchestrator.mutations_since_last_find = 0
+        self.orchestrator.corpus_manager = MagicMock()
+        self.orchestrator.corpus_manager.add_new_file.return_value = "new_child.py"
+        self.orchestrator.scoring_manager = MagicMock()
+        self.orchestrator.artifact_manager = MagicMock()
+        self.orchestrator.score_tracker = MagicMock()
+        self.orchestrator.timing_fuzz = False
+        self.parent_metadata = {}
+
+    def test_divergence_returns_break(self):
+        """DIVERGENCE status returns FlowControl.BREAK."""
+        data = {"status": "DIVERGENCE", "mutation_info": {}}
+        with patch("sys.stdout", new_callable=io.StringIO):
+            result = self.orchestrator._handle_analysis_data(data, 0, self.parent_metadata, None)
+        self.assertEqual(result, FlowControl.BREAK)
+
+    def test_crash_returns_continue(self):
+        """CRASH status returns FlowControl.CONTINUE."""
+        data = {"status": "CRASH", "mutation_info": {}}
+        result = self.orchestrator._handle_analysis_data(data, 0, self.parent_metadata, None)
+        self.assertEqual(result, FlowControl.CONTINUE)
+
+    def test_new_coverage_returns_break(self):
+        """NEW_COVERAGE status returns FlowControl.BREAK."""
+        data = {
+            "status": "NEW_COVERAGE",
+            "mutation_info": {},
+            "core_code": "x = 1",
+            "baseline_coverage": {},
+            "content_hash": "abc",
+            "coverage_hash": "def",
+            "execution_time_ms": 100,
+            "parent_id": "parent.py",
+            "mutation_seed": 42,
+        }
+        with patch("sys.stdout", new_callable=io.StringIO):
+            result = self.orchestrator._handle_analysis_data(data, 0, self.parent_metadata, None)
+        self.assertEqual(result, FlowControl.BREAK)
+
+    def test_no_change_returns_none(self):
+        """NO_CHANGE status returns FlowControl.NONE."""
+        data = {"status": "NO_CHANGE", "mutation_info": {}}
+        result = self.orchestrator._handle_analysis_data(data, 0, self.parent_metadata, None)
+        self.assertEqual(result, FlowControl.NONE)
 
 
 class TestCleanupLogFile(unittest.TestCase):

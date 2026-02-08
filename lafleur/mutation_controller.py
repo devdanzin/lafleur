@@ -38,6 +38,8 @@ RANDOM = random.Random()
 BOILERPLATE_START_MARKER = "# FUSIL_BOILERPLATE_START"
 BOILERPLATE_END_MARKER = "# FUSIL_BOILERPLATE_END"
 
+MutationStrategy = Callable[..., tuple[ast.AST, dict[str, Any]]]
+
 
 class MutationController:
     """
@@ -376,7 +378,6 @@ class MutationController:
         normalizer = FuzzerSetupNormalizer()
         tree_copy = normalizer.visit(tree_copy)
 
-        MutationStrategy = Callable[..., tuple[ast.AST, dict[str, Any]]]
         strategy_candidates: list[MutationStrategy] = [
             self._run_deterministic_stage,
             self._run_havoc_stage,

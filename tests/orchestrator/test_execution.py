@@ -72,8 +72,8 @@ class TestPrepareChildScript(unittest.TestCase):
         mutated_harness = parent_tree.body[0]
 
         # Test with random returning value that triggers GC (< 0.25)
-        with patch("lafleur.mutation_controller.random.random", return_value=0.1):
-            with patch("lafleur.mutation_controller.random.choices", return_value=[10]):
+        with patch("lafleur.mutation_controller.RANDOM.random", return_value=0.1):
+            with patch("lafleur.mutation_controller.RANDOM.choices", return_value=[10]):
                 with patch("sys.stderr", new_callable=io.StringIO) as mock_stderr:
                     result = self.controller.prepare_child_script(
                         parent_tree, mutated_harness, runtime_seed=42
@@ -88,7 +88,7 @@ class TestPrepareChildScript(unittest.TestCase):
         parent_tree = ast.parse("def uop_harness_test():\n    pass")
         mutated_harness = parent_tree.body[0]
 
-        with patch("lafleur.mutation_controller.random.random", return_value=0.9):
+        with patch("lafleur.mutation_controller.RANDOM.random", return_value=0.9):
             result = self.controller.prepare_child_script(
                 parent_tree, mutated_harness, runtime_seed=42
             )

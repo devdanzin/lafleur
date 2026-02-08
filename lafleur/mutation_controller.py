@@ -168,15 +168,15 @@ class MutationController:
 
         if stage_name == "deterministic":
             # For deterministic, we must re-seed the RNG to get the same choices
-            random.seed(seed)
-            num_mutations = random.randint(1, 3)
-            chosen_classes = random.choices(self.ast_mutator.transformers, k=num_mutations)
+            RANDOM.seed(seed)
+            num_mutations = RANDOM.randint(1, 3)
+            chosen_classes = RANDOM.choices(self.ast_mutator.transformers, k=num_mutations)
             pipeline = [cls() for cls in chosen_classes]
 
         elif stage_name == "spam":
-            num_mutations = random.randint(20, 50)
+            num_mutations = RANDOM.randint(20, 50)
             # Choose ONE transformer and create many instances of it
-            chosen_class = random.choices(self.ast_mutator.transformers, k=1)[0]
+            chosen_class = RANDOM.choices(self.ast_mutator.transformers, k=1)[0]
             pipeline = [chosen_class() for _ in range(num_mutations)]
             print(
                 f"    -> Slicing and Spamming with: {chosen_class.__name__}",
@@ -184,8 +184,8 @@ class MutationController:
             )
 
         else:  # Havoc
-            num_mutations = random.randint(15, 50)
-            chosen_classes = random.choices(self.ast_mutator.transformers, k=num_mutations)
+            num_mutations = RANDOM.randint(15, 50)
+            chosen_classes = RANDOM.choices(self.ast_mutator.transformers, k=num_mutations)
             pipeline = [cls() for cls in chosen_classes]
 
         slicer = SlicingMutator(pipeline)
@@ -234,7 +234,7 @@ class MutationController:
         dynamic_weights = self.score_tracker.get_weights(transformer_names)
 
         for _ in range(num_havoc_mutations):
-            transformer_class = random.choices(
+            transformer_class = RANDOM.choices(
                 self.ast_mutator.transformers, weights=dynamic_weights, k=1
             )[0]
             # Record the attempt
@@ -265,7 +265,7 @@ class MutationController:
         transformer_names = [t.__name__ for t in self.ast_mutator.transformers]
         dynamic_weights = self.score_tracker.get_weights(transformer_names)
 
-        chosen_transformer_class = random.choices(
+        chosen_transformer_class = RANDOM.choices(
             self.ast_mutator.transformers, weights=dynamic_weights, k=1
         )[0]
         print(
@@ -371,7 +371,6 @@ class MutationController:
         information about the mutation that was performed.
         """
         RANDOM.seed(seed)
-        random.seed(seed)
 
         tree_copy = copy.deepcopy(base_ast)
         # Clean the AST of any previous fuzzer setup before applying new mutations.
@@ -402,7 +401,7 @@ class MutationController:
             avg_weight = sum(dynamic_weights) / len(dynamic_weights)
             dynamic_weights[sniper_idx] = max(dynamic_weights[sniper_idx], avg_weight * 1.5)
 
-        chosen_strategy = random.choices(strategy_candidates, weights=dynamic_weights, k=1)[0]
+        chosen_strategy = RANDOM.choices(strategy_candidates, weights=dynamic_weights, k=1)[0]
 
         # Record the attempt for the chosen strategy only
         chosen_name = chosen_strategy.__name__.replace("_run_", "").replace("_stage", "")
@@ -448,14 +447,14 @@ class MutationController:
         """Reassemble the AST and generate the final Python source code for the child."""
         try:
             gc_tuning_code = ""
-            if random.random() < 0.25:
+            if RANDOM.random() < 0.25:
                 print("    -> Prepending GC pressure to test case", file=sys.stderr)
                 # This logic is the same as in GCInjector
                 thresholds = [1, 10, 100, None]
                 weights = [0.6, 0.1, 0.1, 0.2]
-                chosen_threshold = random.choices(thresholds, weights=weights, k=1)[0]
+                chosen_threshold = RANDOM.choices(thresholds, weights=weights, k=1)[0]
                 if chosen_threshold is None:
-                    chosen_threshold = random.randint(1, 150)
+                    chosen_threshold = RANDOM.randint(1, 150)
                 gc_tuning_code = f"import gc\ngc.set_threshold({chosen_threshold})\n"
 
             rng_setup_code = dedent(f"""

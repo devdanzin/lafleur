@@ -5,6 +5,7 @@ It includes utilities for logging, managing run statistics, and structuring data
 """
 
 import json
+import os
 import sys
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -12,6 +13,18 @@ from pathlib import Path
 from typing import Any, TextIO
 
 RUN_STATS_FILE = Path("fuzz_run_stats.json")
+
+# Standard environment variables for running JIT-enabled Python targets.
+# Used by both CorpusManager (sync/seed) and ExecutionManager (fuzzing runs).
+FUZZING_ENV = os.environ.copy()
+FUZZING_ENV.update(
+    {
+        "PYTHON_LLTRACE": "2",
+        "PYTHON_OPT_DEBUG": "4",
+        "PYTHON_JIT": "1",
+        "ASAN_OPTIONS": "detect_leaks=0",
+    }
+)
 
 
 def load_run_stats() -> dict[str, Any]:

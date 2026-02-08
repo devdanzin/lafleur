@@ -17,20 +17,10 @@ from pathlib import Path
 from typing import Any, Callable
 
 from lafleur.coverage import save_coverage_state, CoverageManager
-from lafleur.utils import ExecutionResult
+from lafleur.utils import ExecutionResult, FUZZING_ENV
 
 TMP_DIR = Path("tmp_fuzz_run")
 CORPUS_DIR = Path("corpus") / "jit_interesting_tests"
-
-ENV = os.environ.copy()
-ENV.update(
-    {
-        "PYTHON_LLTRACE": "2",
-        "PYTHON_OPT_DEBUG": "4",
-        "PYTHON_JIT": "1",
-        "ASAN_OPTIONS": "detect_leaks=0",
-    }
-)
 
 
 class CorpusScheduler:
@@ -223,7 +213,7 @@ class CorpusManager:
                         stdout=log_file,
                         stderr=subprocess.STDOUT,
                         timeout=self.execution_timeout,  # Use configurable timeout
-                        env=ENV,
+                        env=FUZZING_ENV,
                     )
                     end_time = time.monotonic()
                 execution_time_ms = int((end_time - start_time) * 1000)
@@ -406,7 +396,7 @@ class CorpusManager:
             # "--keep-sessions",
         ]
         print(f"[*] Generating new seed with command: {' '.join(command)}")
-        subprocess.run(command, capture_output=True, env=ENV)
+        subprocess.run(command, capture_output=True, env=FUZZING_ENV)
 
         # Execute it to get a log (also using the configurable timeout)
         try:
@@ -416,7 +406,7 @@ class CorpusManager:
                     stdout=log_file,
                     stderr=subprocess.STDOUT,
                     timeout=self.execution_timeout,  # Use configurable timeout here too
-                    env=ENV,
+                    env=FUZZING_ENV,
                 )
         except subprocess.TimeoutExpired:
             print(

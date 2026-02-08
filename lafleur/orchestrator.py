@@ -705,7 +705,7 @@ def _format_run_summary(
     start_stats: dict,
 ) -> str:
     """Format the summary footer printed at the end of a fuzzing run."""
-    end_time = datetime.now()
+    end_time = datetime.now(timezone.utc)
     duration = end_time - run_start_time
     end_stats = load_run_stats()
 
@@ -838,7 +838,7 @@ def main():
 
     LOGS_DIR.mkdir(exist_ok=True)
     # Use a consistent timestamp for the whole run
-    run_start_time = datetime.now()
+    run_start_time = datetime.now(timezone.utc)
     timestamp_iso = run_start_time.isoformat()
     safe_timestamp = timestamp_iso.replace(":", "-").replace("+", "Z")
     orchestrator_log_path = LOGS_DIR / f"deep_fuzzer_run_{safe_timestamp}.log"

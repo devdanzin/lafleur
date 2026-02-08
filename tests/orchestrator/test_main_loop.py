@@ -15,7 +15,11 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from lafleur.mutation_controller import MutationController
-from lafleur.orchestrator import FlowControl, LafleurOrchestrator
+from lafleur.orchestrator import (
+    DEEPENING_STERILITY_LIMIT,
+    FlowControl,
+    LafleurOrchestrator,
+)
 
 
 class TestCalculateMutations(unittest.TestCase):
@@ -397,7 +401,7 @@ class TestExecuteMutationAndAnalysisCycle(unittest.TestCase):
                         self.assertEqual(self.orchestrator.mutations_since_last_find, 2)
 
     def test_stops_deepening_when_sterile(self):
-        """Test that deepening session stops after 30 sterile mutations."""
+        """Test that deepening session stops after DEEPENING_STERILITY_LIMIT sterile mutations."""
         parent_path = Path("/corpus/parent_test.py")
         mock_harness = MagicMock()
         mock_harness.name = "uop_harness_test"
@@ -423,8 +427,11 @@ class TestExecuteMutationAndAnalysisCycle(unittest.TestCase):
 
                         stdout_output = mock_stdout.getvalue()
                         self.assertIn("Deepening session became sterile", stdout_output)
-                        # Should stop after 31 mutations (30 sterile + 1 triggers the check)
-                        self.assertLessEqual(self.orchestrator.run_stats["total_mutations"], 31)
+                        # Should stop after DEEPENING_STERILITY_LIMIT + 1 mutations
+                        self.assertLessEqual(
+                            self.orchestrator.run_stats["total_mutations"],
+                            DEEPENING_STERILITY_LIMIT + 1,
+                        )
 
     def test_uses_dynamic_runs_when_enabled(self):
         """Test that run count is calculated dynamically when use_dynamic_runs=True."""

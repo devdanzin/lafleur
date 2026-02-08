@@ -53,6 +53,12 @@ DIVERGENCES_DIR = Path("divergences")
 LOGS_DIR = Path("logs")
 RUN_LOGS_DIR = LOGS_DIR / "run_logs"
 
+# --- Sterility Thresholds ---
+# Maximum sterile mutations in a deepening session before abandoning the lineage.
+DEEPENING_STERILITY_LIMIT = 30
+# Maximum sterile mutations for a corpus file before marking it permanently sterile.
+CORPUS_STERILITY_LIMIT = 599
+
 
 class LafleurOrchestrator:
     """
@@ -357,7 +363,7 @@ class LafleurOrchestrator:
             parent_metadata["mutations_since_last_find"] = (
                 parent_metadata.get("mutations_since_last_find", 0) + 1
             )
-            if parent_metadata["mutations_since_last_find"] > 599:
+            if parent_metadata["mutations_since_last_find"] > CORPUS_STERILITY_LIMIT:
                 parent_metadata["is_sterile"] = True
             return FlowControl.NONE
 
@@ -460,7 +466,10 @@ class LafleurOrchestrator:
                 self.mutations_since_last_find += 1
                 mutations_since_last_find_in_session += 1
 
-                if is_deepening_session and mutations_since_last_find_in_session > 30:
+                if (
+                    is_deepening_session
+                    and mutations_since_last_find_in_session > DEEPENING_STERILITY_LIMIT
+                ):
                     print(
                         "  [~] Deepening session became sterile. Returning to breadth-first search."
                     )

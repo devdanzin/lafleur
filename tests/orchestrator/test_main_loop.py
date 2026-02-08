@@ -1547,5 +1547,80 @@ class TestMain(unittest.TestCase):
         mock_orch.run_evolutionary_loop.assert_not_called()
 
 
+class TestCheckTimingRegression(unittest.TestCase):
+    """Test _check_timing_regression method."""
+
+    def setUp(self):
+        self.orchestrator = LafleurOrchestrator.__new__(LafleurOrchestrator)
+        self.orchestrator.run_stats = {}
+        self.orchestrator.artifact_manager = MagicMock()
+
+    def test_noop_when_timing_fuzz_disabled(self):
+        """No regression saved when timing_fuzz is False."""
+        self.orchestrator.timing_fuzz = False
+        data = {"jit_avg_time_ms": 200, "nojit_avg_time_ms": 100}
+
+        self.orchestrator._check_timing_regression(data, "child.py", None)
+
+        self.orchestrator.artifact_manager.save_regression.assert_not_called()
+
+    def test_noop_when_timing_data_missing(self):
+        """No regression saved when jit_avg_time_ms is missing."""
+        self.orchestrator.timing_fuzz = True
+        data = {"nojit_avg_time_ms": 100}
+
+        self.orchestrator._check_timing_regression(data, "child.py", None)
+
+        self.orchestrator.artifact_manager.save_regression.assert_not_called()
+
+    def test_noop_when_nojit_time_zero(self):
+        """No division by zero when nojit_time is zero."""
+        self.orchestrator.timing_fuzz = True
+        data = {"jit_avg_time_ms": 200, "nojit_avg_time_ms": 0}
+
+        self.orchestrator._check_timing_regression(data, "child.py", None)
+
+        self.orchestrator.artifact_manager.save_regression.assert_not_called()
+
+    def test_saves_regression_when_slowdown_exceeds_threshold(self):
+        """Regression saved when ratio exceeds default 1.2 threshold."""
+        self.orchestrator.timing_fuzz = True
+        data = {"jit_avg_time_ms": 200, "nojit_avg_time_ms": 100}
+
+        self.orchestrator._check_timing_regression(data, "child.py", None)
+
+        self.orchestrator.artifact_manager.save_regression.assert_called_once()
+        self.assertEqual(self.orchestrator.run_stats["regressions_found"], 1)
+
+    def test_uses_dynamic_threshold_from_nojit_cv(self):
+        """Dynamic threshold from nojit_cv prevents false positive."""
+        self.orchestrator.timing_fuzz = True
+        # nojit_cv=0.1 -> threshold = 1.0 + 3*0.1 = 1.3
+        # ratio = 125/100 = 1.25 < 1.3 -> no regression
+        data = {"jit_avg_time_ms": 125, "nojit_avg_time_ms": 100}
+
+        self.orchestrator._check_timing_regression(data, "child.py", nojit_cv=0.1)
+
+        self.orchestrator.artifact_manager.save_regression.assert_not_called()
+
+        # ratio = 140/100 = 1.4 > 1.3 -> regression
+        data2 = {"jit_avg_time_ms": 140, "nojit_avg_time_ms": 100}
+
+        self.orchestrator._check_timing_regression(data2, "child2.py", nojit_cv=0.1)
+
+        self.orchestrator.artifact_manager.save_regression.assert_called_once()
+        self.assertEqual(self.orchestrator.run_stats["regressions_found"], 1)
+
+    def test_no_regression_when_below_threshold(self):
+        """No regression saved when ratio is below default threshold."""
+        self.orchestrator.timing_fuzz = True
+        # ratio = 105/100 = 1.05 < 1.2
+        data = {"jit_avg_time_ms": 105, "nojit_avg_time_ms": 100}
+
+        self.orchestrator._check_timing_regression(data, "child.py", None)
+
+        self.orchestrator.artifact_manager.save_regression.assert_not_called()
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

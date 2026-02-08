@@ -9,6 +9,7 @@ results for new and interesting JIT behavior.
 
 import argparse
 import ast
+import copy
 import json
 import math
 import os
@@ -114,6 +115,7 @@ class LafleurOrchestrator:
         max_crash_log_size: int = 400,
         target_python: str = sys.executable,
         deepening_probability: float = 0.2,
+        run_stats: dict | None = None,
     ):
         """Initialize the orchestrator and the corpus manager."""
         self.differential_testing = differential_testing
@@ -136,7 +138,7 @@ class LafleurOrchestrator:
         coverage_state = load_coverage_state()
         self.coverage_manager = CoverageManager(coverage_state)
 
-        self.run_stats = load_run_stats()
+        self.run_stats = run_stats if run_stats is not None else load_run_stats()
 
         self.timing_fuzz = timing_fuzz
         self.session_fuzz = session_fuzz
@@ -887,6 +889,7 @@ def main():
             max_crash_log_size=args.max_crash_log_size,
             target_python=args.target_python,
             deepening_probability=args.deepening_probability,
+            run_stats=copy.deepcopy(start_stats),
         )
         if args.prune_corpus:
             orchestrator.corpus_manager.prune_corpus(dry_run=not args.force)

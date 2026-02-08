@@ -501,6 +501,86 @@ class TestExecuteMutationAndAnalysisCycle(unittest.TestCase):
                             )
 
 
+class TestRunStatsKeyErrorWithEmptyStats(unittest.TestCase):
+    """Test that run_stats bare += doesn't raise KeyError on empty stats."""
+
+    def setUp(self):
+        self.orchestrator = LafleurOrchestrator.__new__(LafleurOrchestrator)
+        # Completely empty run_stats — no pre-seeded keys
+        self.orchestrator.run_stats = {}
+        self.orchestrator.coverage_manager = MagicMock()
+        self.orchestrator.coverage_manager.state = {
+            "per_file_coverage": {
+                "parent_test.py": {
+                    "lineage_coverage_profile": {},
+                    "file_size_bytes": 1000,
+                }
+            }
+        }
+        self.orchestrator.mutations_since_last_find = 5
+        self.orchestrator.global_seed_counter = 100
+        self.orchestrator.use_dynamic_runs = False
+        self.orchestrator.base_runs = 1
+        self.orchestrator.keep_tmp_logs = False
+        self.orchestrator.corpus_manager = MagicMock()
+        self.orchestrator.corpus_manager.add_new_file.return_value = "new_child.py"
+        self.orchestrator.corpus_manager.scheduler = MagicMock()
+        self.orchestrator.corpus_manager.scheduler.calculate_scores.return_value = {}
+        self.orchestrator.execution_manager = MagicMock()
+        self.orchestrator.mutation_controller = MagicMock()
+        self.orchestrator.scoring_manager = MagicMock()
+        self.orchestrator.artifact_manager = MagicMock()
+        self.orchestrator.score_tracker = MagicMock()
+        self.orchestrator.timing_fuzz = False
+        self.orchestrator.differential_testing = False
+
+    def test_no_keyerror_on_empty_run_stats_with_new_coverage(self):
+        """Empty run_stats must not raise KeyError when NEW_COVERAGE is found."""
+        parent_path = Path("/corpus/parent_test.py")
+        mock_harness = MagicMock()
+        mock_harness.name = "uop_harness_test"
+        mock_tree = MagicMock()
+
+        mock_exec_result = MagicMock()
+        mock_exec_result.nojit_cv = None
+
+        analysis_data = {
+            "status": "NEW_COVERAGE",
+            "core_code": "x = 1",
+            "baseline_coverage": {},
+            "content_hash": "abc123",
+            "coverage_hash": "def456",
+            "execution_time_ms": 100,
+            "parent_id": "parent_test.py",
+            "mutation_info": {"strategy": "havoc", "transformers": ["t1"]},
+            "mutation_seed": 101,
+        }
+
+        self.orchestrator.mutation_controller._calculate_mutations.return_value = 1
+        self.orchestrator.mutation_controller._get_nodes_from_parent.return_value = (
+            mock_harness,
+            mock_tree,
+            [],
+        )
+        self.orchestrator.mutation_controller.get_mutated_harness.return_value = (
+            mock_harness,
+            {"strategy": "havoc", "transformers": ["t1"]},
+        )
+        self.orchestrator.mutation_controller.prepare_child_script.return_value = "code"
+        self.orchestrator.execution_manager.execute_child.return_value = (mock_exec_result, None)
+        self.orchestrator.scoring_manager.analyze_run.return_value = analysis_data
+
+        with patch("sys.stdout", new_callable=io.StringIO):
+            with patch("sys.stderr", new_callable=io.StringIO):
+                # This must not raise KeyError
+                self.orchestrator.execute_mutation_and_analysis_cycle(parent_path, 100.0, 1, False)
+
+        # Verify counters were set correctly
+        self.assertEqual(self.orchestrator.run_stats["total_mutations"], 1)
+        self.assertEqual(self.orchestrator.run_stats["new_coverage_finds"], 1)
+        self.assertEqual(self.orchestrator.run_stats["sum_of_mutations_per_find"], 6)
+
+
 class TestMain(unittest.TestCase):
     """Test main CLI entry point."""
 

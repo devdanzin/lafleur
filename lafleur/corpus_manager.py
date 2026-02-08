@@ -39,7 +39,6 @@ class CorpusScheduler:
     def __init__(self, coverage_state: CoverageManager):
         """Initialize the scheduler with the current coverage state."""
         self.coverage_state = coverage_state
-        self.global_coverage = coverage_state.state.get("global_coverage", {})
 
     def _calculate_rarity_score(self, file_metadata: dict[str, Any]) -> float:
         """
@@ -48,12 +47,13 @@ class CorpusScheduler:
         """
         rarity_score = 0.0
         baseline_coverage = file_metadata.get("baseline_coverage", {})
+        global_coverage = self.coverage_state.state.get("global_coverage", {})
 
         for harness_data in baseline_coverage.values():
             for edge_tuple in harness_data.get("edges", []):
                 # The score for an edge is the inverse of its global hit count.
                 # We add 1 to the denominator to avoid division by zero.
-                global_hits = self.global_coverage.get("edges", {}).get(edge_tuple, 0)
+                global_hits = global_coverage.get("edges", {}).get(edge_tuple, 0)
                 rarity_score += 1.0 / (global_hits + 1)
         return rarity_score
 

@@ -515,8 +515,9 @@ class CorpusManager:
                     files_to_prune.add(filename_a)
                     prune_reasons[filename_a] = f"subsumed by {filename_b}"
 
-                    meta_b.setdefault("subsumed_children_count", 0)
-                    meta_b["subsumed_children_count"] += 1
+                    if not dry_run:
+                        meta_b.setdefault("subsumed_children_count", 0)
+                        meta_b["subsumed_children_count"] += 1
 
                     # Once a file is marked for pruning, we break the inner loop
                     # and move to the next candidate file.

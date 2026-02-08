@@ -502,6 +502,43 @@ class TestExecuteMutationAndAnalysisCycle(unittest.TestCase):
                                 self.orchestrator.execution_manager.execute_child.call_count, 5
                             )
 
+    def test_no_false_alarm_when_child_source_missing(self):
+        """No output to stdout/stderr when child_source_path doesn't exist during cleanup."""
+        self.orchestrator.keep_tmp_logs = False
+        parent_path = Path("/corpus/parent_test.py")
+        mock_harness = MagicMock()
+        mock_harness.name = "uop_harness_test"
+
+        # prepare_child_script returns None → no source file written
+        with patch.object(
+            self.orchestrator.mutation_controller, "_calculate_mutations", return_value=1
+        ):
+            with patch.object(
+                self.orchestrator.mutation_controller,
+                "_get_nodes_from_parent",
+                return_value=(mock_harness, MagicMock(), []),
+            ):
+                with patch.object(
+                    self.orchestrator.mutation_controller,
+                    "get_mutated_harness",
+                    return_value=(mock_harness, {"strategy": "havoc"}),
+                ):
+                    with patch.object(
+                        self.orchestrator.mutation_controller,
+                        "prepare_child_script",
+                        return_value=None,
+                    ):
+                        with patch("sys.stdout", new_callable=io.StringIO) as mock_stdout:
+                            with patch("sys.stderr", new_callable=io.StringIO) as mock_stderr:
+                                self.orchestrator.execute_mutation_and_analysis_cycle(
+                                    parent_path, 100.0, 1, False
+                                )
+
+                                stdout_output = mock_stdout.getvalue()
+                                stderr_output = mock_stderr.getvalue()
+                                self.assertNotIn("Error deleting", stdout_output)
+                                self.assertNotIn("Error deleting", stderr_output)
+
 
 class TestRunStatsKeyErrorWithEmptyStats(unittest.TestCase):
     """Test that run_stats bare += doesn't raise KeyError on empty stats."""

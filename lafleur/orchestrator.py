@@ -574,8 +574,6 @@ class LafleurOrchestrator:
                     finally:
                         if child_source_path.exists():
                             child_source_path.unlink()
-                        else:
-                            print(f"Error deleting {child_source_path}, file doesn't exist!")
                         self._cleanup_log_file(child_log_path, parent_id, mutation_seed, run_num)
 
                 if found_new_coverage_in_cycle and is_deepening_session:

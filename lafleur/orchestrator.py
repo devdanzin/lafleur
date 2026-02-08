@@ -662,6 +662,77 @@ class LafleurOrchestrator:
                 break
 
 
+def _format_run_header(
+    instance_name: str,
+    run_id: str,
+    orchestrator_log_path: Path,
+    timestamp_iso: str,
+    timeout: int,
+    start_stats: dict,
+) -> str:
+    """Format the informative header printed at the start of a fuzzing run."""
+    return dedent(f"""
+================================================================================
+LAFLEUR FUZZER RUN
+================================================================================
+- Instance Name:     {instance_name}
+- Run ID:            {run_id}
+- Hostname:          {socket.gethostname()}
+- Platform:          {platform.platform()}
+- Process ID:        {os.getpid()}
+- Python Version:    {sys.version.replace(chr(10), " ")}
+- Working Dir:       {Path.cwd()}
+- Log File:          {orchestrator_log_path}
+- Start Time:        {timestamp_iso}
+- Command:           {" ".join(sys.argv)}
+- Script Timeout:    {timeout} seconds
+--------------------------------------------------------------------------------
+Initial Stats:
+{json.dumps(start_stats, indent=4)}
+================================================================================
+
+""")
+
+
+def _format_run_summary(
+    termination_reason: str,
+    run_start_time: datetime,
+    start_stats: dict,
+) -> str:
+    """Format the summary footer printed at the end of a fuzzing run."""
+    end_time = datetime.now()
+    duration = end_time - run_start_time
+    end_stats = load_run_stats()
+
+    mutations_this_run = end_stats.get("total_mutations", 0) - start_stats.get("total_mutations", 0)
+    finds_this_run = end_stats.get("new_coverage_finds", 0) - start_stats.get(
+        "new_coverage_finds", 0
+    )
+    crashes_this_run = end_stats.get("crashes_found", 0) - start_stats.get("crashes_found", 0)
+    duration_secs = duration.total_seconds()
+    exec_per_sec = mutations_this_run / duration_secs if duration_secs > 0 else 0
+
+    header = "\n" + "=" * 80 + "\nFUZZING RUN SUMMARY\n" + "=" * 80
+    body = dedent(f"""
+- Termination:       {termination_reason}
+- End Time:          {end_time.isoformat()}
+- Total Duration:    {str(duration)}
+
+--- Discoveries This Run ---
+- New Coverage:      {finds_this_run}
+- New Crashes:       {crashes_this_run}
+
+--- Performance This Run ---
+- Total Executions: {mutations_this_run}
+- Execs per Second: {exec_per_sec:.2f}
+
+--- Final Campaign Stats ---
+{json.dumps(end_stats, indent=4)}
+================================================================================
+""")
+    return header + body
+
+
 def main():
     """Parse command-line arguments and run the Lafleur Fuzzer Orchestrator."""
     parser = argparse.ArgumentParser(
@@ -780,30 +851,16 @@ def main():
     instance_name = run_metadata["instance_name"]
 
     try:
-        # --- Create and Write the Informative Header ---
-        header = f"""
-================================================================================
-LAFLEUR FUZZER RUN
-================================================================================
-- Instance Name:     {instance_name}
-- Run ID:            {run_id}
-- Hostname:          {socket.gethostname()}
-- Platform:          {platform.platform()}
-- Process ID:        {os.getpid()}
-- Python Version:    {sys.version.replace(chr(10), " ")}
-- Working Dir:       {Path.cwd()}
-- Log File:          {orchestrator_log_path}
-- Start Time:        {timestamp_iso}
-- Command:           {" ".join(sys.argv)}
-- Script Timeout:    {args.timeout} seconds
---------------------------------------------------------------------------------
-Initial Stats:
-{json.dumps(start_stats, indent=4)}
-================================================================================
-
-"""
-        print(dedent(header))
-        # --- End of Header ---
+        print(
+            _format_run_header(
+                instance_name,
+                run_id,
+                orchestrator_log_path,
+                timestamp_iso,
+                args.timeout,
+                start_stats,
+            )
+        )
 
         orchestrator = LafleurOrchestrator(
             fusil_path=args.fusil_path,
@@ -838,43 +895,7 @@ Initial Stats:
 
         traceback.print_exc(file=original_stderr)
     finally:
-        # --- Create and Write the Summary Footer ---
-        print("\n" + "=" * 80)
-        print("FUZZING RUN SUMMARY")
-        print("=" * 80)
-
-        end_time = datetime.now()
-        duration = end_time - run_start_time
-        end_stats = load_run_stats()
-
-        mutations_this_run = end_stats.get("total_mutations", 0) - start_stats.get(
-            "total_mutations", 0
-        )
-        finds_this_run = end_stats.get("new_coverage_finds", 0) - start_stats.get(
-            "new_coverage_finds", 0
-        )
-        crashes_this_run = end_stats.get("crashes_found", 0) - start_stats.get("crashes_found", 0)
-        duration_secs = duration.total_seconds()
-        exec_per_sec = mutations_this_run / duration_secs if duration_secs > 0 else 0
-
-        summary = f"""
-- Termination:       {termination_reason}
-- End Time:          {end_time.isoformat()}
-- Total Duration:    {str(duration)}
-
---- Discoveries This Run ---
-- New Coverage:      {finds_this_run}
-- New Crashes:       {crashes_this_run}
-
---- Performance This Run ---
-- Total Executions: {mutations_this_run}
-- Execs per Second: {exec_per_sec:.2f}
-
---- Final Campaign Stats ---
-{json.dumps(end_stats, indent=4)}
-================================================================================
-"""
-        print(dedent(summary))
+        print(_format_run_summary(termination_reason, run_start_time, start_stats))
 
         # Cleanly close the log file and restore streams.
         tee_logger.close()

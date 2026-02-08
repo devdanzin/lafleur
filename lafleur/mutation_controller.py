@@ -387,10 +387,6 @@ class MutationController:
             s.__name__.replace("_run_", "").replace("_stage", "") for s in strategy_candidates
         ]
 
-        # Record an attempt for each strategy to help with exploration.
-        for name in strategy_names:
-            self.score_tracker.attempts[name] += 1
-
         dynamic_weights = self.score_tracker.get_weights(strategy_names)
 
         # Boost sniper weight if available (simple heuristic for now)
@@ -401,6 +397,10 @@ class MutationController:
             dynamic_weights[sniper_idx] = max(dynamic_weights[sniper_idx], avg_weight * 1.5)
 
         chosen_strategy = random.choices(strategy_candidates, weights=dynamic_weights, k=1)[0]
+
+        # Record the attempt for the chosen strategy only
+        chosen_name = chosen_strategy.__name__.replace("_run_", "").replace("_stage", "")
+        self.score_tracker.attempts[chosen_name] += 1
 
         # The `seed` argument is used by the deterministic stage for its own
         # seeding, and the other stages use the globally seeded RANDOM instance.

@@ -106,25 +106,48 @@ class TestApplyMutationStrategy(unittest.TestCase):
             call_args = mock_choices.call_args
             self.assertEqual(call_args[1]["weights"], [10.0, 1.0, 1.0])
 
-    def test_records_strategy_attempts(self):
-        """Test that strategy attempts are recorded."""
+    def test_records_only_chosen_strategy_attempt(self):
+        """Test that only the chosen strategy has its attempt recorded."""
         code = dedent("""
             def uop_harness_test():
                 x = 1
         """)
         tree = ast.parse(code)
 
-        # Use the default mocks from setUp
         self.controller._run_deterministic_stage = self.mock_det
         self.controller._run_havoc_stage = self.mock_havoc
         self.controller._run_spam_stage = self.mock_spam
 
-        self.controller.apply_mutation_strategy(tree, seed=42)
+        with patch("lafleur.mutation_controller.random.choices") as mock_choices:
+            mock_choices.return_value = [self.mock_havoc]
+            self.controller.apply_mutation_strategy(tree, seed=42)
 
-        # All three strategies should have attempts recorded
-        self.assertIn("deterministic", self.controller.score_tracker.attempts)
-        self.assertIn("havoc", self.controller.score_tracker.attempts)
-        self.assertIn("spam", self.controller.score_tracker.attempts)
+        # Only the chosen strategy should have an attempt recorded
+        self.assertEqual(self.controller.score_tracker.attempts["havoc"], 1)
+        self.assertEqual(self.controller.score_tracker.attempts["deterministic"], 0)
+        self.assertEqual(self.controller.score_tracker.attempts["spam"], 0)
+
+    def test_attempt_counts_accumulate_for_chosen_strategies(self):
+        """Test that attempts only accumulate for actually chosen strategies."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+
+        self.controller._run_deterministic_stage = self.mock_det
+        self.controller._run_havoc_stage = self.mock_havoc
+        self.controller._run_spam_stage = self.mock_spam
+
+        # Call twice, choosing havoc both times
+        with patch("lafleur.mutation_controller.random.choices") as mock_choices:
+            mock_choices.return_value = [self.mock_havoc]
+            self.controller.apply_mutation_strategy(tree, seed=42)
+            self.controller.apply_mutation_strategy(tree, seed=43)
+
+        self.assertEqual(self.controller.score_tracker.attempts["havoc"], 2)
+        self.assertEqual(self.controller.score_tracker.attempts["deterministic"], 0)
+        self.assertEqual(self.controller.score_tracker.attempts["spam"], 0)
 
     def test_sanitizes_ast_after_mutation(self):
         """Test that EmptyBodySanitizer is applied after mutation."""

@@ -319,7 +319,7 @@ class CorpusManager:
         core_code: str,
         baseline_coverage: dict[str, Any],
         execution_time_ms: int,
-        parent_id: int,
+        parent_id: str | None,
         mutation_info: dict[str, Any],
         mutation_seed: int,
         content_hash: str,

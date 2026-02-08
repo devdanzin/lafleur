@@ -197,16 +197,7 @@ class MutationController:
         self, base_ast: ast.AST, seed: int, **kwargs: Any
     ) -> tuple[ast.AST, dict[str, Any]]:
         """Apply a single, seeded, deterministic mutation."""
-        len_harness = (
-            len(base_ast.body) if isinstance(base_ast, (ast.Module, ast.FunctionDef)) else 0
-        )
-        if len_harness > SlicingMutator.MIN_STATEMENTS_FOR_SLICE:
-            return self._run_slicing(base_ast, "deterministic", len_harness, seed=seed)
-
-        print(
-            f"  [~] Running DETERMINISTIC stage ({len_harness} statements)...",
-            file=sys.stderr,
-        )
+        print("  [~] Running DETERMINISTIC stage...", file=sys.stderr)
         mutated_ast, transformers_used = self.ast_mutator.mutate_ast(base_ast, seed=seed)
         mutation_info = {
             "strategy": "deterministic",
@@ -216,16 +207,7 @@ class MutationController:
 
     def _run_havoc_stage(self, base_ast: ast.AST, **kwargs: Any) -> tuple[ast.AST, dict[str, Any]]:
         """Apply a random stack of many different mutations to the AST."""
-        len_harness = (
-            len(base_ast.body) if isinstance(base_ast, (ast.Module, ast.FunctionDef)) else 0
-        )
-        if len_harness > SlicingMutator.MIN_STATEMENTS_FOR_SLICE:
-            return self._run_slicing(base_ast, "havoc", len_harness)
-
-        print(
-            f"  [~] Running HAVOC stage ({len_harness} statements)...",
-            file=sys.stderr,
-        )
+        print("  [~] Running HAVOC stage...", file=sys.stderr)
         tree = base_ast  # Start with the copied tree from the dispatcher
         num_havoc_mutations = RANDOM.randint(15, 50)
         transformers_applied = []
@@ -249,16 +231,7 @@ class MutationController:
 
     def _run_spam_stage(self, base_ast: ast.AST, **kwargs: Any) -> tuple[ast.AST, dict[str, Any]]:
         """Repeatedly apply the same type of mutation to the AST."""
-        len_harness = (
-            len(base_ast.body) if isinstance(base_ast, (ast.Module, ast.FunctionDef)) else 0
-        )
-        if len_harness > SlicingMutator.MIN_STATEMENTS_FOR_SLICE:
-            return self._run_slicing(base_ast, "spam", len_harness)
-
-        print(
-            f"  [~] Running SPAM stage ({len_harness} statements)...",
-            file=sys.stderr,
-        )
+        print("  [~] Running SPAM stage...", file=sys.stderr)
         tree = base_ast
         num_spam_mutations = RANDOM.randint(20, 50)
 
@@ -407,11 +380,23 @@ class MutationController:
         chosen_name = chosen_strategy.__name__.replace("_run_", "").replace("_stage", "")
         self.score_tracker.attempts[chosen_name] += 1
 
-        # The `seed` argument is used by the deterministic stage for its own
-        # seeding, and the other stages use the globally seeded RANDOM instance.
-        mutated_ast, mutation_info = chosen_strategy(
-            tree_copy, seed=seed, watched_keys=watched_keys
+        # Check if the AST is large enough to require slicing
+        len_body = (
+            len(tree_copy.body) if isinstance(tree_copy, (ast.Module, ast.FunctionDef)) else 0
         )
+
+        if len_body > SlicingMutator.MIN_STATEMENTS_FOR_SLICE and chosen_name in (
+            "deterministic",
+            "havoc",
+            "spam",
+        ):
+            mutated_ast, mutation_info = self._run_slicing(
+                tree_copy, chosen_name, len_body, seed=seed
+            )
+        else:
+            mutated_ast, mutation_info = chosen_strategy(
+                tree_copy, seed=seed, watched_keys=watched_keys
+            )
 
         # Always run the sanitizer last to fix any empty bodies.
         sanitizer = EmptyBodySanitizer()

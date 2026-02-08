@@ -222,6 +222,28 @@ class TestApplyMutationStrategy(unittest.TestCase):
         self.assertEqual(ast.dump(result1), ast.dump(result2))
         self.assertEqual(info1["strategy"], info2["strategy"])
 
+    def test_large_ast_routes_through_slicing(self):
+        """Large ASTs are routed through _run_slicing instead of the chosen strategy."""
+        statements = [
+            ast.Assign(targets=[ast.Name(id=f"x{i}")], value=ast.Constant(value=i))
+            for i in range(101)
+        ]
+        tree = ast.Module(body=statements, type_ignores=[])
+
+        self.controller._run_deterministic_stage = self.mock_det
+        self.controller._run_havoc_stage = self.mock_havoc
+        self.controller._run_spam_stage = self.mock_spam
+
+        with patch.object(self.controller, "_run_slicing") as mock_slice:
+            mock_slice.return_value = (tree, {"strategy": "slicing_havoc"})
+            self.controller.apply_mutation_strategy(tree, seed=42)
+
+            mock_slice.assert_called_once()
+            # The stage name should match the chosen strategy
+            call_args = mock_slice.call_args
+            self.assertIn(call_args[0][1], ("deterministic", "havoc", "spam"))
+            self.assertEqual(call_args[0][2], 101)
+
 
 class TestRunDeterministicStage(unittest.TestCase):
     """Test _run_deterministic_stage method."""
@@ -247,26 +269,6 @@ class TestRunDeterministicStage(unittest.TestCase):
 
         self.controller.ast_mutator.mutate_ast.assert_called_once_with(tree, seed=42)
         self.assertEqual(mutation_info["strategy"], "deterministic")
-
-    def test_large_ast_uses_slicing(self):
-        """Test that large ASTs (>100 statements) use slicing."""
-        # Create AST with >100 statements
-        statements = [
-            ast.Assign(targets=[ast.Name(id=f"x{i}")], value=ast.Constant(value=i))
-            for i in range(101)
-        ]
-        tree = ast.Module(body=statements, type_ignores=[])
-
-        with patch.object(self.controller, "_run_slicing") as mock_slice:
-            mock_slice.return_value = (tree, {"strategy": "slicing_deterministic"})
-
-            with patch("sys.stderr", new_callable=io.StringIO):
-                result_ast, mutation_info = self.controller._run_deterministic_stage(tree, seed=42)
-
-            mock_slice.assert_called_once()
-            call_args = mock_slice.call_args[0]
-            self.assertEqual(call_args[1], "deterministic")  # stage_name
-            self.assertEqual(call_args[2], 101)  # len_body
 
     def test_mutation_info_includes_transformers(self):
         """Test that mutation info includes transformer names."""
@@ -337,23 +339,6 @@ class TestRunHavocStage(unittest.TestCase):
 
         # Should have applied 20 transformations
         self.assertEqual(len(mutation_info["transformers"]), 20)
-
-    def test_large_ast_uses_slicing(self):
-        """Test that large ASTs use slicing."""
-        statements = [
-            ast.Assign(targets=[ast.Name(id=f"x{i}")], value=ast.Constant(value=i))
-            for i in range(101)
-        ]
-        tree = ast.Module(body=statements, type_ignores=[])
-
-        with patch.object(self.controller, "_run_slicing") as mock_slice:
-            mock_slice.return_value = (tree, {"strategy": "slicing_havoc"})
-
-            with patch("sys.stderr", new_callable=io.StringIO):
-                result_ast, mutation_info = self.controller._run_havoc_stage(tree)
-
-            mock_slice.assert_called_once()
-            self.assertEqual(mock_slice.call_args[0][1], "havoc")
 
     def test_uses_dynamic_weights(self):
         """Test that havoc uses dynamic weights for selection."""
@@ -465,23 +450,6 @@ class TestRunSpamStage(unittest.TestCase):
         # Should have 25 of the same transformer
         self.assertEqual(len(mutation_info["transformers"]), 25)
         self.assertTrue(all(t == "SpamTransformer" for t in mutation_info["transformers"]))
-
-    def test_large_ast_uses_slicing(self):
-        """Test that large ASTs use slicing."""
-        statements = [
-            ast.Assign(targets=[ast.Name(id=f"x{i}")], value=ast.Constant(value=i))
-            for i in range(101)
-        ]
-        tree = ast.Module(body=statements, type_ignores=[])
-
-        with patch.object(self.controller, "_run_slicing") as mock_slice:
-            mock_slice.return_value = (tree, {"strategy": "slicing_spam"})
-
-            with patch("sys.stderr", new_callable=io.StringIO):
-                result_ast, mutation_info = self.controller._run_spam_stage(tree)
-
-            mock_slice.assert_called_once()
-            self.assertEqual(mock_slice.call_args[0][1], "spam")
 
     def test_chooses_one_transformer_with_weights(self):
         """Test that spam chooses ONE transformer using weights."""

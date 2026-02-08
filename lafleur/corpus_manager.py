@@ -26,6 +26,18 @@ CORPUS_DIR = Path("corpus") / "jit_interesting_tests"
 class CorpusScheduler:
     """Calculate a "fuzzing score" for each item in the corpus."""
 
+    # --- Scoring weight constants ---
+    BASE_SCORE = 100.0
+    TIME_PENALTY_WEIGHT = 0.1
+    SIZE_PENALTY_WEIGHT = 0.01
+    RARITY_BONUS_WEIGHT = 50.0
+    FERTILITY_BONUS_WEIGHT = 20.0
+    STERILITY_PENALTY_FACTOR = 0.1
+    DEPTH_BONUS_WEIGHT = 5.0
+    TRACE_LENGTH_BONUS_WEIGHT = 0.2
+    SIDE_EXIT_BONUS_WEIGHT = 5.0
+    MIN_SCORE = 1.0
+
     def __init__(self, coverage_state: CoverageManager):
         """Initialize the scheduler with the current coverage state."""
         self.coverage_state = coverage_state
@@ -51,29 +63,23 @@ class CorpusScheduler:
         """Iterate through the corpus and calculate a score for each file."""
         scores = {}
         for filename, metadata in self.coverage_state.state.get("per_file_coverage", {}).items():
-            # Start with a base score
-            score = 100.0
+            score = self.BASE_SCORE
 
             # --- Heuristic 1: Performance (lower is better) ---
-            # Penalize slow and large files.
-            score -= metadata.get("execution_time_ms", 100) * 0.1
-            score -= metadata.get("file_size_bytes", 1000) * 0.01
+            score -= metadata.get("execution_time_ms", 100) * self.TIME_PENALTY_WEIGHT
+            score -= metadata.get("file_size_bytes", 1000) * self.SIZE_PENALTY_WEIGHT
 
             # --- Heuristic 2: Rarity (higher is better) ---
-            # Reward files that contain globally rare coverage.
             rarity = self._calculate_rarity_score(metadata)
-            score += rarity * 50.0
+            score += rarity * self.RARITY_BONUS_WEIGHT
 
             # --- Heuristic 3: Fertility (higher is better) ---
-            # Reward parents that have produced successful children.
-            score += metadata.get("total_finds", 0) * 20.0
-            # Heavily penalize sterile parents that haven't found anything new in a long time.
+            score += metadata.get("total_finds", 0) * self.FERTILITY_BONUS_WEIGHT
             if metadata.get("is_sterile", False):
-                score *= 0.1
+                score *= self.STERILITY_PENALTY_FACTOR
 
             # --- Heuristic 4: Depth (higher is better) ---
-            # Slightly reward deeper mutation chains to encourage depth exploration.
-            score += metadata.get("lineage_depth", 1) * 5.0
+            score += metadata.get("lineage_depth", 1) * self.DEPTH_BONUS_WEIGHT
 
             total_trace_length = 0
             total_side_exits = 0
@@ -82,14 +88,11 @@ class CorpusScheduler:
                 total_trace_length += harness_data.get("trace_length", 0)
                 total_side_exits += harness_data.get("side_exits", 0)
 
-            # Reward files that produce long, optimized traces.
-            score += total_trace_length * 0.2
+            # --- Heuristic 5: Trace quality (higher is better) ---
+            score += total_trace_length * self.TRACE_LENGTH_BONUS_WEIGHT
+            score += total_side_exits * self.SIDE_EXIT_BONUS_WEIGHT
 
-            # Strongly reward files that explore many different side exits.
-            score += total_side_exits * 5.0
-
-            # Ensure score is non-negative
-            scores[filename] = max(1.0, score)
+            scores[filename] = max(self.MIN_SCORE, score)
 
         return scores
 

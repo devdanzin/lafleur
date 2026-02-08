@@ -13,7 +13,6 @@ import copy
 import math
 import random
 import sys
-from collections import defaultdict
 from pathlib import Path
 from textwrap import dedent
 from typing import TYPE_CHECKING, Any, Callable, cast
@@ -24,7 +23,6 @@ from lafleur.mutators import (
     FuzzerSetupNormalizer,
     HarnessInstrumentor,
     SlicingMutator,
-    VariableRenamer,
 )
 from lafleur.mutators.sniper import SniperMutator
 from lafleur.mutators.helper_injection import HelperFunctionInjector
@@ -283,109 +281,6 @@ class MutationController:
             "transformers": [chosen_transformer_class.__name__] * num_spam_mutations,
         }
         return tree, mutation_info
-
-    def _analyze_setup_ast(self, setup_nodes: list[ast.stmt]) -> dict[str, str]:
-        """Analyze setup AST nodes to map variable names to their inferred types."""
-        variable_map = {}
-        for node in setup_nodes:
-            # We are interested in simple, top-level assignments
-            if isinstance(node, ast.Assign) and len(node.targets) == 1:
-                target = node.targets[0]
-                if isinstance(target, ast.Name):
-                    var_name = target.id
-                    # Infer type from prefix, e.g., "int_v1" -> "int"
-                    # This is robust to names that don't have a version suffix.
-                    parts = var_name.split("_v")
-                    inferred_type = parts[0]
-                    variable_map[var_name] = inferred_type
-        return variable_map
-
-    def _run_splicing_stage(
-        self, base_core_ast: ast.AST | list[ast.stmt], **kwargs: Any
-    ) -> ast.AST | list[ast.stmt]:
-        """Perform a crossover by splicing the harness from a second parent."""
-        print("  [~] Attempting SPLICING stage...", file=sys.stderr)
-
-        if self.corpus_manager is None:
-            print("  [!] Splicing unavailable: no corpus_manager set.", file=sys.stderr)
-            return base_core_ast
-
-        # Handle both Module and list inputs
-        if isinstance(base_core_ast, ast.Module):
-            base_body = base_core_ast.body
-        elif isinstance(base_core_ast, list):
-            base_body = base_core_ast
-        else:
-            return base_core_ast
-
-        selection = self.corpus_manager.select_parent()
-        if not selection:
-            return base_core_ast
-        parent_b_path, _ = selection
-
-        try:
-            parent_b_source = parent_b_path.read_text()
-            parent_b_core_code = self._get_core_code(parent_b_source)
-            parent_b_tree = ast.parse(parent_b_core_code)
-        except (IOError, SyntaxError):
-            return base_core_ast
-
-        # --- Analysis ---
-        setup_nodes_a = [n for n in base_body if not isinstance(n, ast.FunctionDef)]
-        provided_vars_a = self._analyze_setup_ast(setup_nodes_a)
-
-        setup_nodes_b = [n for n in parent_b_tree.body if not isinstance(n, ast.FunctionDef)]
-        provided_vars_b = self._analyze_setup_ast(setup_nodes_b)
-
-        harness_b = next((n for n in parent_b_tree.body if isinstance(n, ast.FunctionDef)), None)
-        if not harness_b:
-            return base_core_ast
-
-        required_vars = {
-            node.id
-            for node in ast.walk(harness_b)
-            if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load)
-        }
-
-        # --- Phase 2: Remapping Logic ---
-        remapping_dict = {}
-        is_possible = True
-        available_vars_a = defaultdict(list)
-        for name, type_name in provided_vars_a.items():
-            available_vars_a[type_name].append(name)
-
-        for required_var in sorted(list(required_vars)):
-            required_type = provided_vars_b.get(required_var)
-            if not required_type:
-                continue
-
-            if available_vars_a.get(required_type):
-                compatible_var = RANDOM.choice(available_vars_a[required_type])
-                remapping_dict[required_var] = compatible_var
-                available_vars_a[required_type].remove(compatible_var)
-            else:
-                print(
-                    f"    -> Splice failed: No var of type '{required_type}' for '{required_var}'",
-                    file=sys.stderr,
-                )
-                is_possible = False
-                break
-
-        if not is_possible:
-            return base_core_ast
-
-        print(f"    -> Remapping successful: {remapping_dict}")
-
-        # --- Phase 3: Transformation and Assembly ---
-        renamer = VariableRenamer(remapping_dict)
-        remapped_harness_b = renamer.visit(copy.deepcopy(harness_b))
-
-        # The new core AST consists of Parent A's setup and the remapped Harness B
-        new_core_body = setup_nodes_a + [remapped_harness_b]
-        new_core_ast = ast.Module(body=new_core_body, type_ignores=[])
-        ast.fix_missing_locations(new_core_ast)
-
-        return new_core_ast
 
     def _run_sniper_stage(
         self, base_ast: ast.AST, seed: int, watched_keys: list[str] | None = None, **kwargs: Any

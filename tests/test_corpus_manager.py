@@ -210,6 +210,119 @@ class TestCorpusScheduler(unittest.TestCase):
         self.assertGreater(scores["long.py"], scores["short.py"])
 
 
+class TestCorpusSchedulerCaching(unittest.TestCase):
+    """Tests for CorpusScheduler score caching."""
+
+    def setUp(self):
+        self.state = {
+            "global_coverage": {"edges": {0: 1}, "uops": {}, "rare_events": {}},
+            "per_file_coverage": {
+                "test1.py": {
+                    "baseline_coverage": {"f1": {"edges": [0]}},
+                    "execution_time_ms": 50,
+                    "file_size_bytes": 500,
+                    "total_finds": 0,
+                    "lineage_depth": 1,
+                },
+            },
+        }
+        self.coverage_manager = CoverageManager(self.state)
+
+    def test_cache_starts_empty(self):
+        """A fresh CorpusScheduler should have no cached scores."""
+        scheduler = CorpusScheduler(self.coverage_manager)
+        self.assertIsNone(scheduler._cached_scores)
+
+    def test_calculate_scores_returns_cached_results(self):
+        """Second call to calculate_scores should return the same dict object."""
+        scheduler = CorpusScheduler(self.coverage_manager)
+        first = scheduler.calculate_scores()
+        second = scheduler.calculate_scores()
+        self.assertIs(first, second)
+
+    def test_invalidate_clears_cache(self):
+        """invalidate_scores should force a fresh recomputation."""
+        scheduler = CorpusScheduler(self.coverage_manager)
+        first = scheduler.calculate_scores()
+        scheduler.invalidate_scores()
+        second = scheduler.calculate_scores()
+        self.assertIsNot(first, second)
+        self.assertEqual(first, second)
+
+    def test_add_new_file_invalidates_cache(self):
+        """add_new_file should clear the score cache."""
+        run_stats = {"corpus_file_counter": 0}
+        with patch("lafleur.corpus_manager.CORPUS_DIR"), patch("lafleur.corpus_manager.TMP_DIR"):
+            corpus_manager = CorpusManager(
+                coverage_state=self.coverage_manager,
+                run_stats=run_stats,
+                fusil_path="",
+                get_boilerplate_func=lambda: "",
+                execution_timeout=10,
+            )
+
+        # Populate the cache
+        with patch("lafleur.corpus_manager.CORPUS_DIR") as mock_dir:
+            mock_dir.__truediv__ = lambda self, x: Path("/mock") / x
+            corpus_manager.select_parent()
+
+        self.assertIsNotNone(corpus_manager.scheduler._cached_scores)
+
+        # add_new_file should invalidate
+        tmp = tempfile.mkdtemp()
+        with (
+            patch("lafleur.corpus_manager.CORPUS_DIR", Path(tmp)),
+            patch("lafleur.corpus_manager.save_coverage_state"),
+        ):
+            corpus_manager.add_new_file(
+                core_code="x = 1",
+                baseline_coverage={},
+                execution_time_ms=10,
+                parent_id=None,
+                mutation_info={"strategy": "test"},
+                mutation_seed=0,
+                content_hash="abc",
+                coverage_hash="def",
+                build_lineage_func=lambda old, new: {},
+            )
+
+        self.assertIsNone(corpus_manager.scheduler._cached_scores)
+
+    def test_select_parent_uses_cached_scores(self):
+        """Second select_parent call should use cached scores, not recompute."""
+        scheduler = CorpusScheduler(self.coverage_manager)
+        rarity_call_count = 0
+        original_rarity = scheduler._calculate_rarity_score
+
+        def counting_rarity(metadata):
+            nonlocal rarity_call_count
+            rarity_call_count += 1
+            return original_rarity(metadata)
+
+        scheduler._calculate_rarity_score = counting_rarity
+
+        run_stats = {"corpus_file_counter": 0}
+        with patch("lafleur.corpus_manager.CORPUS_DIR"), patch("lafleur.corpus_manager.TMP_DIR"):
+            corpus_manager = CorpusManager(
+                coverage_state=self.coverage_manager,
+                run_stats=run_stats,
+                fusil_path="",
+                get_boilerplate_func=lambda: "",
+                execution_timeout=10,
+            )
+        corpus_manager.scheduler = scheduler
+
+        with patch("lafleur.corpus_manager.CORPUS_DIR") as mock_dir:
+            mock_dir.__truediv__ = lambda self, x: Path("/mock") / x
+            corpus_manager.select_parent()
+            first_count = rarity_call_count
+            corpus_manager.select_parent()
+
+        # Rarity should only be computed on first call (1 file = 1 call)
+        self.assertEqual(first_count, 1)
+        self.assertEqual(rarity_call_count, 1)
+
+
 class TestCorpusManager(unittest.TestCase):
     """Test the CorpusManager class."""
 

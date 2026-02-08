@@ -128,12 +128,9 @@ class LafleurOrchestrator:
                 f"deepening_probability must be between 0.0 and 1.0, got {deepening_probability}"
             )
         self.deepening_probability = deepening_probability
-        self.ast_mutator = ASTMutator()
-        self.timeout = timeout
-        self.max_timeout_log_bytes = max_timeout_log_size * 1024 * 1024
-        self.max_crash_log_bytes = max_crash_log_size * 1024 * 1024
-
-        self.target_python = target_python
+        ast_mutator = ASTMutator()
+        max_timeout_log_bytes = max_timeout_log_size * 1024 * 1024
+        max_crash_log_bytes = max_crash_log_size * 1024 * 1024
 
         coverage_state = load_coverage_state()
         self.coverage_manager = CoverageManager(coverage_state)
@@ -141,13 +138,12 @@ class LafleurOrchestrator:
         self.run_stats = run_stats if run_stats is not None else load_run_stats()
 
         self.timing_fuzz = timing_fuzz
-        self.session_fuzz = session_fuzz
-        self.score_tracker = MutatorScoreTracker(self.ast_mutator.transformers)
+        self.score_tracker = MutatorScoreTracker(ast_mutator.transformers)
 
         # Initialize the mutation controller for managing mutation strategies
         # Note: corpus_manager is set to a placeholder and updated after CorpusManager init
         self.mutation_controller = MutationController(
-            ast_mutator=self.ast_mutator,
+            ast_mutator=ast_mutator,
             score_tracker=self.score_tracker,
             corpus_manager=None,  # type: ignore[arg-type]  # Set after CorpusManager init
             differential_testing=differential_testing,
@@ -159,14 +155,14 @@ class LafleurOrchestrator:
             self.run_stats,
             fusil_path,
             self.mutation_controller.get_boilerplate,
-            self.timeout,
+            timeout,
             target_python=target_python,
         )
 
         # Now set the corpus_manager reference in mutation_controller
         self.mutation_controller.corpus_manager = self.corpus_manager
 
-        self.fingerprinter = CrashFingerprinter()
+        fingerprinter = CrashFingerprinter()
 
         # Ensure temporary and log directories exist first (needed for timeseries path)
         TMP_DIR.mkdir(exist_ok=True)
@@ -189,10 +185,10 @@ class LafleurOrchestrator:
             timeouts_dir=TIMEOUTS_DIR,
             divergences_dir=DIVERGENCES_DIR,
             regressions_dir=REGRESSIONS_DIR,
-            fingerprinter=self.fingerprinter,
-            max_timeout_log_bytes=self.max_timeout_log_bytes,
-            max_crash_log_bytes=self.max_crash_log_bytes,
-            session_fuzz=self.session_fuzz,
+            fingerprinter=fingerprinter,
+            max_timeout_log_bytes=max_timeout_log_bytes,
+            max_crash_log_bytes=max_crash_log_bytes,
+            session_fuzz=session_fuzz,
             run_stats=self.run_stats,
             coverage_manager=self.coverage_manager,
             corpus_manager=self.corpus_manager,

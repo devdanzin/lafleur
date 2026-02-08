@@ -108,7 +108,6 @@ class InterestingnessScorer:
 
         # --- JIT Vitals Scoring ---
         zombie_traces = self.jit_stats.get("zombie_traces", 0)
-        # max_exit_count = self.jit_stats.get("max_exit_count", 0) # Superseded by density
         max_chain_depth = self.jit_stats.get("max_chain_depth", 0)
         min_code_size = self.jit_stats.get("min_code_size", 0)  # Less critical
 

@@ -42,8 +42,8 @@ class TestApplyMutationStrategy(unittest.TestCase):
         self.mock_spam = MagicMock(return_value=(dummy_tree, {"strategy": "spam"}))
         self.mock_spam.__name__ = "_run_spam_stage"
 
-    def test_seeds_random_generators(self):
-        """Test that RNG is seeded correctly."""
+    def test_seeds_random_generator(self):
+        """Test that the dedicated RNG is seeded correctly."""
         code = dedent("""
             def uop_harness_test():
                 x = 1
@@ -55,11 +55,9 @@ class TestApplyMutationStrategy(unittest.TestCase):
         self.controller._run_spam_stage = self.mock_spam
 
         with patch("lafleur.mutation_controller.RANDOM.seed") as mock_random_seed:
-            with patch("lafleur.mutation_controller.random.seed") as mock_rand_seed:
-                self.controller.apply_mutation_strategy(tree, seed=12345)
+            self.controller.apply_mutation_strategy(tree, seed=12345)
 
-                mock_random_seed.assert_called_with(12345)
-                mock_rand_seed.assert_called_with(12345)
+            mock_random_seed.assert_called_with(12345)
 
     def test_normalizes_ast_before_mutation(self):
         """Test that FuzzerSetupNormalizer is applied."""
@@ -96,7 +94,7 @@ class TestApplyMutationStrategy(unittest.TestCase):
         self.controller._run_spam_stage = self.mock_spam
         self.controller.score_tracker.get_weights.return_value = [10.0, 1.0, 1.0]
 
-        with patch("lafleur.mutation_controller.random.choices") as mock_choices:
+        with patch("lafleur.mutation_controller.RANDOM.choices") as mock_choices:
             mock_choices.return_value = [self.mock_det]
 
             self.controller.apply_mutation_strategy(tree, seed=42)
@@ -118,7 +116,7 @@ class TestApplyMutationStrategy(unittest.TestCase):
         self.controller._run_havoc_stage = self.mock_havoc
         self.controller._run_spam_stage = self.mock_spam
 
-        with patch("lafleur.mutation_controller.random.choices") as mock_choices:
+        with patch("lafleur.mutation_controller.RANDOM.choices") as mock_choices:
             mock_choices.return_value = [self.mock_havoc]
             self.controller.apply_mutation_strategy(tree, seed=42)
 
@@ -140,7 +138,7 @@ class TestApplyMutationStrategy(unittest.TestCase):
         self.controller._run_spam_stage = self.mock_spam
 
         # Call twice, choosing havoc both times
-        with patch("lafleur.mutation_controller.random.choices") as mock_choices:
+        with patch("lafleur.mutation_controller.RANDOM.choices") as mock_choices:
             mock_choices.return_value = [self.mock_havoc]
             self.controller.apply_mutation_strategy(tree, seed=42)
             self.controller.apply_mutation_strategy(tree, seed=43)
@@ -204,6 +202,25 @@ class TestApplyMutationStrategy(unittest.TestCase):
         self.assertIsInstance(result_ast, ast.AST)
         self.assertIsInstance(result_info, dict)
         self.assertIn("strategy", result_info)
+
+    def test_reproducibility_with_same_seed(self):
+        """Calling apply_mutation_strategy twice with the same seed produces identical ASTs."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+                y = x + 2
+        """)
+        tree = ast.parse(code)
+
+        self.controller._run_deterministic_stage = self.mock_det
+        self.controller._run_havoc_stage = self.mock_havoc
+        self.controller._run_spam_stage = self.mock_spam
+
+        result1, info1 = self.controller.apply_mutation_strategy(tree, seed=99999)
+        result2, info2 = self.controller.apply_mutation_strategy(tree, seed=99999)
+
+        self.assertEqual(ast.dump(result1), ast.dump(result2))
+        self.assertEqual(info1["strategy"], info2["strategy"])
 
 
 class TestRunDeterministicStage(unittest.TestCase):
@@ -313,7 +330,7 @@ class TestRunHavocStage(unittest.TestCase):
 
         with patch("lafleur.mutation_controller.RANDOM.randint", return_value=20):
             with patch(
-                "lafleur.mutation_controller.random.choices", return_value=[self.mock_transformer]
+                "lafleur.mutation_controller.RANDOM.choices", return_value=[self.mock_transformer]
             ):
                 with patch("sys.stderr", new_callable=io.StringIO):
                     _, mutation_info = self.controller._run_havoc_stage(tree)
@@ -349,7 +366,7 @@ class TestRunHavocStage(unittest.TestCase):
         self.controller.score_tracker.get_weights.return_value = [5.0]
 
         with patch("lafleur.mutation_controller.RANDOM.randint", return_value=1):
-            with patch("lafleur.mutation_controller.random.choices") as mock_choices:
+            with patch("lafleur.mutation_controller.RANDOM.choices") as mock_choices:
                 mock_choices.return_value = [self.mock_transformer]
 
                 with patch("sys.stderr", new_callable=io.StringIO):
@@ -369,7 +386,7 @@ class TestRunHavocStage(unittest.TestCase):
 
         with patch("lafleur.mutation_controller.RANDOM.randint", return_value=3):
             with patch(
-                "lafleur.mutation_controller.random.choices", return_value=[self.mock_transformer]
+                "lafleur.mutation_controller.RANDOM.choices", return_value=[self.mock_transformer]
             ):
                 with patch("sys.stderr", new_callable=io.StringIO):
                     self.controller._run_havoc_stage(tree)
@@ -387,7 +404,7 @@ class TestRunHavocStage(unittest.TestCase):
 
         with patch("lafleur.mutation_controller.RANDOM.randint", return_value=1):
             with patch(
-                "lafleur.mutation_controller.random.choices", return_value=[self.mock_transformer]
+                "lafleur.mutation_controller.RANDOM.choices", return_value=[self.mock_transformer]
             ):
                 with patch("sys.stderr", new_callable=io.StringIO):
                     _, mutation_info = self.controller._run_havoc_stage(tree)
@@ -404,7 +421,7 @@ class TestRunHavocStage(unittest.TestCase):
 
         with patch("lafleur.mutation_controller.RANDOM.randint", return_value=1):
             with patch(
-                "lafleur.mutation_controller.random.choices", return_value=[self.mock_transformer]
+                "lafleur.mutation_controller.RANDOM.choices", return_value=[self.mock_transformer]
             ):
                 with patch("sys.stderr", new_callable=io.StringIO) as mock_stderr:
                     self.controller._run_havoc_stage(tree)
@@ -440,7 +457,7 @@ class TestRunSpamStage(unittest.TestCase):
 
         with patch("lafleur.mutation_controller.RANDOM.randint", return_value=25):
             with patch(
-                "lafleur.mutation_controller.random.choices", return_value=[self.mock_transformer]
+                "lafleur.mutation_controller.RANDOM.choices", return_value=[self.mock_transformer]
             ):
                 with patch("sys.stderr", new_callable=io.StringIO):
                     _, mutation_info = self.controller._run_spam_stage(tree)
@@ -477,7 +494,7 @@ class TestRunSpamStage(unittest.TestCase):
         self.controller.score_tracker.get_weights.return_value = [10.0]
 
         with patch("lafleur.mutation_controller.RANDOM.randint", return_value=1):
-            with patch("lafleur.mutation_controller.random.choices") as mock_choices:
+            with patch("lafleur.mutation_controller.RANDOM.choices") as mock_choices:
                 mock_choices.return_value = [self.mock_transformer]
 
                 with patch("sys.stderr", new_callable=io.StringIO):
@@ -498,7 +515,7 @@ class TestRunSpamStage(unittest.TestCase):
 
         with patch("lafleur.mutation_controller.RANDOM.randint", return_value=1):
             with patch(
-                "lafleur.mutation_controller.random.choices", return_value=[self.mock_transformer]
+                "lafleur.mutation_controller.RANDOM.choices", return_value=[self.mock_transformer]
             ):
                 with patch("sys.stderr", new_callable=io.StringIO) as mock_stderr:
                     self.controller._run_spam_stage(tree)
@@ -517,7 +534,7 @@ class TestRunSpamStage(unittest.TestCase):
 
         with patch("lafleur.mutation_controller.RANDOM.randint", return_value=1):
             with patch(
-                "lafleur.mutation_controller.random.choices", return_value=[self.mock_transformer]
+                "lafleur.mutation_controller.RANDOM.choices", return_value=[self.mock_transformer]
             ):
                 with patch("sys.stderr", new_callable=io.StringIO):
                     _, mutation_info = self.controller._run_spam_stage(tree)
@@ -555,7 +572,7 @@ class TestRunSniperStage(unittest.TestCase):
         """When watched_keys is empty, strategy should be 'sniper_fallback', not 'havoc'."""
         with patch("lafleur.mutation_controller.RANDOM.randint", return_value=1):
             with patch(
-                "lafleur.mutation_controller.random.choices",
+                "lafleur.mutation_controller.RANDOM.choices",
                 return_value=[self.mock_transformer],
             ):
                 with patch("sys.stderr", new_callable=io.StringIO):
@@ -569,7 +586,7 @@ class TestRunSniperStage(unittest.TestCase):
         """When watched_keys is None, strategy should be 'sniper_fallback'."""
         with patch("lafleur.mutation_controller.RANDOM.randint", return_value=1):
             with patch(
-                "lafleur.mutation_controller.random.choices",
+                "lafleur.mutation_controller.RANDOM.choices",
                 return_value=[self.mock_transformer],
             ):
                 with patch("sys.stderr", new_callable=io.StringIO):
@@ -625,7 +642,7 @@ class TestRunHelperSniperStage(unittest.TestCase):
 
             with patch("lafleur.mutation_controller.RANDOM.randint", return_value=1):
                 with patch(
-                    "lafleur.mutation_controller.random.choices",
+                    "lafleur.mutation_controller.RANDOM.choices",
                     return_value=[self.mock_transformer],
                 ):
                     with patch("sys.stderr", new_callable=io.StringIO):
@@ -675,10 +692,10 @@ class TestRunSlicing(unittest.TestCase):
         """)
         tree = ast.parse(code)
 
-        with patch("lafleur.mutation_controller.random.seed") as mock_seed:
-            with patch("lafleur.mutation_controller.random.randint", return_value=2):
+        with patch("lafleur.mutation_controller.RANDOM.seed") as mock_seed:
+            with patch("lafleur.mutation_controller.RANDOM.randint", return_value=2):
                 with patch(
-                    "lafleur.mutation_controller.random.choices",
+                    "lafleur.mutation_controller.RANDOM.choices",
                     return_value=[self.mock_transformer],
                 ):
                     with patch("lafleur.mutation_controller.SlicingMutator") as mock_slicer:
@@ -697,9 +714,9 @@ class TestRunSlicing(unittest.TestCase):
         """)
         tree = ast.parse(code)
 
-        with patch("lafleur.mutation_controller.random.randint", return_value=2) as mock_randint:
+        with patch("lafleur.mutation_controller.RANDOM.randint", return_value=2) as mock_randint:
             with patch(
-                "lafleur.mutation_controller.random.choices",
+                "lafleur.mutation_controller.RANDOM.choices",
                 return_value=[self.mock_transformer, self.mock_transformer],
             ):
                 with patch("lafleur.mutation_controller.SlicingMutator") as mock_slicer:
@@ -721,9 +738,9 @@ class TestRunSlicing(unittest.TestCase):
         """)
         tree = ast.parse(code)
 
-        with patch("lafleur.mutation_controller.random.randint", return_value=30):
+        with patch("lafleur.mutation_controller.RANDOM.randint", return_value=30):
             with patch(
-                "lafleur.mutation_controller.random.choices", return_value=[self.mock_transformer]
+                "lafleur.mutation_controller.RANDOM.choices", return_value=[self.mock_transformer]
             ):
                 with patch("lafleur.mutation_controller.SlicingMutator") as mock_slicer:
                     mock_instance = MagicMock()
@@ -745,8 +762,8 @@ class TestRunSlicing(unittest.TestCase):
         """)
         tree = ast.parse(code)
 
-        with patch("lafleur.mutation_controller.random.randint", return_value=25):
-            with patch("lafleur.mutation_controller.random.choices") as mock_choices:
+        with patch("lafleur.mutation_controller.RANDOM.randint", return_value=25):
+            with patch("lafleur.mutation_controller.RANDOM.choices") as mock_choices:
                 mock_choices.return_value = [self.mock_transformer] * 25
 
                 with patch("lafleur.mutation_controller.SlicingMutator") as mock_slicer:
@@ -768,9 +785,9 @@ class TestRunSlicing(unittest.TestCase):
         """)
         tree = ast.parse(code)
 
-        with patch("lafleur.mutation_controller.random.randint", return_value=1):
+        with patch("lafleur.mutation_controller.RANDOM.randint", return_value=1):
             with patch(
-                "lafleur.mutation_controller.random.choices", return_value=[self.mock_transformer]
+                "lafleur.mutation_controller.RANDOM.choices", return_value=[self.mock_transformer]
             ):
                 with patch("lafleur.mutation_controller.SlicingMutator") as mock_slicer:
                     mock_slicer.return_value.visit.return_value = tree
@@ -789,9 +806,9 @@ class TestRunSlicing(unittest.TestCase):
         """)
         tree = ast.parse(code)
 
-        with patch("lafleur.mutation_controller.random.randint", return_value=1):
+        with patch("lafleur.mutation_controller.RANDOM.randint", return_value=1):
             with patch(
-                "lafleur.mutation_controller.random.choices", return_value=[self.mock_transformer]
+                "lafleur.mutation_controller.RANDOM.choices", return_value=[self.mock_transformer]
             ):
                 with patch("lafleur.mutation_controller.SlicingMutator") as mock_slicer:
                     mock_slicer.return_value.visit.return_value = tree

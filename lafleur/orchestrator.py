@@ -285,9 +285,11 @@ class LafleurOrchestrator:
                     print(f"[*] Logging time-series data point at session {session_num}...")
                     self.artifact_manager.log_timeseries_datapoint()
         finally:
+            # Crash-safety: save stats even if interrupted mid-session.
+            # The per-session save above handles the normal case.
             print("\n[+] Fuzzing loop terminating. Saving final stats...")
             self.artifact_manager.update_and_save_run_stats(self.global_seed_counter)
-            self.artifact_manager.log_timeseries_datapoint()  # Log one final data point on exit
+            self.artifact_manager.log_timeseries_datapoint()
 
             self.score_tracker.save_state()
 
@@ -406,8 +408,6 @@ class LafleurOrchestrator:
         current_parent_path = initial_parent_path
         current_parent_score = initial_parent_score
         mutations_since_last_find_in_session = 0
-        new_finds_this_session = 0
-
         mutation_id = 0
 
         # --- This loop controls the deepening process ---
@@ -546,16 +546,6 @@ class LafleurOrchestrator:
                                     parent_metadata.get("total_finds", 0) + 1
                                 )
                                 parent_metadata["mutations_since_last_find"] = 0
-                                self.artifact_manager.update_and_save_run_stats(
-                                    self.global_seed_counter
-                                )
-
-                                new_finds_this_session += 1
-                                if new_finds_this_session % 10 == 0:
-                                    print(
-                                        f"[*] Logging time-series data point after {new_finds_this_session} finds in this session."
-                                    )
-                                    self.artifact_manager.log_timeseries_datapoint()
 
                                 if is_deepening_session:
                                     new_child_filename = analysis_data["new_filename"]

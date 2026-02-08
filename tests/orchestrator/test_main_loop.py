@@ -619,6 +619,50 @@ class TestRunStatsKeyErrorWithEmptyStats(unittest.TestCase):
         self.assertEqual(self.orchestrator.run_stats["new_coverage_finds"], 1)
         self.assertEqual(self.orchestrator.run_stats["sum_of_mutations_per_find"], 6)
 
+    def test_no_stats_save_from_within_cycle(self):
+        """update_and_save_run_stats must NOT be called from execute_mutation_and_analysis_cycle."""
+        parent_path = Path("/corpus/parent_test.py")
+        mock_harness = MagicMock()
+        mock_harness.name = "uop_harness_test"
+        mock_tree = MagicMock()
+
+        mock_exec_result = MagicMock()
+        mock_exec_result.nojit_cv = None
+
+        analysis_data = {
+            "status": "NEW_COVERAGE",
+            "core_code": "x = 1",
+            "baseline_coverage": {},
+            "content_hash": "abc123",
+            "coverage_hash": "def456",
+            "execution_time_ms": 100,
+            "parent_id": "parent_test.py",
+            "mutation_info": {"strategy": "havoc", "transformers": ["t1"]},
+            "mutation_seed": 101,
+        }
+
+        self.orchestrator.mutation_controller._calculate_mutations.return_value = 1
+        self.orchestrator.mutation_controller._get_nodes_from_parent.return_value = (
+            mock_harness,
+            mock_tree,
+            [],
+        )
+        self.orchestrator.mutation_controller.get_mutated_harness.return_value = (
+            mock_harness,
+            {"strategy": "havoc", "transformers": ["t1"]},
+        )
+        self.orchestrator.mutation_controller.prepare_child_script.return_value = "code"
+        self.orchestrator.execution_manager.execute_child.return_value = (mock_exec_result, None)
+        self.orchestrator.scoring_manager.analyze_run.return_value = analysis_data
+
+        with patch("sys.stdout", new_callable=io.StringIO):
+            with patch("sys.stderr", new_callable=io.StringIO):
+                self.orchestrator.execute_mutation_and_analysis_cycle(parent_path, 100.0, 1, False)
+
+        # Stats saving should be done by run_evolutionary_loop, not the cycle method
+        self.orchestrator.artifact_manager.update_and_save_run_stats.assert_not_called()
+        self.orchestrator.artifact_manager.log_timeseries_datapoint.assert_not_called()
+
 
 class TestHandleAnalysisDataFlowControl(unittest.TestCase):
     """Test that _handle_analysis_data returns the correct FlowControl member."""

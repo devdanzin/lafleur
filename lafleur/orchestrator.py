@@ -361,25 +361,7 @@ class LafleurOrchestrator:
                 build_lineage_func=self.scoring_manager._build_lineage_profile,
             )
 
-            if self.timing_fuzz:
-                jit_time = analysis_data.get("jit_avg_time_ms")
-                nojit_time = analysis_data.get("nojit_avg_time_ms")
-                if jit_time is not None and nojit_time is not None and nojit_time > 0:
-                    slowdown_ratio = jit_time / nojit_time
-
-                    # Define the threshold, preferring the dynamic one if available.
-                    if nojit_cv is not None:
-                        dynamic_threshold = 1.0 + (3 * nojit_cv)  # Same as in InterestingnessScorer
-                    else:
-                        dynamic_threshold = 1.2  # Fallback to a 20% slowdown threshold
-
-                    if slowdown_ratio > dynamic_threshold:
-                        self.artifact_manager.save_regression(
-                            CORPUS_DIR / new_filename, jit_time, nojit_time
-                        )
-                        self.run_stats["regressions_found"] = (
-                            self.run_stats.get("regressions_found", 0) + 1
-                        )
+            self._check_timing_regression(analysis_data, new_filename, nojit_cv)
 
             analysis_data["new_filename"] = new_filename
             return FlowControl.BREAK
@@ -390,6 +372,32 @@ class LafleurOrchestrator:
             if parent_metadata["mutations_since_last_find"] > CORPUS_STERILITY_LIMIT:
                 parent_metadata["is_sterile"] = True
             return FlowControl.NONE
+
+    def _check_timing_regression(
+        self,
+        analysis_data: dict,
+        new_filename: str,
+        nojit_cv: float | None,
+    ) -> None:
+        """Check for JIT performance regressions and save artifacts if found."""
+        if not self.timing_fuzz:
+            return
+
+        jit_time = analysis_data.get("jit_avg_time_ms")
+        nojit_time = analysis_data.get("nojit_avg_time_ms")
+        if jit_time is None or nojit_time is None or nojit_time <= 0:
+            return
+
+        slowdown_ratio = jit_time / nojit_time
+
+        if nojit_cv is not None:
+            dynamic_threshold = 1.0 + (3 * nojit_cv)
+        else:
+            dynamic_threshold = 1.2
+
+        if slowdown_ratio > dynamic_threshold:
+            self.artifact_manager.save_regression(CORPUS_DIR / new_filename, jit_time, nojit_time)
+            self.run_stats["regressions_found"] = self.run_stats.get("regressions_found", 0) + 1
 
     def _cleanup_log_file(
         self, child_log_path: Path, parent_id: str, mutation_seed: int, run_num: int

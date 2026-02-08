@@ -6,6 +6,7 @@ corpus, including selecting parent test cases, adding new files, generating
 initial seeds, and synchronizing the fuzzer's state with the files on disk.
 """
 
+from collections import defaultdict
 import hashlib
 import os
 import random
@@ -473,92 +474,184 @@ class CorpusManager:
             all_edges.update(harness_data.get("edges", set()))
         return all_edges
 
-    def _is_subsumed_by(self, file_a_meta: dict, file_b_meta: dict) -> bool:
-        """
-        Determine if file A is "subsumed" by file B.
+    def _build_edge_index(
+        self,
+        all_files: dict[str, dict],
+    ) -> tuple[dict[str, set[int]], dict[int, set[str]]]:
+        """Pre-compute edge sets and build an inverted edge-to-files index.
 
-        File A is subsumed if its coverage is a proper subset of B's,
-        and B is more "efficient" (smaller or faster).
-        """
-        # 1. Get the full set of unique edges for each file's lineage.
-        edges_a = self._get_edge_set_from_profile(file_a_meta.get("lineage_coverage_profile", {}))
-        edges_b = self._get_edge_set_from_profile(file_b_meta.get("lineage_coverage_profile", {}))
+        Args:
+            all_files: Mapping of filename to metadata dict.
 
-        # We can't prune a file if its edge set is empty (e.g., a fresh seed).
+        Returns:
+            A tuple of:
+            - file_edges: mapping of filename to its set of edge IDs
+            - edge_to_files: inverted index mapping each edge ID to the set
+              of filenames that contain it
+        """
+        file_edges: dict[str, set[int]] = {}
+        edge_to_files: dict[int, set[str]] = defaultdict(set)
+
+        for filename, meta in all_files.items():
+            edges = self._get_edge_set_from_profile(meta.get("lineage_coverage_profile", {}))
+            file_edges[filename] = edges
+            for edge in edges:
+                edge_to_files[edge].add(filename)
+
+        return file_edges, edge_to_files
+
+    def _find_subsumer_candidates(
+        self,
+        filename_a: str,
+        edges_a: set[int],
+        file_edges: dict[str, set[int]],
+        edge_to_files: dict[int, set[str]],
+        files_to_prune: set[str],
+    ) -> set[str]:
+        """Use the inverted index to find files that could subsume file A.
+
+        A valid subsumer candidate must:
+        1. Contain ALL of A's edges (found via index intersection)
+        2. Have strictly MORE edges than A (proper superset requirement)
+        3. Not be A itself
+        4. Not already be marked for pruning
+
+        Args:
+            filename_a: The candidate file to find subsumers for.
+            edges_a: Pre-computed edge set for file A.
+            file_edges: Pre-computed edge sets for all files.
+            edge_to_files: Inverted index from edge ID to containing files.
+            files_to_prune: Files already marked for pruning (excluded).
+
+        Returns:
+            Set of filenames that are potential subsumers of A.
+        """
         if not edges_a:
-            return False
+            return set()
 
-        # 2. Check for Coverage Subsumption.
-        # Edges of A must be a proper (strict) subset of B's edges.
-        # This means B covers everything A does, plus at least one more thing.
-        if not edges_a.issubset(edges_b) or edges_a == edges_b:
-            return False
+        # Sort edge file-sets by size (smallest first) for fast intersection.
+        # Starting with the rarest edge narrows candidates quickly.
+        edge_file_sets = [edge_to_files[e] for e in edges_a if e in edge_to_files]
+        if not edge_file_sets:
+            return set()
 
-        # 3. Check for Efficiency.
-        # File B must be better than file A in at least one metric (size or speed),
-        # without being worse in the other.
-        size_a = file_a_meta.get("file_size_bytes", float("inf"))
-        size_b = file_b_meta.get("file_size_bytes", float("inf"))
+        edge_file_sets.sort(key=len)
 
-        time_a = file_a_meta.get("execution_time_ms", float("inf"))
-        time_b = file_b_meta.get("execution_time_ms", float("inf"))
+        # Intersect progressively — bail early if candidates empty
+        candidates = edge_file_sets[0].copy()
+        for file_set in edge_file_sets[1:]:
+            candidates &= file_set
+            if len(candidates) <= 1:
+                # At most self remains — no subsumers possible
+                break
 
-        # Pareto dominance: B must be no worse in any dimension AND strictly
-        # better in at least one. This correctly handles cases where B is much
-        # faster but marginally larger (or vice versa), while rejecting files
-        # that are identical in all metrics.
-        no_worse = (size_b <= size_a) and (time_b <= time_a)
-        strictly_better = (size_b < size_a) or (time_b < time_a)
-        return no_worse and strictly_better
+        # Remove self, already-pruned files, and files without strictly more edges
+        candidates.discard(filename_a)
+        candidates -= files_to_prune
+        candidates = {c for c in candidates if len(file_edges.get(c, set())) > len(edges_a)}
 
-    def prune_corpus(self, dry_run: bool = True):
-        """
-        Scan the corpus and remove redundant files.
+        return candidates
+
+    def prune_corpus(self, dry_run: bool = True) -> None:
+        """Scan the corpus and remove redundant files.
+
         A file is redundant if its coverage is a proper subset of another,
-        more efficient file in the corpus.
+        more efficient file in the corpus (Pareto dominance on size and speed).
+
+        Uses an inverted edge index for efficient candidate lookup, avoiding
+        O(N²) pairwise comparisons.
         """
         print("[*] Starting corpus pruning scan...")
         if dry_run:
             print("[!] Running in DRY RUN mode. No files will be deleted.")
 
-        all_files = list(self.coverage_state.state.get("per_file_coverage", {}).items())
-        files_to_prune = set()
-        prune_reasons = {}
+        all_files = dict(self.coverage_state.state.get("per_file_coverage", {}).items())
+        if not all_files:
+            print("[+] Corpus is empty. Nothing to prune.")
+            return
 
-        # Use a nested loop to compare every file against every other file
-        for filename_a, meta_a in all_files:
-            if filename_a in files_to_prune:
+        # Phase 1 & 2: Pre-compute edge sets and build inverted index
+        print(f"[*] Building edge index for {len(all_files)} files...")
+        file_edges, edge_to_files = self._build_edge_index(all_files)
+
+        # Sort files by edge count ascending — files with fewer edges are
+        # more likely to be subsumed, and checking them first means their
+        # subsumers (with more edges) are still available as candidates.
+        files_by_edge_count = sorted(
+            file_edges.items(),
+            key=lambda item: len(item[1]),
+        )
+
+        # Phase 3: Targeted subsumption search
+        files_to_prune: set[str] = set()
+        prune_reasons: dict[str, str] = {}
+        total = len(files_by_edge_count)
+
+        for i, (filename_a, edges_a) in enumerate(files_by_edge_count):
+            if i > 0 and i % 2000 == 0:
+                print(
+                    f"  [*] Pruning progress: {i}/{total} files checked, "
+                    f"{len(files_to_prune)} prunable so far..."
+                )
+
+            if not edges_a or filename_a in files_to_prune:
                 continue
 
-            for filename_b, meta_b in all_files:
-                if filename_a == filename_b or filename_b in files_to_prune:
-                    continue
+            # Find files that contain all of A's edges and have strictly more
+            candidates = self._find_subsumer_candidates(
+                filename_a, edges_a, file_edges, edge_to_files, files_to_prune
+            )
 
-                if self._is_subsumed_by(meta_a, meta_b):
+            # Check Pareto efficiency against each candidate
+            meta_a = all_files[filename_a]
+            size_a = meta_a.get("file_size_bytes", float("inf"))
+            time_a = meta_a.get("execution_time_ms", float("inf"))
+
+            for filename_b in candidates:
+                meta_b = all_files[filename_b]
+                size_b = meta_b.get("file_size_bytes", float("inf"))
+                time_b = meta_b.get("execution_time_ms", float("inf"))
+
+                no_worse = (size_b <= size_a) and (time_b <= time_a)
+                strictly_better = (size_b < size_a) or (time_b < time_a)
+
+                if no_worse and strictly_better:
                     files_to_prune.add(filename_a)
                     prune_reasons[filename_a] = f"subsumed by {filename_b}"
-
-                    if not dry_run:
-                        meta_b.setdefault("subsumed_children_count", 0)
-                        meta_b["subsumed_children_count"] += 1
-
-                    # Once a file is marked for pruning, we break the inner loop
-                    # and move to the next candidate file.
                     break
 
         if not files_to_prune:
             print("[+] No prunable files found in the corpus.")
             return
 
-        print(f"\n[*] Found {len(files_to_prune)} files to prune:")
-        for filename in sorted(list(files_to_prune)):
-            print(f"  - {filename} ({prune_reasons[filename]})")
+        print(f"\n[{'!' if dry_run else '+'}] Found {len(files_to_prune)} prunable files:")
+        for filename in sorted(files_to_prune):
+            print(f"  - {filename}: {prune_reasons[filename]}")
 
-        if not dry_run:
-            print("\n[*] Deleting files and updating state...")
-            for filename in files_to_prune:
-                (CORPUS_DIR / filename).unlink()
+        if dry_run:
+            print(f"\n[!] DRY RUN complete. {len(files_to_prune)} files would be pruned.")
+            return
+
+        # Actually delete files
+        for filename in files_to_prune:
+            filepath = CORPUS_DIR / filename
+            if filepath.exists():
+                filepath.unlink()
+            if filename in self.coverage_state.state["per_file_coverage"]:
                 del self.coverage_state.state["per_file_coverage"][filename]
-            self.scheduler.invalidate_scores()
-            save_coverage_state(self.coverage_state.state)
-            print("[+] Corpus pruning complete.")
+
+        # Track subsumer counts (only when actually pruning)
+        subsumer_counts: dict[str, int] = {}
+        for reason in prune_reasons.values():
+            subsumer = reason.split("subsumed by ", 1)[1] if "subsumed by " in reason else None
+            if subsumer:
+                subsumer_counts[subsumer] = subsumer_counts.get(subsumer, 0) + 1
+
+        for filename, count in subsumer_counts.items():
+            meta = self.coverage_state.state["per_file_coverage"].get(filename)
+            if meta is not None:
+                meta["subsumed_children_count"] = meta.get("subsumed_children_count", 0) + count
+
+        self.scheduler.invalidate_scores()
+        save_coverage_state(self.coverage_state.state)
+        print(f"[+] Pruned {len(files_to_prune)} files from the corpus.")

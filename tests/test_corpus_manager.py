@@ -497,6 +497,24 @@ class TestCorpusManagerPruneCorpus(unittest.TestCase):
         self.assertIn("test1.py", self.state["per_file_coverage"])
         self.assertIn("test2.py", self.state["per_file_coverage"])
 
+    def test_dry_run_does_not_mutate_metadata(self):
+        """Dry run should not add subsumed_children_count to metadata."""
+        self.state["per_file_coverage"]["test1.py"] = {
+            "lineage_coverage_profile": {"f1": {"edges": {0, 1}}},
+            "file_size_bytes": 1000,
+            "execution_time_ms": 100,
+        }
+        self.state["per_file_coverage"]["test2.py"] = {
+            "lineage_coverage_profile": {"f1": {"edges": {0, 1, 2}}},
+            "file_size_bytes": 500,
+            "execution_time_ms": 50,
+        }
+
+        self.corpus_manager.prune_corpus(dry_run=True)
+
+        # No metadata should have been mutated
+        self.assertNotIn("subsumed_children_count", self.state["per_file_coverage"]["test2.py"])
+
     def test_prune_corpus_finds_no_prunable(self):
         """Test when no files are prunable."""
         # Files with disjoint coverage

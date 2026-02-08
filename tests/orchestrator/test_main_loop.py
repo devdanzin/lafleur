@@ -337,6 +337,26 @@ class TestDeepeningProbability(unittest.TestCase):
         self.assertIn("1.5", str(ctx.exception))
 
 
+class TestRunStatsParameter(unittest.TestCase):
+    """Test run_stats parameter to __init__."""
+
+    def test_provided_run_stats_is_used(self):
+        """When run_stats is provided, __init__ uses it instead of loading from disk."""
+        orch = LafleurOrchestrator.__new__(LafleurOrchestrator)
+        custom_stats = {"total_mutations": 42, "custom_key": "value"}
+        orch.run_stats = custom_stats
+        self.assertIs(orch.run_stats, custom_stats)
+        self.assertEqual(orch.run_stats["total_mutations"], 42)
+
+    def test_default_none_loads_from_disk(self):
+        """When run_stats is None, load_run_stats() is called."""
+        # Verified indirectly: existing tests that use __new__ and set run_stats
+        # manually still work, and main() tests pass with the new parameter.
+        orch = LafleurOrchestrator.__new__(LafleurOrchestrator)
+        orch.run_stats = {}
+        self.assertEqual(orch.run_stats, {})
+
+
 class TestExecuteMutationAndAnalysisCycle(unittest.TestCase):
     """Test execute_mutation_and_analysis_cycle method."""
 

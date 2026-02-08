@@ -163,7 +163,7 @@ class MutationController:
         """A helper to apply a mutation pipeline to a slice of a large AST."""
         print(
             f"  [~] Large AST detected ({len_body} statements), running SLICING stage...",
-            file=__import__("sys").stderr,
+            file=sys.stderr,
         )
 
         if stage_name == "deterministic":
@@ -180,7 +180,7 @@ class MutationController:
             pipeline = [chosen_class() for _ in range(num_mutations)]
             print(
                 f"    -> Slicing and Spamming with: {chosen_class.__name__}",
-                file=__import__("sys").stderr,
+                file=sys.stderr,
             )
 
         else:  # Havoc
@@ -205,7 +205,7 @@ class MutationController:
 
         print(
             f"  [~] Running DETERMINISTIC stage ({len_harness} statements)...",
-            file=__import__("sys").stderr,
+            file=sys.stderr,
         )
         mutated_ast, transformers_used = self.ast_mutator.mutate_ast(base_ast, seed=seed)
         mutation_info = {
@@ -224,7 +224,7 @@ class MutationController:
 
         print(
             f"  [~] Running HAVOC stage ({len_harness} statements)...",
-            file=__import__("sys").stderr,
+            file=sys.stderr,
         )
         tree = base_ast  # Start with the copied tree from the dispatcher
         num_havoc_mutations = RANDOM.randint(15, 50)
@@ -257,7 +257,7 @@ class MutationController:
 
         print(
             f"  [~] Running SPAM stage ({len_harness} statements)...",
-            file=__import__("sys").stderr,
+            file=sys.stderr,
         )
         tree = base_ast
         num_spam_mutations = RANDOM.randint(20, 50)
@@ -270,7 +270,7 @@ class MutationController:
         )[0]
         print(
             f"    -> Spamming with: {chosen_transformer_class.__name__}",
-            file=__import__("sys").stderr,
+            file=sys.stderr,
         )
 
         for _ in range(num_spam_mutations):
@@ -304,7 +304,7 @@ class MutationController:
         self, base_core_ast: ast.AST | list[ast.stmt], **kwargs: Any
     ) -> ast.AST | list[ast.stmt]:
         """Perform a crossover by splicing the harness from a second parent."""
-        print("  [~] Attempting SPLICING stage...", file=__import__("sys").stderr)
+        print("  [~] Attempting SPLICING stage...", file=sys.stderr)
 
         if self.corpus_manager is None:
             print("  [!] Splicing unavailable: no corpus_manager set.", file=sys.stderr)
@@ -366,7 +366,7 @@ class MutationController:
             else:
                 print(
                     f"    -> Splice failed: No var of type '{required_type}' for '{required_var}'",
-                    file=__import__("sys").stderr,
+                    file=sys.stderr,
                 )
                 is_possible = False
                 break
@@ -397,7 +397,7 @@ class MutationController:
 
         print(
             f"  [~] Running SNIPER stage (Targets: {', '.join(watched_keys[:3])})...",
-            file=__import__("sys").stderr,
+            file=sys.stderr,
         )
         tree = copy.deepcopy(base_ast)
         mutator = SniperMutator(watched_keys)
@@ -424,7 +424,7 @@ class MutationController:
         This solves the feedback problem: the combined strategy gets credit
         for any interesting behavior, allowing both mutators to evolve together.
         """
-        print("  [~] Running HELPER+SNIPER stage...", file=__import__("sys").stderr)
+        print("  [~] Running HELPER+SNIPER stage...", file=sys.stderr)
         tree = copy.deepcopy(base_ast)
 
         # Stage 1: Inject helpers (or detect existing ones)
@@ -435,14 +435,12 @@ class MutationController:
         detected_helpers = helper_injector.helpers_injected
         if not detected_helpers:
             # No helpers available, fall back to havoc
-            print(
-                "  [!] No helpers available, falling back to havoc", file=__import__("sys").stderr
-            )
+            print("  [!] No helpers available, falling back to havoc", file=sys.stderr)
             return self._run_havoc_stage(base_ast, seed=seed, **kwargs)
 
         print(
             f"  [~] Detected {len(detected_helpers)} helper(s): {detected_helpers}",
-            file=__import__("sys").stderr,
+            file=sys.stderr,
         )
 
         # Stage 2: Attack the helpers with Sniper
@@ -536,7 +534,7 @@ class MutationController:
         except RecursionError:
             print(
                 "  [!] Warning: Skipping mutation due to RecursionError during AST transformation.",
-                file=__import__("sys").stderr,
+                file=sys.stderr,
             )
             return None, None
 
@@ -550,7 +548,7 @@ class MutationController:
         try:
             gc_tuning_code = ""
             if random.random() < 0.25:
-                print("    -> Prepending GC pressure to test case", file=__import__("sys").stderr)
+                print("    -> Prepending GC pressure to test case", file=sys.stderr)
                 # This logic is the same as in GCInjector
                 thresholds = [1, 10, 100, None]
                 weights = [0.6, 0.1, 0.1, 0.2]
@@ -583,6 +581,6 @@ class MutationController:
         except RecursionError:
             print(
                 "  [!] Warning: Skipping mutation due to RecursionError during ast.unparse.",
-                file=__import__("sys").stderr,
+                file=sys.stderr,
             )
             return None

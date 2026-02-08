@@ -430,8 +430,6 @@ class LafleurOrchestrator:
             if base_harness_node is None or parent_core_tree is None:
                 return  # Abort if parent is invalid
 
-            core_logic_to_mutate = base_harness_node
-
             # Retrieve watched dependencies from parent metadata
             watched_keys = (
                 parent_metadata.get("mutation_info", {})
@@ -475,7 +473,7 @@ class LafleurOrchestrator:
                 )
 
                 mutated_harness_node, mutation_info = self.mutation_controller.get_mutated_harness(
-                    core_logic_to_mutate, mutation_seed, watched_keys=watched_keys
+                    base_harness_node, mutation_seed, watched_keys=watched_keys
                 )
                 if not mutated_harness_node or mutation_info is None:
                     continue

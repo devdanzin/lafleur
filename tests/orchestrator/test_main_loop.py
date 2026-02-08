@@ -7,6 +7,8 @@ execution, and statistics management.
 """
 
 import io
+import shutil
+import tempfile
 import unittest
 from datetime import datetime, timezone
 from pathlib import Path
@@ -579,6 +581,106 @@ class TestRunStatsKeyErrorWithEmptyStats(unittest.TestCase):
         self.assertEqual(self.orchestrator.run_stats["total_mutations"], 1)
         self.assertEqual(self.orchestrator.run_stats["new_coverage_finds"], 1)
         self.assertEqual(self.orchestrator.run_stats["sum_of_mutations_per_find"], 6)
+
+
+class TestCleanupLogFile(unittest.TestCase):
+    """Test _cleanup_log_file helper method."""
+
+    def setUp(self):
+        self.tmp_dir = Path(tempfile.mkdtemp())
+        self.run_logs_dir = self.tmp_dir / "run_logs"
+        self.run_logs_dir.mkdir()
+
+        self.orchestrator = LafleurOrchestrator.__new__(LafleurOrchestrator)
+        self.orchestrator.keep_tmp_logs = False
+
+        self.child_log_path = self.tmp_dir / "child_1_1_1.log"
+        self.parent_id = "parent_test.py"
+        self.mutation_seed = 42
+        self.run_num = 0
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp_dir)
+
+    def test_plain_log_moved_when_keep_tmp_logs(self):
+        """Plain .log file is moved to RUN_LOGS_DIR when keep_tmp_logs=True."""
+        self.orchestrator.keep_tmp_logs = True
+        self.child_log_path.write_text("log content")
+
+        with patch("lafleur.orchestrator.RUN_LOGS_DIR", self.run_logs_dir):
+            self.orchestrator._cleanup_log_file(
+                self.child_log_path, self.parent_id, self.mutation_seed, self.run_num
+            )
+
+        self.assertFalse(self.child_log_path.exists())
+        expected_dest = self.run_logs_dir / "log_parent_test.py_seed_42_run_1.log"
+        self.assertTrue(expected_dest.exists())
+        self.assertEqual(expected_dest.read_text(), "log content")
+
+    def test_plain_log_deleted_when_not_keep(self):
+        """Plain .log file is deleted when keep_tmp_logs=False."""
+        self.child_log_path.write_text("log content")
+
+        self.orchestrator._cleanup_log_file(
+            self.child_log_path, self.parent_id, self.mutation_seed, self.run_num
+        )
+
+        self.assertFalse(self.child_log_path.exists())
+
+    def test_compressed_log_handled_when_plain_absent(self):
+        """Compressed .log.zst file is handled when plain .log doesn't exist."""
+        compressed_path = self.child_log_path.with_suffix(".log.zst")
+        compressed_path.write_text("compressed content")
+
+        self.orchestrator.keep_tmp_logs = True
+        with patch("lafleur.orchestrator.RUN_LOGS_DIR", self.run_logs_dir):
+            self.orchestrator._cleanup_log_file(
+                self.child_log_path, self.parent_id, self.mutation_seed, self.run_num
+            )
+
+        self.assertFalse(compressed_path.exists())
+        expected_dest = self.run_logs_dir / "log_parent_test.py_seed_42_run_1.log.zst"
+        self.assertTrue(expected_dest.exists())
+
+    def test_truncated_log_handled_when_others_absent(self):
+        """Truncated log file is handled when neither .log nor .log.zst exist."""
+        truncated_path = self.child_log_path.with_name(
+            f"{self.child_log_path.stem}_truncated{self.child_log_path.suffix}"
+        )
+        truncated_path.write_text("truncated content")
+
+        self.orchestrator.keep_tmp_logs = True
+        with patch("lafleur.orchestrator.RUN_LOGS_DIR", self.run_logs_dir):
+            self.orchestrator._cleanup_log_file(
+                self.child_log_path, self.parent_id, self.mutation_seed, self.run_num
+            )
+
+        self.assertFalse(truncated_path.exists())
+        expected_dest = self.run_logs_dir / "log_parent_test.py_seed_42_run_1_truncated.log"
+        self.assertTrue(expected_dest.exists())
+
+    def test_no_error_when_no_log_exists(self):
+        """No error raised when no log file exists at all."""
+        # Don't create any files — should silently return
+        self.orchestrator._cleanup_log_file(
+            self.child_log_path, self.parent_id, self.mutation_seed, self.run_num
+        )
+
+    def test_oserror_caught_and_warned(self):
+        """OSError is caught and prints a warning to stderr."""
+        self.child_log_path.write_text("log content")
+
+        with patch("lafleur.orchestrator.RUN_LOGS_DIR", self.run_logs_dir):
+            # Make unlink raise OSError
+            with patch.object(Path, "unlink", side_effect=OSError("disk full")):
+                with patch("sys.stderr", new_callable=io.StringIO) as mock_stderr:
+                    self.orchestrator._cleanup_log_file(
+                        self.child_log_path, self.parent_id, self.mutation_seed, self.run_num
+                    )
+
+                    stderr_output = mock_stderr.getvalue()
+                    self.assertIn("Warning: Could not process temp file", stderr_output)
+                    self.assertIn("disk full", stderr_output)
 
 
 class TestMain(unittest.TestCase):

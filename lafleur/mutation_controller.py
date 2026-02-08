@@ -225,7 +225,6 @@ class MutationController:
 
             tree = transformer_class().visit(tree)
 
-        ast.fix_missing_locations(tree)
         mutation_info = {"strategy": "havoc", "transformers": transformers_applied}
         return tree, mutation_info
 
@@ -250,7 +249,6 @@ class MutationController:
             # Apply a new instance of the same transformer each time
             tree = chosen_transformer_class().visit(tree)
 
-        ast.fix_missing_locations(tree)
         mutation_info = {
             "strategy": "spam",
             "transformers": [chosen_transformer_class.__name__] * num_spam_mutations,
@@ -275,7 +273,6 @@ class MutationController:
         tree = copy.deepcopy(base_ast)
         mutator = SniperMutator(watched_keys)
         tree = mutator.visit(tree)
-        ast.fix_missing_locations(tree)
 
         mutation_info = {
             "strategy": "sniper",
@@ -303,7 +300,6 @@ class MutationController:
         # Stage 1: Inject helpers (or detect existing ones)
         helper_injector = HelperFunctionInjector(probability=1.0)  # Always apply in this strategy
         tree = helper_injector.visit(tree)
-        ast.fix_missing_locations(tree)
 
         detected_helpers = helper_injector.helpers_injected
         if not detected_helpers:
@@ -321,7 +317,6 @@ class MutationController:
         # Stage 2: Attack the helpers with Sniper
         sniper = SniperMutator(watched_keys=detected_helpers)
         tree = sniper.visit(tree)
-        ast.fix_missing_locations(tree)
 
         mutation_info = {
             "strategy": "helper_sniper",
@@ -401,6 +396,8 @@ class MutationController:
         # Always run the sanitizer last to fix any empty bodies.
         sanitizer = EmptyBodySanitizer()
         mutated_ast = sanitizer.visit(mutated_ast)
+        # Fix missing locations for the entire tree. Individual stages do NOT
+        # need to call this — it's handled here after all mutations complete.
         ast.fix_missing_locations(mutated_ast)
 
         mutation_info["seed"] = seed

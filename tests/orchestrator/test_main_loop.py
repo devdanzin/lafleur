@@ -466,7 +466,46 @@ class TestExecuteMutationAndAnalysisCycle(unittest.TestCase):
                             )
 
                             stdout_output = mock_stdout.getvalue()
-                            self.assertIn("Dynamically set run count", stdout_output)
+                            self.assertIn("Dynamic run count:", stdout_output)
+                            self.assertIn("parent_test.py", stdout_output)
+                            self.assertIn("(breadth)", stdout_output)
+
+    def test_dynamic_runs_logged_for_deepening(self):
+        """Test that dynamic run count is logged for deepening sessions too."""
+        self.orchestrator.use_dynamic_runs = True
+        parent_path = Path("/corpus/parent_test.py")
+        parent_score = 200.0
+        mock_harness = MagicMock()
+        mock_harness.name = "uop_harness_test"
+        mock_tree = MagicMock()
+
+        with patch.object(
+            self.orchestrator.mutation_controller, "_calculate_mutations", return_value=1
+        ):
+            with patch.object(
+                self.orchestrator.mutation_controller,
+                "_get_nodes_from_parent",
+                return_value=(mock_harness, mock_tree, []),
+            ):
+                with patch.object(
+                    self.orchestrator.mutation_controller,
+                    "get_mutated_harness",
+                    return_value=(mock_harness, {}),
+                ):
+                    with patch.object(
+                        self.orchestrator.mutation_controller,
+                        "prepare_child_script",
+                        return_value=None,
+                    ):
+                        with patch("sys.stdout", new_callable=io.StringIO) as mock_stdout:
+                            self.orchestrator.execute_mutation_and_analysis_cycle(
+                                parent_path, parent_score, 1, is_deepening_session=True
+                            )
+
+                            stdout_output = mock_stdout.getvalue()
+                            self.assertIn("Dynamic run count:", stdout_output)
+                            self.assertIn("parent_test.py", stdout_output)
+                            self.assertIn("(deepening)", stdout_output)
 
     def test_uses_base_runs_when_dynamic_disabled(self):
         """Test that base_runs is used when use_dynamic_runs=False."""

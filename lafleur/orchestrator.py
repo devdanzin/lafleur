@@ -451,8 +451,8 @@ class LafleurOrchestrator:
             if self.use_dynamic_runs:
                 num_runs = 2 + int(math.floor(math.log(max(1.0, current_parent_score / 15))))
                 num_runs = min(num_runs, 10)
-                if not is_deepening_session:  # Only log this once per breadth session
-                    print(f"    -> Dynamically set run count to {num_runs} for this parent.")
+                session_type = "deepening" if is_deepening_session else "breadth"
+                print(f"    -> Dynamic run count: {num_runs} for {parent_id} ({session_type})")
             else:
                 num_runs = self.base_runs
 

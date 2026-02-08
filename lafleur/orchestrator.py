@@ -349,6 +349,38 @@ class LafleurOrchestrator:
                 parent_metadata["is_sterile"] = True
             return None
 
+    def _cleanup_log_file(
+        self, child_log_path: Path, parent_id: str, mutation_seed: int, run_num: int
+    ) -> None:
+        """Move or delete a temporary log file after a child run.
+
+        Checks for plain `.log`, compressed `.log.zst`, and truncated `_truncated.log`
+        variants in order. For the first one found, either moves it to `RUN_LOGS_DIR`
+        (when ``keep_tmp_logs`` is set) or deletes it. If none exist the file was already
+        handled by crash/timeout processing.
+        """
+        candidates = [
+            (child_log_path, f"log_{parent_id}_seed_{mutation_seed}_run_{run_num + 1}.log"),
+            (
+                child_log_path.with_suffix(".log.zst"),
+                f"log_{parent_id}_seed_{mutation_seed}_run_{run_num + 1}.log.zst",
+            ),
+            (
+                child_log_path.with_name(f"{child_log_path.stem}_truncated{child_log_path.suffix}"),
+                f"log_{parent_id}_seed_{mutation_seed}_run_{run_num + 1}_truncated.log",
+            ),
+        ]
+        try:
+            for candidate_path, dest_name in candidates:
+                if candidate_path.exists():
+                    if self.keep_tmp_logs:
+                        shutil.move(candidate_path, RUN_LOGS_DIR / dest_name)
+                    else:
+                        candidate_path.unlink()
+                    return
+        except OSError as e:
+            print(f"  [!] Warning: Could not process temp file: {e}", file=sys.stderr)
+
     def execute_mutation_and_analysis_cycle(
         self,
         initial_parent_path: Path,
@@ -530,53 +562,11 @@ class LafleurOrchestrator:
                                     mutations_since_last_find_in_session = 0
                             break  # Break inner multi-run loop
                     finally:
-                        # Cleanup or save temp files for this specific run
-                        try:
-                            if child_source_path.exists():
-                                child_source_path.unlink()
-                            else:
-                                print(f"Error deleting {child_source_path}, file doesn't exist!")
-
-                            compressed_log_path = child_log_path.with_suffix(".log.zst")
-                            truncated_log_path = child_log_path.with_name(
-                                f"{child_log_path.stem}_truncated{child_log_path.suffix}"
-                            )
-                            if child_log_path.exists():
-                                if self.keep_tmp_logs:
-                                    dest_log_path = (
-                                        RUN_LOGS_DIR
-                                        / f"log_{parent_id}_seed_{mutation_seed}_run_{run_num + 1}.log"
-                                    )
-                                    shutil.move(child_log_path, dest_log_path)
-                                else:
-                                    child_log_path.unlink()
-
-                            elif compressed_log_path.exists():
-                                if self.keep_tmp_logs:
-                                    dest_log_path = (
-                                        RUN_LOGS_DIR
-                                        / f"log_{parent_id}_seed_{mutation_seed}_run_{run_num + 1}.log.zst"
-                                    )
-                                    shutil.move(compressed_log_path, dest_log_path)
-                                else:
-                                    compressed_log_path.unlink()
-
-                            elif truncated_log_path.exists():
-                                if self.keep_tmp_logs:
-                                    dest_log_path = (
-                                        RUN_LOGS_DIR
-                                        / f"log_{parent_id}_seed_{mutation_seed}_run_{run_num + 1}_truncated.log"
-                                    )
-                                    shutil.move(truncated_log_path, dest_log_path)
-                                else:
-                                    truncated_log_path.unlink()
-                            # Note: If no log file exists, it was already processed and saved
-                            # by timeout/crash handling - this is expected, not an error.
-
-                        except OSError as e:
-                            print(
-                                f"  [!] Warning: Could not process temp file: {e}", file=sys.stderr
-                            )
+                        if child_source_path.exists():
+                            child_source_path.unlink()
+                        else:
+                            print(f"Error deleting {child_source_path}, file doesn't exist!")
+                        self._cleanup_log_file(child_log_path, parent_id, mutation_seed, run_num)
 
                 if found_new_coverage_in_cycle and is_deepening_session:
                     break

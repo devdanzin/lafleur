@@ -128,7 +128,6 @@ class CorpusManager:
 
         self.scheduler = CorpusScheduler(self.coverage_state)
         self.known_hashes: set[tuple[str, str]] = set()
-        self.run_stats.get("corpus_file_counter", 0)
         self.corpus_file_counter = self.run_stats.get("corpus_file_counter", 0)
 
         self.fusil_path_is_valid = False

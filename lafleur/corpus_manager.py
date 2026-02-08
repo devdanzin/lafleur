@@ -401,6 +401,7 @@ class CorpusManager:
         # Execute it to get a log (also using the configurable timeout)
         try:
             with open(tmp_log, "w") as log_file:
+                t0 = time.monotonic()
                 result = subprocess.run(
                     [self.target_python, tmp_source],
                     stdout=log_file,
@@ -408,6 +409,7 @@ class CorpusManager:
                     timeout=self.execution_timeout,  # Use configurable timeout here too
                     env=FUZZING_ENV,
                 )
+                execution_time_ms = int((time.monotonic() - t0) * 1000)
         except subprocess.TimeoutExpired:
             print(
                 f"[!] Timeout ({self.execution_timeout}s) expired during seed generation",
@@ -416,7 +418,6 @@ class CorpusManager:
             return
 
         # Analyze it for coverage
-        execution_time_ms = 0  # This is a placeholder, as we don't time this run
         analysis_data = orchestrator_analyze_run_func(
             exec_result=ExecutionResult(
                 returncode=result.returncode,

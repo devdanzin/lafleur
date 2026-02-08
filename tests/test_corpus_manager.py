@@ -7,7 +7,7 @@ import tempfile
 import unittest
 from io import StringIO
 from pathlib import Path
-from unittest.mock import Mock, patch
+from unittest.mock import Mock, mock_open, patch
 
 from lafleur.corpus_manager import CorpusManager, CorpusScheduler
 from lafleur.coverage import CoverageManager
@@ -679,6 +679,48 @@ class TestCorpusManagerFusilValidation(unittest.TestCase):
             )
 
         self.assertFalse(corpus_manager.fusil_path_is_valid)
+
+
+class TestGenerateNewSeed(unittest.TestCase):
+    """Tests for generate_new_seed timing."""
+
+    def setUp(self):
+        state = {
+            "global_coverage": {"edges": {}, "uops": {}, "rare_events": {}},
+            "per_file_coverage": {},
+        }
+        coverage_manager = CoverageManager(state)
+        run_stats = {"corpus_file_counter": 0}
+
+        with patch("lafleur.corpus_manager.CORPUS_DIR"), patch("lafleur.corpus_manager.TMP_DIR"):
+            self.corpus_manager = CorpusManager(
+                coverage_state=coverage_manager,
+                run_stats=run_stats,
+                fusil_path="/fake/fusil",
+                get_boilerplate_func=lambda: "",
+                execution_timeout=10,
+            )
+
+    @patch("lafleur.corpus_manager.subprocess.run")
+    @patch("lafleur.corpus_manager.time.monotonic")
+    def test_execution_time_measured(self, mock_monotonic, mock_run):
+        """Execution time should be calculated from monotonic clock, not zero."""
+        # monotonic() returns 1.0 before, 1.25 after → 250 ms
+        mock_monotonic.side_effect = [1.0, 1.25]
+
+        mock_result = Mock(returncode=0)
+        mock_run.return_value = mock_result
+
+        mock_analyze = Mock(return_value={"status": "NO_NEW_COVERAGE"})
+        mock_lineage = Mock()
+
+        with patch("builtins.open", mock_open()):
+            self.corpus_manager.generate_new_seed(mock_analyze, mock_lineage)
+
+        # Verify analyze was called with execution_time_ms=250 (not zero)
+        mock_analyze.assert_called_once()
+        exec_result = mock_analyze.call_args.kwargs["exec_result"]
+        self.assertEqual(exec_result.execution_time_ms, 250)
 
 
 class TestCorpusSchedulerEdgeCases(unittest.TestCase):

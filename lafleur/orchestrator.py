@@ -554,11 +554,11 @@ class LafleurOrchestrator:
                                         file=sys.stderr,
                                     )
                                     current_parent_path = CORPUS_DIR / new_child_filename
-                                    current_parent_score = (
-                                        self.corpus_manager.scheduler.calculate_scores().get(
-                                            new_child_filename, 100.0
-                                        )
-                                    )
+                                    # During deepening, inherit parent's score with a bonus
+                                    # rather than re-scoring the entire corpus.
+                                    # The exact score only affects mutation count via
+                                    # _calculate_mutations(), which doesn't need precision here.
+                                    current_parent_score = current_parent_score * 1.1
                                     mutations_since_last_find_in_session = 0
                             break  # Break inner multi-run loop
                     finally:

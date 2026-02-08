@@ -539,6 +539,86 @@ class TestExecuteMutationAndAnalysisCycle(unittest.TestCase):
                                 self.assertNotIn("Error deleting", stdout_output)
                                 self.assertNotIn("Error deleting", stderr_output)
 
+    def test_deepening_does_not_rescore_corpus(self):
+        """Deepening session inherits parent score instead of calling calculate_scores."""
+        self.orchestrator.keep_tmp_logs = False
+        self.orchestrator.differential_testing = False
+        self.orchestrator.timing_fuzz = False
+        self.orchestrator.scoring_manager = MagicMock()
+        self.orchestrator.artifact_manager = MagicMock()
+        self.orchestrator.score_tracker = MagicMock()
+
+        parent_path = Path("/corpus/parent_test.py")
+        initial_score = 100.0
+        mock_harness = MagicMock()
+        mock_harness.name = "uop_harness_test"
+        mock_tree = MagicMock()
+
+        mock_exec_result = MagicMock()
+        mock_exec_result.nojit_cv = None
+
+        analysis_data = {
+            "status": "NEW_COVERAGE",
+            "core_code": "x = 1",
+            "baseline_coverage": {},
+            "content_hash": "abc",
+            "coverage_hash": "def",
+            "execution_time_ms": 100,
+            "parent_id": "parent_test.py",
+            "mutation_info": {"strategy": "havoc", "transformers": ["t1"]},
+            "mutation_seed": 101,
+        }
+
+        self.orchestrator.corpus_manager = MagicMock()
+        self.orchestrator.corpus_manager.add_new_file.return_value = "new_child.py"
+
+        # _calculate_mutations returns 1 for first pass, then on second pass the
+        # deepening session will become sterile (since get_mutated_harness returns None)
+        call_count = [0]
+
+        def calc_side_effect(score):
+            call_count[0] += 1
+            if call_count[0] == 1:
+                return 1  # First pass: allow 1 mutation
+            return 1  # Second pass: 1 mutation (will be sterile)
+
+        self.orchestrator.mutation_controller._calculate_mutations.side_effect = calc_side_effect
+        self.orchestrator.mutation_controller._get_nodes_from_parent.return_value = (
+            mock_harness,
+            mock_tree,
+            [],
+        )
+
+        # First call: return a mutated harness; subsequent: return None to end cycle
+        harness_calls = [0]
+
+        def harness_side_effect(*args, **kwargs):
+            harness_calls[0] += 1
+            if harness_calls[0] == 1:
+                return (mock_harness, {"strategy": "havoc", "transformers": ["t1"]})
+            return (None, {})
+
+        self.orchestrator.mutation_controller.get_mutated_harness.side_effect = harness_side_effect
+        self.orchestrator.mutation_controller.prepare_child_script.return_value = "code"
+        self.orchestrator.execution_manager.execute_child.return_value = (mock_exec_result, None)
+        self.orchestrator.scoring_manager.analyze_run.return_value = analysis_data
+
+        with patch("sys.stdout", new_callable=io.StringIO):
+            with patch("sys.stderr", new_callable=io.StringIO):
+                self.orchestrator.execute_mutation_and_analysis_cycle(
+                    parent_path, initial_score, 1, is_deepening_session=True
+                )
+
+        # calculate_scores must NOT be called during deepening
+        self.orchestrator.corpus_manager.scheduler.calculate_scores.assert_not_called()
+
+        # _calculate_mutations should have been called with the boosted score (110.0)
+        # on the second iteration
+        second_call_score = (
+            self.orchestrator.mutation_controller._calculate_mutations.call_args_list[1][0][0]
+        )
+        self.assertAlmostEqual(second_call_score, initial_score * 1.1)
+
 
 class TestRunStatsKeyErrorWithEmptyStats(unittest.TestCase):
     """Test that run_stats bare += doesn't raise KeyError on empty stats."""

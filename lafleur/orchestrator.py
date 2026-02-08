@@ -8,6 +8,7 @@ results for new and interesting JIT behavior.
 """
 
 import argparse
+import ast
 import json
 import math
 import os
@@ -17,6 +18,7 @@ import shutil
 import socket
 import sys
 
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import Enum, auto
 from pathlib import Path
@@ -58,6 +60,34 @@ RUN_LOGS_DIR = LOGS_DIR / "run_logs"
 DEEPENING_STERILITY_LIMIT = 30
 # Maximum sterile mutations for a corpus file before marking it permanently sterile.
 CORPUS_STERILITY_LIMIT = 599
+
+
+@dataclass
+class ParentContext:
+    """All data needed to run mutations against a parent test case."""
+
+    parent_path: Path
+    parent_id: str
+    parent_score: float
+    parent_metadata: dict
+    parent_lineage_profile: dict
+    parent_file_size: int
+    parent_lineage_edge_count: int
+    base_harness_node: ast.FunctionDef
+    parent_core_tree: ast.Module
+    setup_nodes: list[ast.stmt]
+    watched_keys: list[str] | None
+    num_runs: int
+    max_mutations: int
+
+
+@dataclass
+class MutationOutcome:
+    """Result of running a single mutation through all its runs."""
+
+    flow_control: FlowControl
+    found_new_coverage: bool
+    new_child_filename: str | None
 
 
 class LafleurOrchestrator:
@@ -399,15 +429,177 @@ class LafleurOrchestrator:
         except OSError as e:
             print(f"  [!] Warning: Could not process temp file: {e}", file=sys.stderr)
 
+    def _prepare_parent_context(
+        self,
+        parent_path: Path,
+        parent_score: float,
+        is_deepening_session: bool,
+    ) -> ParentContext | None:
+        """Build the context needed to run mutations against a parent.
+
+        Returns ``None`` when the parent file cannot be parsed into valid
+        AST nodes (the caller should abort the current cycle).
+        """
+        max_mutations = self.mutation_controller._calculate_mutations(parent_score)
+        parent_id = parent_path.name
+        parent_metadata = self.coverage_manager.state["per_file_coverage"].get(parent_id, {})
+        parent_lineage_profile = parent_metadata.get("lineage_coverage_profile", {})
+
+        parent_file_size = parent_metadata.get("file_size_bytes", 0)
+
+        # Calculate the total number of unique edges in the parent's lineage
+        parent_lineage_edge_count = 0
+        for harness_data in parent_lineage_profile.values():
+            parent_lineage_edge_count += len(harness_data.get("edges", set()))
+
+        base_harness_node, parent_core_tree, setup_nodes = (
+            self.mutation_controller._get_nodes_from_parent(parent_path)
+        )
+        if base_harness_node is None or parent_core_tree is None:
+            return None
+
+        # Retrieve watched dependencies from parent metadata
+        watched_keys = (
+            parent_metadata.get("mutation_info", {})
+            .get("jit_stats", {})
+            .get("watched_dependencies")
+        )
+
+        # Filter out the harness itself, as we can't snipe it
+        if watched_keys:
+            current_harness_name = base_harness_node.name
+            watched_keys = [k for k in watched_keys if k != current_harness_name]
+
+        if self.use_dynamic_runs:
+            num_runs = 2 + int(math.floor(math.log(max(1.0, parent_score / 15))))
+            num_runs = min(num_runs, 10)
+            session_type = "deepening" if is_deepening_session else "breadth"
+            print(f"    -> Dynamic run count: {num_runs} for {parent_id} ({session_type})")
+        else:
+            num_runs = self.base_runs
+
+        return ParentContext(
+            parent_path=parent_path,
+            parent_id=parent_id,
+            parent_score=parent_score,
+            parent_metadata=parent_metadata,
+            parent_lineage_profile=parent_lineage_profile,
+            parent_file_size=parent_file_size,
+            parent_lineage_edge_count=parent_lineage_edge_count,
+            base_harness_node=base_harness_node,
+            parent_core_tree=parent_core_tree,
+            setup_nodes=setup_nodes or [],
+            watched_keys=watched_keys,
+            num_runs=num_runs,
+            max_mutations=max_mutations,
+        )
+
+    def _execute_single_mutation(
+        self,
+        ctx: ParentContext,
+        mutation_seed: int,
+        mutation_index: int,
+        session_id: int,
+        mutation_id: int,
+    ) -> MutationOutcome:
+        """Run a single mutation through all its repetitions and return the outcome."""
+        mutated_harness_node, mutation_info = self.mutation_controller.get_mutated_harness(
+            ctx.base_harness_node, mutation_seed, watched_keys=ctx.watched_keys
+        )
+        if not mutated_harness_node or mutation_info is None:
+            return MutationOutcome(
+                flow_control=FlowControl.NONE,
+                found_new_coverage=False,
+                new_child_filename=None,
+            )
+
+        flow_control = FlowControl.NONE
+        found_new_coverage = False
+        new_child_filename: str | None = None
+
+        for run_num in range(ctx.num_runs):
+            child_source_path = TMP_DIR / f"child_{session_id}_{mutation_id}_{run_num + 1}.py"
+            child_log_path = TMP_DIR / f"child_{session_id}_{mutation_id}_{run_num + 1}.log"
+
+            try:
+                runtime_seed = (mutation_seed + 1) * (run_num + 1)
+                mutation_info["runtime_seed"] = runtime_seed
+
+                if ctx.num_runs > 1:
+                    print(f"    -> Run #{run_num + 1}/{ctx.num_runs} (RuntimeSeed: {runtime_seed})")
+
+                child_source = self.mutation_controller.prepare_child_script(
+                    ctx.parent_core_tree,
+                    mutated_harness_node,
+                    runtime_seed,
+                )
+                if not child_source:
+                    continue
+
+                exec_result, stat_key = self.execution_manager.execute_child(
+                    child_source, child_source_path, child_log_path, ctx.parent_path
+                )
+                if stat_key:
+                    self.run_stats[stat_key] = self.run_stats.get(stat_key, 0) + 1
+                if not exec_result:
+                    continue
+
+                analysis_data = self.scoring_manager.analyze_run(
+                    exec_result,
+                    ctx.parent_lineage_profile,
+                    ctx.parent_id,
+                    mutation_info,
+                    mutation_seed,
+                    ctx.parent_file_size,
+                    ctx.parent_lineage_edge_count,
+                    self.differential_testing,
+                )
+
+                nojit_cv = exec_result.nojit_cv
+                flow_control = self._handle_analysis_data(
+                    analysis_data, mutation_index, ctx.parent_metadata, nojit_cv
+                )
+
+                if flow_control in (FlowControl.BREAK, FlowControl.CONTINUE):
+                    if analysis_data.get("status") == "NEW_COVERAGE":
+                        found_new_coverage = True
+
+                        # --- Update stats on every find ---
+                        self.run_stats["new_coverage_finds"] = (
+                            self.run_stats.get("new_coverage_finds", 0) + 1
+                        )
+                        self.run_stats["sum_of_mutations_per_find"] = (
+                            self.run_stats.get("sum_of_mutations_per_find", 0)
+                            + self.mutations_since_last_find
+                        )
+                        self.mutations_since_last_find = 0
+                        ctx.parent_metadata["total_finds"] = (
+                            ctx.parent_metadata.get("total_finds", 0) + 1
+                        )
+                        ctx.parent_metadata["mutations_since_last_find"] = 0
+
+                        new_child_filename = analysis_data.get("new_filename")
+                    break  # Break inner multi-run loop
+            finally:
+                if child_source_path.exists():
+                    child_source_path.unlink()
+                self._cleanup_log_file(child_log_path, ctx.parent_id, mutation_seed, run_num)
+
+        return MutationOutcome(
+            flow_control=flow_control,
+            found_new_coverage=found_new_coverage,
+            new_child_filename=new_child_filename,
+        )
+
     def execute_mutation_and_analysis_cycle(
         self,
         initial_parent_path: Path,
         initial_parent_score: float,
         session_id: int,
         is_deepening_session: bool,
-    ):
-        """
-        Take a parent test case and run a full cycle of mutation and analysis.
+    ) -> None:
+        """Take a parent test case and run a full cycle of mutation and analysis.
+
         If in a deepening session, will continue to mutate successful children.
         """
         # --- Session-level state for deepening ---
@@ -418,48 +610,16 @@ class LafleurOrchestrator:
 
         # --- This loop controls the deepening process ---
         while True:
-            max_mutations = self.mutation_controller._calculate_mutations(current_parent_score)
-            parent_id = current_parent_path.name
-            parent_metadata = self.coverage_manager.state["per_file_coverage"].get(parent_id, {})
-            parent_lineage_profile = parent_metadata.get("lineage_coverage_profile", {})
-
-            parent_file_size = parent_metadata.get("file_size_bytes", 0)
-
-            # Calculate the total number of unique edges in the parent's lineage
-            parent_lineage_edge_count = 0
-            for harness_data in parent_lineage_profile.values():
-                parent_lineage_edge_count += len(harness_data.get("edges", set()))
-
-            base_harness_node, parent_core_tree, setup_nodes = (
-                self.mutation_controller._get_nodes_from_parent(current_parent_path)
+            ctx = self._prepare_parent_context(
+                current_parent_path, current_parent_score, is_deepening_session
             )
-            if base_harness_node is None or parent_core_tree is None:
+            if ctx is None:
                 return  # Abort if parent is invalid
-
-            # Retrieve watched dependencies from parent metadata
-            watched_keys = (
-                parent_metadata.get("mutation_info", {})
-                .get("jit_stats", {})
-                .get("watched_dependencies")
-            )
-
-            # Filter out the harness itself, as we can't snipe it
-            if watched_keys:
-                current_harness_name = base_harness_node.name
-                watched_keys = [k for k in watched_keys if k != current_harness_name]
-
-            if self.use_dynamic_runs:
-                num_runs = 2 + int(math.floor(math.log(max(1.0, current_parent_score / 15))))
-                num_runs = min(num_runs, 10)
-                session_type = "deepening" if is_deepening_session else "breadth"
-                print(f"    -> Dynamic run count: {num_runs} for {parent_id} ({session_type})")
-            else:
-                num_runs = self.base_runs
 
             # --- Main Mutation Loop ---
             found_new_coverage_in_cycle = False
             mutation_index = 0
-            while mutation_index < max_mutations:
+            while mutation_index < ctx.max_mutations:
                 mutation_index += 1
                 mutation_id += 1
                 self.run_stats["total_mutations"] = self.run_stats.get("total_mutations", 0) + 1
@@ -478,104 +638,30 @@ class LafleurOrchestrator:
                 self.global_seed_counter += 1
                 mutation_seed = self.global_seed_counter
                 print(
-                    f"  \\-> Running mutation #{mutation_index} (Seed: {mutation_seed}) for {parent_id}..."
+                    f"  \\-> Running mutation #{mutation_index} (Seed: {mutation_seed}) for {ctx.parent_id}..."
                 )
 
-                mutated_harness_node, mutation_info = self.mutation_controller.get_mutated_harness(
-                    base_harness_node, mutation_seed, watched_keys=watched_keys
+                outcome = self._execute_single_mutation(
+                    ctx, mutation_seed, mutation_index, session_id, mutation_id
                 )
-                if not mutated_harness_node or mutation_info is None:
-                    continue
 
-                # --- Inner Multi-Run Loop ---
-                flow_control = FlowControl.NONE
-                for run_num in range(num_runs):
-                    child_source_path = (
-                        TMP_DIR / f"child_{session_id}_{mutation_id}_{run_num + 1}.py"
-                    )
-                    child_log_path = TMP_DIR / f"child_{session_id}_{mutation_id}_{run_num + 1}.log"
+                if outcome.found_new_coverage:
+                    found_new_coverage_in_cycle = True
+                    mutations_since_last_find_in_session = 0
 
-                    try:
-                        runtime_seed = (mutation_seed + 1) * (run_num + 1)
-                        mutation_info["runtime_seed"] = runtime_seed
-
-                        if num_runs > 1:
-                            print(
-                                f"    -> Run #{run_num + 1}/{num_runs} (RuntimeSeed: {runtime_seed})"
-                            )
-
-                        child_source = self.mutation_controller.prepare_child_script(
-                            parent_core_tree,
-                            mutated_harness_node,
-                            runtime_seed,
+                    if is_deepening_session and outcome.new_child_filename:
+                        print(
+                            f"  [>>>] DEEPENING: New child {outcome.new_child_filename} becomes the new parent.",
+                            file=sys.stderr,
                         )
-                        if not child_source:
-                            continue
-
-                        exec_result, stat_key = self.execution_manager.execute_child(
-                            child_source, child_source_path, child_log_path, current_parent_path
-                        )
-                        if stat_key:
-                            self.run_stats[stat_key] = self.run_stats.get(stat_key, 0) + 1
-                        if not exec_result:
-                            continue
-
-                        analysis_data = self.scoring_manager.analyze_run(
-                            exec_result,
-                            parent_lineage_profile,
-                            parent_id,
-                            mutation_info,
-                            mutation_seed,
-                            parent_file_size,
-                            parent_lineage_edge_count,
-                            self.differential_testing,
-                        )
-
-                        nojit_cv = exec_result.nojit_cv
-                        flow_control = self._handle_analysis_data(
-                            analysis_data, mutation_index, parent_metadata, nojit_cv
-                        )
-
-                        if flow_control in (FlowControl.BREAK, FlowControl.CONTINUE):
-                            if analysis_data.get("status") == "NEW_COVERAGE":
-                                found_new_coverage_in_cycle = True
-
-                                # --- Update stats and logs on every find ---
-                                self.run_stats["new_coverage_finds"] = (
-                                    self.run_stats.get("new_coverage_finds", 0) + 1
-                                )
-                                self.run_stats["sum_of_mutations_per_find"] = (
-                                    self.run_stats.get("sum_of_mutations_per_find", 0)
-                                    + self.mutations_since_last_find
-                                )
-                                self.mutations_since_last_find = 0
-                                parent_metadata["total_finds"] = (
-                                    parent_metadata.get("total_finds", 0) + 1
-                                )
-                                parent_metadata["mutations_since_last_find"] = 0
-
-                                if is_deepening_session:
-                                    new_child_filename = analysis_data["new_filename"]
-                                    print(
-                                        f"  [>>>] DEEPENING: New child {new_child_filename} becomes the new parent.",
-                                        file=sys.stderr,
-                                    )
-                                    current_parent_path = CORPUS_DIR / new_child_filename
-                                    # During deepening, inherit parent's score with a bonus
-                                    # rather than re-scoring the entire corpus.
-                                    # The exact score only affects mutation count via
-                                    # _calculate_mutations(), which doesn't need precision here.
-                                    current_parent_score = current_parent_score * 1.1
-                                    mutations_since_last_find_in_session = 0
-                            break  # Break inner multi-run loop
-                    finally:
-                        if child_source_path.exists():
-                            child_source_path.unlink()
-                        self._cleanup_log_file(child_log_path, parent_id, mutation_seed, run_num)
+                        current_parent_path = CORPUS_DIR / outcome.new_child_filename
+                        # During deepening, inherit parent's score with a bonus
+                        # rather than re-scoring the entire corpus.
+                        current_parent_score = current_parent_score * 1.1
 
                 if found_new_coverage_in_cycle and is_deepening_session:
                     break
-                elif flow_control == FlowControl.BREAK:
+                elif outcome.flow_control == FlowControl.BREAK:
                     return  # For breadth mode, a single find ends the entire session
 
             # Exit condition for the while True loop

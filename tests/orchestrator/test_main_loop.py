@@ -19,6 +19,7 @@ from lafleur.orchestrator import (
     DEEPENING_STERILITY_LIMIT,
     FlowControl,
     LafleurOrchestrator,
+    ParentContext,
 )
 
 
@@ -840,6 +841,365 @@ class TestHandleAnalysisDataFlowControl(unittest.TestCase):
         data = {"status": "NO_CHANGE", "mutation_info": {}}
         result = self.orchestrator._handle_analysis_data(data, 0, self.parent_metadata, None)
         self.assertEqual(result, FlowControl.NONE)
+
+
+class TestPrepareParentContext(unittest.TestCase):
+    """Test _prepare_parent_context method."""
+
+    def setUp(self):
+        self.orchestrator = LafleurOrchestrator.__new__(LafleurOrchestrator)
+        self.orchestrator.coverage_manager = MagicMock()
+        self.orchestrator.coverage_manager.state = {
+            "per_file_coverage": {
+                "parent_test.py": {
+                    "lineage_coverage_profile": {
+                        "harness_a": {"edges": {1, 2, 3}},
+                        "harness_b": {"edges": {4, 5}},
+                    },
+                    "file_size_bytes": 2048,
+                    "mutation_info": {
+                        "jit_stats": {
+                            "watched_dependencies": ["dep_a", "uop_harness_test", "dep_b"]
+                        }
+                    },
+                }
+            }
+        }
+        self.orchestrator.mutation_controller = MagicMock()
+        self.orchestrator.use_dynamic_runs = False
+        self.orchestrator.base_runs = 3
+
+    def test_returns_none_when_parent_invalid(self):
+        """Returns None when _get_nodes_from_parent yields None nodes."""
+        self.orchestrator.mutation_controller._get_nodes_from_parent.return_value = (
+            None,
+            None,
+            None,
+        )
+        self.orchestrator.mutation_controller._calculate_mutations.return_value = 100
+
+        result = self.orchestrator._prepare_parent_context(
+            Path("/corpus/parent_test.py"), 100.0, False
+        )
+
+        self.assertIsNone(result)
+
+    def test_populates_all_fields(self):
+        """Returns a fully populated ParentContext."""
+        mock_harness = MagicMock()
+        mock_harness.name = "uop_harness_test"
+        mock_tree = MagicMock()
+        mock_setup = [MagicMock()]
+        self.orchestrator.mutation_controller._get_nodes_from_parent.return_value = (
+            mock_harness,
+            mock_tree,
+            mock_setup,
+        )
+        self.orchestrator.mutation_controller._calculate_mutations.return_value = 150
+
+        with patch("sys.stdout", new_callable=io.StringIO):
+            ctx = self.orchestrator._prepare_parent_context(
+                Path("/corpus/parent_test.py"), 200.0, False
+            )
+
+        self.assertIsNotNone(ctx)
+        self.assertEqual(ctx.parent_id, "parent_test.py")
+        self.assertAlmostEqual(ctx.parent_score, 200.0)
+        self.assertEqual(ctx.parent_file_size, 2048)
+        self.assertEqual(ctx.parent_lineage_edge_count, 5)  # 3 + 2
+        self.assertIs(ctx.base_harness_node, mock_harness)
+        self.assertIs(ctx.parent_core_tree, mock_tree)
+        self.assertEqual(ctx.setup_nodes, mock_setup)
+        self.assertEqual(ctx.num_runs, 3)
+        self.assertEqual(ctx.max_mutations, 150)
+
+    def test_uses_dynamic_runs_when_enabled(self):
+        """Dynamic run count is calculated from parent score."""
+        self.orchestrator.use_dynamic_runs = True
+        mock_harness = MagicMock()
+        mock_harness.name = "uop_harness_test"
+        self.orchestrator.mutation_controller._get_nodes_from_parent.return_value = (
+            mock_harness,
+            MagicMock(),
+            [],
+        )
+        self.orchestrator.mutation_controller._calculate_mutations.return_value = 100
+
+        with patch("sys.stdout", new_callable=io.StringIO) as mock_stdout:
+            ctx = self.orchestrator._prepare_parent_context(
+                Path("/corpus/parent_test.py"), 200.0, False
+            )
+
+        self.assertIsNotNone(ctx)
+        self.assertGreaterEqual(ctx.num_runs, 2)
+        self.assertLessEqual(ctx.num_runs, 10)
+        stdout_output = mock_stdout.getvalue()
+        self.assertIn("Dynamic run count:", stdout_output)
+        self.assertIn("(breadth)", stdout_output)
+
+    def test_uses_base_runs_when_dynamic_disabled(self):
+        """Static base_runs is used when dynamic runs are off."""
+        self.orchestrator.base_runs = 7
+        mock_harness = MagicMock()
+        mock_harness.name = "uop_harness_test"
+        self.orchestrator.mutation_controller._get_nodes_from_parent.return_value = (
+            mock_harness,
+            MagicMock(),
+            [],
+        )
+        self.orchestrator.mutation_controller._calculate_mutations.return_value = 100
+
+        ctx = self.orchestrator._prepare_parent_context(
+            Path("/corpus/parent_test.py"), 100.0, False
+        )
+
+        self.assertIsNotNone(ctx)
+        self.assertEqual(ctx.num_runs, 7)
+
+    def test_filters_watched_keys_excluding_harness(self):
+        """Watched keys exclude the current harness name."""
+        mock_harness = MagicMock()
+        mock_harness.name = "uop_harness_test"
+        self.orchestrator.mutation_controller._get_nodes_from_parent.return_value = (
+            mock_harness,
+            MagicMock(),
+            [],
+        )
+        self.orchestrator.mutation_controller._calculate_mutations.return_value = 100
+
+        ctx = self.orchestrator._prepare_parent_context(
+            Path("/corpus/parent_test.py"), 100.0, False
+        )
+
+        self.assertIsNotNone(ctx)
+        # "uop_harness_test" should be filtered out
+        self.assertEqual(ctx.watched_keys, ["dep_a", "dep_b"])
+
+
+class TestExecuteSingleMutation(unittest.TestCase):
+    """Test _execute_single_mutation method."""
+
+    def setUp(self):
+        self.orchestrator = LafleurOrchestrator.__new__(LafleurOrchestrator)
+        self.orchestrator.run_stats = {"total_mutations": 0}
+        self.orchestrator.mutations_since_last_find = 5
+        self.orchestrator.keep_tmp_logs = False
+        self.orchestrator.differential_testing = False
+        self.orchestrator.timing_fuzz = False
+        self.orchestrator.corpus_manager = MagicMock()
+        self.orchestrator.corpus_manager.add_new_file.return_value = "new_child.py"
+        self.orchestrator.execution_manager = MagicMock()
+        self.orchestrator.mutation_controller = MagicMock()
+        self.orchestrator.scoring_manager = MagicMock()
+        self.orchestrator.artifact_manager = MagicMock()
+        self.orchestrator.score_tracker = MagicMock()
+
+        mock_harness = MagicMock()
+        mock_harness.name = "uop_harness_test"
+        self.ctx = ParentContext(
+            parent_path=Path("/corpus/parent_test.py"),
+            parent_id="parent_test.py",
+            parent_score=100.0,
+            parent_metadata={},
+            parent_lineage_profile={},
+            parent_file_size=1000,
+            parent_lineage_edge_count=10,
+            base_harness_node=mock_harness,
+            parent_core_tree=MagicMock(),
+            setup_nodes=[],
+            watched_keys=None,
+            num_runs=1,
+            max_mutations=100,
+        )
+
+    def test_returns_skip_when_harness_is_none(self):
+        """Returns NONE flow control when get_mutated_harness returns None."""
+        self.orchestrator.mutation_controller.get_mutated_harness.return_value = (None, {})
+
+        outcome = self.orchestrator._execute_single_mutation(
+            self.ctx, mutation_seed=42, mutation_index=1, session_id=1, mutation_id=1
+        )
+
+        self.assertEqual(outcome.flow_control, FlowControl.NONE)
+        self.assertFalse(outcome.found_new_coverage)
+        self.assertIsNone(outcome.new_child_filename)
+
+    def test_calls_execute_child_for_each_run(self):
+        """execute_child is called once per run when child_source is valid."""
+        self.ctx = ParentContext(
+            parent_path=self.ctx.parent_path,
+            parent_id=self.ctx.parent_id,
+            parent_score=self.ctx.parent_score,
+            parent_metadata=self.ctx.parent_metadata,
+            parent_lineage_profile=self.ctx.parent_lineage_profile,
+            parent_file_size=self.ctx.parent_file_size,
+            parent_lineage_edge_count=self.ctx.parent_lineage_edge_count,
+            base_harness_node=self.ctx.base_harness_node,
+            parent_core_tree=self.ctx.parent_core_tree,
+            setup_nodes=self.ctx.setup_nodes,
+            watched_keys=self.ctx.watched_keys,
+            num_runs=3,
+            max_mutations=self.ctx.max_mutations,
+        )
+        mock_harness = MagicMock()
+        self.orchestrator.mutation_controller.get_mutated_harness.return_value = (
+            mock_harness,
+            {"strategy": "havoc"},
+        )
+        self.orchestrator.mutation_controller.prepare_child_script.return_value = "code"
+        self.orchestrator.execution_manager.execute_child.return_value = (None, None)
+
+        with patch("sys.stdout", new_callable=io.StringIO):
+            outcome = self.orchestrator._execute_single_mutation(
+                self.ctx, mutation_seed=42, mutation_index=1, session_id=1, mutation_id=1
+            )
+
+        self.assertEqual(self.orchestrator.execution_manager.execute_child.call_count, 3)
+        self.assertEqual(outcome.flow_control, FlowControl.NONE)
+
+    def test_returns_break_on_new_coverage(self):
+        """Returns BREAK with found_new_coverage=True when NEW_COVERAGE is found."""
+        mock_exec_result = MagicMock()
+        mock_exec_result.nojit_cv = None
+
+        analysis_data = {
+            "status": "NEW_COVERAGE",
+            "core_code": "x = 1",
+            "baseline_coverage": {},
+            "content_hash": "abc",
+            "coverage_hash": "def",
+            "execution_time_ms": 100,
+            "parent_id": "parent_test.py",
+            "mutation_info": {"strategy": "havoc", "transformers": ["t1"]},
+            "mutation_seed": 42,
+        }
+
+        mock_harness = MagicMock()
+        self.orchestrator.mutation_controller.get_mutated_harness.return_value = (
+            mock_harness,
+            {"strategy": "havoc", "transformers": ["t1"]},
+        )
+        self.orchestrator.mutation_controller.prepare_child_script.return_value = "code"
+        self.orchestrator.execution_manager.execute_child.return_value = (mock_exec_result, None)
+        self.orchestrator.scoring_manager.analyze_run.return_value = analysis_data
+
+        with patch("sys.stdout", new_callable=io.StringIO):
+            with patch("sys.stderr", new_callable=io.StringIO):
+                outcome = self.orchestrator._execute_single_mutation(
+                    self.ctx, mutation_seed=42, mutation_index=1, session_id=1, mutation_id=1
+                )
+
+        self.assertEqual(outcome.flow_control, FlowControl.BREAK)
+        self.assertTrue(outcome.found_new_coverage)
+
+    def test_returns_continue_on_crash(self):
+        """Returns CONTINUE with found_new_coverage=False on CRASH."""
+        mock_exec_result = MagicMock()
+        mock_exec_result.nojit_cv = None
+
+        analysis_data = {"status": "CRASH", "mutation_info": {}}
+
+        mock_harness = MagicMock()
+        self.orchestrator.mutation_controller.get_mutated_harness.return_value = (
+            mock_harness,
+            {"strategy": "havoc"},
+        )
+        self.orchestrator.mutation_controller.prepare_child_script.return_value = "code"
+        self.orchestrator.execution_manager.execute_child.return_value = (mock_exec_result, None)
+        self.orchestrator.scoring_manager.analyze_run.return_value = analysis_data
+
+        outcome = self.orchestrator._execute_single_mutation(
+            self.ctx, mutation_seed=42, mutation_index=1, session_id=1, mutation_id=1
+        )
+
+        self.assertEqual(outcome.flow_control, FlowControl.CONTINUE)
+        self.assertFalse(outcome.found_new_coverage)
+
+    def test_updates_run_stats_on_stat_key(self):
+        """run_stats is incremented when execute_child returns a stat_key."""
+        mock_harness = MagicMock()
+        self.orchestrator.mutation_controller.get_mutated_harness.return_value = (
+            mock_harness,
+            {"strategy": "havoc"},
+        )
+        self.orchestrator.mutation_controller.prepare_child_script.return_value = "code"
+        self.orchestrator.execution_manager.execute_child.return_value = (None, "timeout_count")
+
+        self.orchestrator._execute_single_mutation(
+            self.ctx, mutation_seed=42, mutation_index=1, session_id=1, mutation_id=1
+        )
+
+        self.assertEqual(self.orchestrator.run_stats["timeout_count"], 1)
+
+    def test_updates_coverage_stats_on_new_coverage(self):
+        """new_coverage_finds and sum_of_mutations_per_find are updated."""
+        mock_exec_result = MagicMock()
+        mock_exec_result.nojit_cv = None
+
+        analysis_data = {
+            "status": "NEW_COVERAGE",
+            "core_code": "x = 1",
+            "baseline_coverage": {},
+            "content_hash": "abc",
+            "coverage_hash": "def",
+            "execution_time_ms": 100,
+            "parent_id": "parent_test.py",
+            "mutation_info": {"strategy": "havoc", "transformers": ["t1"]},
+            "mutation_seed": 42,
+        }
+
+        mock_harness = MagicMock()
+        self.orchestrator.mutation_controller.get_mutated_harness.return_value = (
+            mock_harness,
+            {"strategy": "havoc", "transformers": ["t1"]},
+        )
+        self.orchestrator.mutation_controller.prepare_child_script.return_value = "code"
+        self.orchestrator.execution_manager.execute_child.return_value = (mock_exec_result, None)
+        self.orchestrator.scoring_manager.analyze_run.return_value = analysis_data
+
+        with patch("sys.stdout", new_callable=io.StringIO):
+            with patch("sys.stderr", new_callable=io.StringIO):
+                self.orchestrator._execute_single_mutation(
+                    self.ctx, mutation_seed=42, mutation_index=1, session_id=1, mutation_id=1
+                )
+
+        self.assertEqual(self.orchestrator.run_stats["new_coverage_finds"], 1)
+        self.assertEqual(self.orchestrator.run_stats["sum_of_mutations_per_find"], 5)
+        self.assertEqual(self.orchestrator.mutations_since_last_find, 0)
+
+    def test_returns_new_child_filename_on_new_coverage(self):
+        """new_child_filename is populated from analysis_data on NEW_COVERAGE."""
+        mock_exec_result = MagicMock()
+        mock_exec_result.nojit_cv = None
+
+        analysis_data = {
+            "status": "NEW_COVERAGE",
+            "core_code": "x = 1",
+            "baseline_coverage": {},
+            "content_hash": "abc",
+            "coverage_hash": "def",
+            "execution_time_ms": 100,
+            "parent_id": "parent_test.py",
+            "mutation_info": {"strategy": "havoc", "transformers": ["t1"]},
+            "mutation_seed": 42,
+        }
+
+        mock_harness = MagicMock()
+        self.orchestrator.mutation_controller.get_mutated_harness.return_value = (
+            mock_harness,
+            {"strategy": "havoc", "transformers": ["t1"]},
+        )
+        self.orchestrator.mutation_controller.prepare_child_script.return_value = "code"
+        self.orchestrator.execution_manager.execute_child.return_value = (mock_exec_result, None)
+        self.orchestrator.scoring_manager.analyze_run.return_value = analysis_data
+
+        with patch("sys.stdout", new_callable=io.StringIO):
+            with patch("sys.stderr", new_callable=io.StringIO):
+                outcome = self.orchestrator._execute_single_mutation(
+                    self.ctx, mutation_seed=42, mutation_index=1, session_id=1, mutation_id=1
+                )
+
+        self.assertEqual(outcome.new_child_filename, "new_child.py")
 
 
 class TestCleanupLogFile(unittest.TestCase):

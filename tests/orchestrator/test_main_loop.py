@@ -1387,6 +1387,34 @@ class TestMain(unittest.TestCase):
                         # Should not raise
                         main()
 
+    @patch("lafleur.orchestrator.LafleurOrchestrator")
+    @patch("lafleur.orchestrator.generate_run_metadata")
+    @patch("lafleur.orchestrator.load_run_stats")
+    @patch("lafleur.orchestrator.TeeLogger")
+    def test_main_prune_corpus_exits_without_loop(
+        self, mock_tee, mock_stats, mock_metadata, mock_orch_class
+    ):
+        """--prune-corpus triggers prune_corpus() and sys.exit(0) without running the loop."""
+        from lafleur.orchestrator import main
+
+        mock_stats.return_value = {"total_mutations": 0}
+        mock_metadata.return_value = {"run_id": "test-123", "instance_name": "test"}
+        mock_tee_instance = MagicMock()
+        mock_tee.return_value = mock_tee_instance
+
+        mock_orch = MagicMock()
+        mock_orch_class.return_value = mock_orch
+
+        with patch("sys.argv", ["orchestrator", "--fusil-path", "/fake/fusil", "--prune-corpus"]):
+            with patch("lafleur.orchestrator.LOGS_DIR") as mock_logs:
+                mock_logs.mkdir = MagicMock()
+                with patch("sys.exit", side_effect=SystemExit(0)):
+                    with self.assertRaises(SystemExit):
+                        main()
+
+        mock_orch.corpus_manager.prune_corpus.assert_called_once_with(dry_run=True)
+        mock_orch.run_evolutionary_loop.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

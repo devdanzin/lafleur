@@ -219,8 +219,7 @@ class MutationController:
             transformer_class = RANDOM.choices(
                 self.ast_mutator.transformers, weights=dynamic_weights, k=1
             )[0]
-            # Record the attempt
-            self.score_tracker.attempts[transformer_class.__name__] += 1
+            self.score_tracker.record_attempt(transformer_class.__name__)
             transformers_applied.append(transformer_class.__name__)
 
             tree = transformer_class().visit(tree)
@@ -371,9 +370,8 @@ class MutationController:
 
         chosen_strategy = RANDOM.choices(strategy_candidates, weights=dynamic_weights, k=1)[0]
 
-        # Record the attempt for the chosen strategy only
         chosen_name = chosen_strategy.__name__.replace("_run_", "").replace("_stage", "")
-        self.score_tracker.attempts[chosen_name] += 1
+        self.score_tracker.record_attempt(chosen_name)
 
         # Check if the AST is large enough to require slicing
         len_body = (

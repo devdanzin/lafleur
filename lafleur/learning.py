@@ -44,11 +44,19 @@ class MutatorScoreTracker:
     def load_state(self):
         """Load the last known scores and attempts from a file."""
         if MUTATOR_SCORES_FILE.is_file():
-            print("[+] Loading mutator scores from previous run.")
-            with open(MUTATOR_SCORES_FILE, "r") as f:
-                data = json.load(f)
+            try:
+                with open(MUTATOR_SCORES_FILE, "r") as f:
+                    data = json.load(f)
                 self.scores = defaultdict(float, data.get("scores", {}))
                 self.attempts = defaultdict(int, data.get("attempts", {}))
+                print("[+] Loading mutator scores from previous run.")
+            except (json.JSONDecodeError, KeyError, TypeError) as e:
+                print(
+                    f"[!] Warning: Corrupted mutator scores file, starting fresh: {e}",
+                    file=sys.stderr,
+                )
+                self.scores = defaultdict(float)
+                self.attempts = defaultdict(int)
 
     def save_state(self):
         """Save the current scores and attempts to a file."""

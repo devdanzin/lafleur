@@ -63,6 +63,18 @@ class TestDifferentialJITScoring(unittest.TestCase):
         score = scorer.calculate_score()
         self.assertEqual(score, 50.0)
 
+    def test_delta_density_with_parent_delta(self):
+        """Test delta scoring uses fixed threshold, not parent-relative comparison."""
+        parent_stats = {"child_delta_max_exit_density": 2.0}
+        # Child delta 0.8 > 0.5 threshold → bonus, regardless of parent delta
+        child_stats = {"child_delta_max_exit_density": 0.8, "child_delta_total_exits": 5}
+
+        scorer = InterestingnessScorer(
+            jit_stats=child_stats, parent_jit_stats=parent_stats, **self.scorer_args
+        )
+        score = scorer.calculate_score()
+        self.assertEqual(score, 20.0)
+
 
 if __name__ == "__main__":
     unittest.main()

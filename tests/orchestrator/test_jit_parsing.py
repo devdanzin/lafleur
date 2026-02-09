@@ -129,6 +129,60 @@ class TestJITParsing(unittest.TestCase):
         parsed = self.orch.scoring_manager.parse_jit_stats(log_content)
         self.assertEqual(parsed["watched_dependencies"], ["valid_var"])
 
+    def test_parse_jit_stats_extracts_delta_metrics(self):
+        """Test that delta metrics are extracted from the LAST stats line."""
+        stats1 = {
+            "max_exit_count": 10,
+            "delta_max_exit_density": 1.0,
+            "delta_total_exits": 5,
+            "delta_new_executors": 2,
+            "delta_new_zombies": 0,
+        }
+        stats2 = {
+            "max_exit_count": 20,
+            "delta_max_exit_density": 3.0,
+            "delta_total_exits": 25,
+            "delta_max_exit_count": 15,
+            "delta_new_executors": 1,
+            "delta_new_zombies": 1,
+        }
+        log_content = f"[DRIVER:STATS] {json.dumps(stats1)}\n[DRIVER:STATS] {json.dumps(stats2)}\n"
+
+        parsed = self.orch.scoring_manager.parse_jit_stats(log_content)
+        # Last line's values should win (overwrite, not max)
+        self.assertAlmostEqual(parsed["child_delta_max_exit_density"], 3.0)
+        self.assertEqual(parsed["child_delta_total_exits"], 25)
+        self.assertEqual(parsed["child_delta_max_exit_count"], 15)
+        self.assertEqual(parsed["child_delta_new_executors"], 1)
+        self.assertEqual(parsed["child_delta_new_zombies"], 1)
+
+    def test_parse_jit_stats_no_delta_fields_defaults_to_zero(self):
+        """Test that missing delta fields default to zero."""
+        stats = {"max_exit_count": 10, "max_chain_depth": 2}
+        log_content = f"[DRIVER:STATS] {json.dumps(stats)}\n"
+
+        parsed = self.orch.scoring_manager.parse_jit_stats(log_content)
+        self.assertAlmostEqual(parsed["child_delta_max_exit_density"], 0.0)
+        self.assertEqual(parsed["child_delta_total_exits"], 0)
+        self.assertEqual(parsed["child_delta_new_executors"], 0)
+        self.assertEqual(parsed["child_delta_new_zombies"], 0)
+
+    def test_parse_jit_stats_delta_overwrites_not_maxes(self):
+        """Test that delta metrics use last-wins, not max."""
+        stats1 = {"delta_max_exit_density": 5.0, "delta_total_exits": 50}
+        stats2 = {"delta_max_exit_density": 2.0, "delta_total_exits": 10}
+        stats3 = {"delta_max_exit_density": 3.0, "delta_total_exits": 20}
+        log_content = (
+            f"[DRIVER:STATS] {json.dumps(stats1)}\n"
+            f"[DRIVER:STATS] {json.dumps(stats2)}\n"
+            f"[DRIVER:STATS] {json.dumps(stats3)}\n"
+        )
+
+        parsed = self.orch.scoring_manager.parse_jit_stats(log_content)
+        # Last line wins (3.0), NOT max (5.0)
+        self.assertAlmostEqual(parsed["child_delta_max_exit_density"], 3.0)
+        self.assertEqual(parsed["child_delta_total_exits"], 20)
+
 
 if __name__ == "__main__":
     unittest.main()

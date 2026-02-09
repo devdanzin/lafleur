@@ -130,6 +130,30 @@ class ExecutionManager:
         self.timing_fuzz = timing_fuzz
         self.session_fuzz = session_fuzz
 
+    def _build_env(self, *, jit: bool, debug_logs: bool = False) -> dict[str, str]:
+        """Build a subprocess environment with explicit JIT and logging flags.
+
+        Args:
+            jit: Enable JIT compilation.
+            debug_logs: Enable JIT debug logging (LLTRACE, OPT_DEBUG).
+                Only True for the coverage-gathering stage.
+
+        Returns:
+            Environment dict suitable for subprocess.run().
+        """
+        env = os.environ.copy()
+        env["PYTHON_JIT"] = "1" if jit else "0"
+        env["ASAN_OPTIONS"] = "detect_leaks=0"
+
+        if debug_logs:
+            env["PYTHON_LLTRACE"] = "2"
+            env["PYTHON_OPT_DEBUG"] = "4"
+        else:
+            env["PYTHON_LLTRACE"] = "0"
+            env["PYTHON_OPT_DEBUG"] = "0"
+
+        return env
+
     def _run_timed_trial(
         self, source_path: Path, num_runs: int, jit_enabled: bool
     ) -> tuple[float | None, bool, float | None]:
@@ -146,11 +170,7 @@ class ExecutionManager:
             Returns None for time and CV if measurements are unstable.
         """
         timings_ms: list[float] = []
-        env = os.environ.copy()
-        env["PYTHON_JIT"] = "1" if jit_enabled else "0"
-        # Explicitly disable our noisy debug logs for timing runs
-        env["PYTHON_LLTRACE"] = "0"
-        env["PYTHON_OPT_DEBUG"] = "0"
+        env = self._build_env(jit=jit_enabled)
 
         print(f"[TIMING] Running timed trial with JIT={jit_enabled}.", file=sys.stderr)
 
@@ -261,11 +281,7 @@ class ExecutionManager:
             # Run Non-JIT
             nojit_run = None
             try:
-                nojit_env = FUZZING_ENV.copy()
-                nojit_env["PYTHON_JIT"] = "0"
-                # Disable debug logs for a clean stderr comparison
-                nojit_env["PYTHON_LLTRACE"] = "0"
-                nojit_env["PYTHON_OPT_DEBUG"] = "0"
+                nojit_env = self._build_env(jit=False)
                 print("[DIFFERENTIAL] Running child with JIT=False.", file=sys.stderr)
                 nojit_run = subprocess.run(
                     [self.target_python, str(child_source_path)],
@@ -281,10 +297,7 @@ class ExecutionManager:
             # Run JIT
             jit_run = None
             try:
-                jit_env = FUZZING_ENV.copy()
-                jit_env["PYTHON_JIT"] = "1"
-                jit_env["PYTHON_LLTRACE"] = "0"
-                jit_env["PYTHON_OPT_DEBUG"] = "0"
+                jit_env = self._build_env(jit=True)
                 print("[DIFFERENTIAL] Running child with JIT=True.", file=sys.stderr)
                 jit_run = subprocess.run(
                     [self.target_python, str(child_source_path)],
@@ -425,6 +438,7 @@ class ExecutionManager:
                 # Normal mode: run child in fresh process
                 cmd = [self.target_python, str(child_source_path)]
 
+            coverage_env = self._build_env(jit=True, debug_logs=True)
             with open(child_log_path, "w") as log_file:
                 start_time = time.monotonic()
                 result = subprocess.run(
@@ -432,7 +446,7 @@ class ExecutionManager:
                     stdout=log_file,
                     stderr=subprocess.STDOUT,
                     timeout=self.timeout,
-                    env=FUZZING_ENV,  # Use the global env with debug flags for coverage
+                    env=coverage_env,
                 )
                 end_time = time.monotonic()
 

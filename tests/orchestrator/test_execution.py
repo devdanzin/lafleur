@@ -665,6 +665,44 @@ class TestVerifyTargetCapabilities(unittest.TestCase):
                 self.assertIn("env", call_kwargs)
 
 
+class TestBuildEnv(unittest.TestCase):
+    """Test ExecutionManager._build_env helper."""
+
+    def setUp(self):
+        """Set up minimal ExecutionManager instance."""
+        self.em = ExecutionManager.__new__(ExecutionManager)
+
+    def test_build_env_jit_enabled(self):
+        """JIT enabled with no debug logs sets correct env vars."""
+        env = self.em._build_env(jit=True)
+        self.assertEqual(env["PYTHON_JIT"], "1")
+        self.assertEqual(env["PYTHON_LLTRACE"], "0")
+        self.assertEqual(env["PYTHON_OPT_DEBUG"], "0")
+        self.assertEqual(env["ASAN_OPTIONS"], "detect_leaks=0")
+
+    def test_build_env_jit_disabled(self):
+        """JIT disabled sets PYTHON_JIT to 0."""
+        env = self.em._build_env(jit=False)
+        self.assertEqual(env["PYTHON_JIT"], "0")
+
+    def test_build_env_debug_logs_enabled(self):
+        """Debug logs enabled sets LLTRACE and OPT_DEBUG."""
+        env = self.em._build_env(jit=True, debug_logs=True)
+        self.assertEqual(env["PYTHON_LLTRACE"], "2")
+        self.assertEqual(env["PYTHON_OPT_DEBUG"], "4")
+
+    def test_build_env_inherits_system_env(self):
+        """System environment variables are inherited."""
+        import os
+
+        os.environ["LAFLEUR_TEST_MARKER"] = "1"
+        try:
+            env = self.em._build_env(jit=True)
+            self.assertEqual(env["LAFLEUR_TEST_MARKER"], "1")
+        finally:
+            del os.environ["LAFLEUR_TEST_MARKER"]
+
+
 class TestSoloSessionProbability(unittest.TestCase):
     """Test solo session probability for cold-JIT fuzzing diversity."""
 

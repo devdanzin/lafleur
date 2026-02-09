@@ -308,6 +308,10 @@ class ExecutionManager:
         nojit_cv: float | None = None
 
         # --- Stage 1: Differential Correctness Fuzzing (if enabled) ---
+        # Note: Differential testing always runs the child in isolation, even when
+        # session fuzzing is enabled. Session mode introduces non-determinism
+        # (mixer polluters, shared JIT state) that would cause false positives
+        # in the JIT vs non-JIT comparison.
         if self.differential_testing:
             instrumented_code = source_code + "\n" + SERIALIZATION_SNIPPET
             child_source_path.write_text(instrumented_code)

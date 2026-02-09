@@ -115,6 +115,19 @@ class ArtifactManager:
         self.divergences_dir.mkdir(parents=True, exist_ok=True)
         self.regressions_dir.mkdir(parents=True, exist_ok=True)
 
+    @staticmethod
+    def _get_log_suffix(processed_log_path: Path) -> str:
+        """Return the appropriate log suffix for a processed log file.
+
+        Handles truncated ('_truncated.log'), compressed ('.log.zst'),
+        and plain ('.log') log files.
+        """
+        if processed_log_path.name.endswith("_truncated.log"):
+            return "_truncated.log"
+        elif processed_log_path.name.endswith(".log.zst"):
+            return ".log.zst"
+        return ".log"
+
     def _safe_copy(
         self, src: Path, dst: Path, label: str, *, preserve_metadata: bool = False
     ) -> bool:
@@ -258,15 +271,9 @@ class ArtifactManager:
             self.timeouts_dir / f"timeout_{child_source_path.stem}_{parent_path.name}"
         )
 
-        # Calculate destination log path, explicitly preserving truncation marker or compression
-        if log_to_save.name.endswith("_truncated.log"):
-            timeout_log_path = timeout_source_path.with_name(
-                f"{timeout_source_path.stem}_truncated.log"
-            )
-        elif log_to_save.name.endswith(".log.zst"):
-            timeout_log_path = timeout_source_path.with_name(f"{timeout_source_path.stem}.log.zst")
-        else:
-            timeout_log_path = timeout_source_path.with_suffix(log_to_save.suffix)
+        # Calculate destination log path, preserving truncation marker or compression
+        log_suffix = self._get_log_suffix(log_to_save)
+        timeout_log_path = timeout_source_path.with_name(f"{timeout_source_path.stem}{log_suffix}")
 
         if log_to_save.exists():
             shutil.copy(child_source_path, timeout_source_path)
@@ -478,14 +485,8 @@ class ArtifactManager:
                 crash_dir = self.save_session_crash(scripts_to_save, return_code, crash_signature)
 
                 # Determine log destination name
-                if log_to_save.name.endswith("_truncated.log"):
-                    crash_log_name = "session_crash_truncated.log"
-                elif log_to_save.name.endswith(".log.zst"):
-                    crash_log_name = "session_crash.log.zst"
-                else:
-                    crash_log_name = "session_crash.log"
-
-                crash_log_path = crash_dir / crash_log_name
+                log_suffix = self._get_log_suffix(log_to_save)
+                crash_log_path = crash_dir / f"session_crash{log_suffix}"
 
                 if self._safe_copy(log_to_save, crash_log_path, "session crash log"):
                     if log_to_save != log_path:
@@ -500,14 +501,8 @@ class ArtifactManager:
                 crash_source_path = self.crashes_dir / crash_base_name
 
                 # Determine destination log name, preserving extensions/markers
-                if log_to_save.name.endswith("_truncated.log"):
-                    crash_log_path = (
-                        self.crashes_dir / f"{Path(crash_base_name).stem}_truncated.log"
-                    )
-                elif log_to_save.name.endswith(".log.zst"):
-                    crash_log_path = self.crashes_dir / f"{Path(crash_base_name).stem}.log.zst"
-                else:
-                    crash_log_path = self.crashes_dir / f"{Path(crash_base_name).stem}.log"
+                log_suffix = self._get_log_suffix(log_to_save)
+                crash_log_path = self.crashes_dir / f"{Path(crash_base_name).stem}{log_suffix}"
 
                 self._safe_copy(source_path, crash_source_path, "crash source file")
                 if self._safe_copy(log_to_save, crash_log_path, "crash log file"):

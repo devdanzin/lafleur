@@ -226,11 +226,11 @@ def snapshot_executor_state(namespace: dict) -> dict[tuple[int, int], int]:
 
 
 def get_jit_stats(namespace: dict, baseline: dict[tuple[int, int], int] | None = None) -> dict:
-    """
-    Scan a namespace for functions and count active JIT executors.
+    """Scan a namespace for functions and count active JIT executors.
 
     Uses _opcode.get_executor() to check if functions have been JIT-compiled.
-    Scans all bytecode offsets looking for executors.
+    Recursively walks all code objects in the namespace and scans every
+    bytecode offset (0, 2, 4, ...) for attached executors.
 
     When *baseline* is provided (from snapshot_executor_state), delta metrics
     are computed isolating this script's contribution to executor instability.

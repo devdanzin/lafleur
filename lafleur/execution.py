@@ -240,6 +240,40 @@ class ExecutionManager:
         ]
         return "\n".join(filtered_lines)
 
+    def _make_divergence_result(
+        self,
+        child_source_path: Path,
+        child_log_path: Path,
+        parent_path: Path,
+        reason: str,
+        jit_output: str,
+        nojit_output: str,
+    ) -> tuple[ExecutionResult, None]:
+        """Create an ExecutionResult for a JIT/non-JIT divergence.
+
+        Args:
+            child_source_path: Path to the child script.
+            child_log_path: Path for the execution log.
+            parent_path: Path to the parent script.
+            reason: Divergence category (e.g., "exit_code_mismatch").
+            jit_output: Relevant output from the JIT run.
+            nojit_output: Relevant output from the non-JIT run.
+
+        Returns:
+            Tuple of (ExecutionResult, None) for consistent return type.
+        """
+        return ExecutionResult(
+            source_path=child_source_path,
+            log_path=child_log_path,
+            returncode=0,
+            execution_time_ms=0,
+            is_divergence=True,
+            divergence_reason=reason,
+            jit_output=jit_output,
+            nojit_output=nojit_output,
+            parent_path=parent_path,
+        ), None
+
     def execute_child(
         self,
         source_code: str,
@@ -314,47 +348,38 @@ class ExecutionManager:
             if nojit_run and jit_run:
                 # 1. Check for exit code mismatch
                 if jit_run.returncode != nojit_run.returncode:
-                    return ExecutionResult(
-                        source_path=child_source_path,
-                        log_path=child_log_path,
-                        returncode=0,
-                        execution_time_ms=0,
-                        is_divergence=True,
-                        divergence_reason="exit_code_mismatch",
+                    return self._make_divergence_result(
+                        child_source_path,
+                        child_log_path,
+                        parent_path,
+                        reason="exit_code_mismatch",
                         jit_output=f"Exit Code: {jit_run.returncode}",
                         nojit_output=f"Exit Code: {nojit_run.returncode}",
-                        parent_path=parent_path,
-                    ), None
+                    )
 
                 # 2. Check for stderr mismatch (after filtering)
                 filtered_jit_stderr = self._filter_jit_stderr(jit_run.stderr)
                 filtered_nojit_stderr = self._filter_jit_stderr(nojit_run.stderr)
                 if filtered_jit_stderr != filtered_nojit_stderr:
-                    return ExecutionResult(
-                        source_path=child_source_path,
-                        log_path=child_log_path,
-                        returncode=0,
-                        execution_time_ms=0,
-                        is_divergence=True,
-                        divergence_reason="stderr_mismatch",
+                    return self._make_divergence_result(
+                        child_source_path,
+                        child_log_path,
+                        parent_path,
+                        reason="stderr_mismatch",
                         jit_output=filtered_jit_stderr,
                         nojit_output=filtered_nojit_stderr,
-                        parent_path=parent_path,
-                    ), None
+                    )
 
                 # 3. Check for stdout mismatch
                 if jit_run.stdout != nojit_run.stdout:
-                    return ExecutionResult(
-                        source_path=child_source_path,
-                        log_path=child_log_path,
-                        returncode=0,
-                        execution_time_ms=0,
-                        is_divergence=True,
-                        divergence_reason="stdout_mismatch",
+                    return self._make_divergence_result(
+                        child_source_path,
+                        child_log_path,
+                        parent_path,
+                        reason="stdout_mismatch",
                         jit_output=jit_run.stdout,
                         nojit_output=nojit_run.stdout,
-                        parent_path=parent_path,
-                    ), None
+                    )
             print("  [~] No divergences found.", file=sys.stderr)
 
         # --- Stage 2: Performance Timing Fuzzing (if enabled) ---

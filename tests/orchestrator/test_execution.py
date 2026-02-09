@@ -665,6 +665,36 @@ class TestVerifyTargetCapabilities(unittest.TestCase):
                 self.assertIn("env", call_kwargs)
 
 
+class TestMakeDivergenceResult(unittest.TestCase):
+    """Test ExecutionManager._make_divergence_result helper."""
+
+    def setUp(self):
+        """Set up minimal ExecutionManager instance."""
+        self.em = ExecutionManager.__new__(ExecutionManager)
+
+    def test_make_divergence_result_fields(self):
+        """All fields of the returned ExecutionResult match inputs."""
+        result, second = self.em._make_divergence_result(
+            child_source_path=Path("/tmp/child.py"),
+            child_log_path=Path("/tmp/child.log"),
+            parent_path=Path("/tmp/parent.py"),
+            reason="exit_code_mismatch",
+            jit_output="Exit Code: 1",
+            nojit_output="Exit Code: 0",
+        )
+
+        self.assertTrue(result.is_divergence)
+        self.assertEqual(result.divergence_reason, "exit_code_mismatch")
+        self.assertEqual(result.jit_output, "Exit Code: 1")
+        self.assertEqual(result.nojit_output, "Exit Code: 0")
+        self.assertEqual(result.returncode, 0)
+        self.assertEqual(result.execution_time_ms, 0)
+        self.assertEqual(result.source_path, Path("/tmp/child.py"))
+        self.assertEqual(result.log_path, Path("/tmp/child.log"))
+        self.assertEqual(result.parent_path, Path("/tmp/parent.py"))
+        self.assertIsNone(second)
+
+
 class TestBuildEnv(unittest.TestCase):
     """Test ExecutionManager._build_env helper."""
 

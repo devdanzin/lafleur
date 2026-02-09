@@ -34,13 +34,6 @@ try:
 except ImportError:
     HAS_OPCODE = False
 
-try:
-    import _testinternalcapi  # noqa: F401
-
-    HAS_TESTINTERNALCAPI = True
-except ImportError:
-    HAS_TESTINTERNALCAPI = False
-
 # Limit integer-to-string conversion length to prevent DoS from fuzzed
 # scripts that construct astronomically large integers. The default limit
 # (4300 digits) is Python's built-in safety valve; we set it explicitly
@@ -547,7 +540,6 @@ def main() -> int:
 
     if args.verbose:
         print(f"[DRIVER:INFO] JIT introspection available: {HAS_OPCODE}", flush=True)
-        print(f"[DRIVER:INFO] Test internal API available: {HAS_TESTINTERNALCAPI}", flush=True)
         print(f"[DRIVER:INFO] Scripts to execute: {args.files}", flush=True)
 
     return run_session(args.files)

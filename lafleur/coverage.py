@@ -184,6 +184,12 @@ def parse_log_for_edge_coverage(
     current_trace_length = 0
     current_side_exits = 0
 
+    def flush_harness_metrics(harness_id: str | None, trace_length: int, side_exits: int) -> None:
+        """Save trace metrics for the given harness, if any."""
+        if harness_id and trace_length > 0:
+            coverage_by_harness[harness_id]["trace_length"] = trace_length
+            coverage_by_harness[harness_id]["side_exits"] = side_exits
+
     with open(log_path, "r", encoding="utf-8", errors="ignore") as f:
         for line in f:
             # --- State and Metric Transition Logic ---
@@ -199,10 +205,7 @@ def parse_log_for_edge_coverage(
                 current_side_exits = 0  # Reset for the new trace
 
             if harness_match:
-                # Before switching harness, save the metrics for the previous one.
-                if current_harness_id and current_trace_length > 0:
-                    coverage_by_harness[current_harness_id]["trace_length"] = current_trace_length
-                    coverage_by_harness[current_harness_id]["side_exits"] = current_side_exits
+                flush_harness_metrics(current_harness_id, current_trace_length, current_side_exits)
 
                 # Reset state for the new harness.
                 current_harness_id = harness_match.group(1)
@@ -247,10 +250,8 @@ def parse_log_for_edge_coverage(
                 event_id = coverage_manager.get_or_create_id("rare_event", rare_event)
                 coverage_by_harness[current_harness_id]["rare_events"][event_id] += 1
 
-    # After the loop, save the metrics for the very last harness in the file.
-    if current_harness_id and current_trace_length > 0:
-        coverage_by_harness[current_harness_id]["trace_length"] = current_trace_length
-        coverage_by_harness[current_harness_id]["side_exits"] = current_side_exits
+    # After the loop, flush the last harness.
+    flush_harness_metrics(current_harness_id, current_trace_length, current_side_exits)
 
     return dict(coverage_by_harness)
 

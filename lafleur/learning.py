@@ -28,11 +28,17 @@ class MutatorScoreTracker:
     WEIGHT_FLOOR = 0.05  # Minimum weight to ensure all mutators get some chance
     DEFAULT_EPSILON = 0.1  # Probability of random exploration vs exploitation
 
+    DEFAULT_STRATEGIES = ["deterministic", "havoc", "spam"]
+
     def __init__(
-        self, all_transformers: list[type], decay_factor: float = 0.995, min_attempts: int = 10
+        self,
+        all_transformers: list[type],
+        decay_factor: float = 0.995,
+        min_attempts: int = 10,
+        strategies: list[str] | None = None,
     ):
         self.all_transformers = [t.__name__ for t in all_transformers]
-        self.strategies = ["deterministic", "havoc", "spam"]
+        self.strategies = strategies if strategies is not None else list(self.DEFAULT_STRATEGIES)
         self.decay_factor = decay_factor
         self.min_attempts = min_attempts
 

@@ -259,13 +259,23 @@ class TestMutatorScoreTracker(unittest.TestCase):
 
         tracker = MutatorScoreTracker(self.transformers)
 
-        # Should have the three standard strategies
+        # Should have the three default strategies
         self.assertEqual(tracker.strategies, ["deterministic", "havoc", "spam"])
 
         # Should have transformer names
         self.assertIn("MockTransformer1", tracker.all_transformers)
         self.assertIn("MockTransformer2", tracker.all_transformers)
         self.assertIn("MockTransformer3", tracker.all_transformers)
+
+    @patch("lafleur.learning.MUTATOR_SCORES_FILE")
+    def test_custom_strategies(self, mock_file_path):
+        """Test that custom strategies can be passed to the constructor."""
+        mock_file_path.is_file.return_value = False
+
+        custom = ["deterministic", "havoc", "spam", "helper_sniper", "sniper"]
+        tracker = MutatorScoreTracker(self.transformers, strategies=custom)
+
+        self.assertEqual(tracker.strategies, custom)
 
     @patch("lafleur.learning.MUTATOR_SCORES_FILE")
     def test_load_state_handles_corrupted_file(self, mock_file_path):

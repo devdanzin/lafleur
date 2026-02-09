@@ -42,11 +42,13 @@ except ImportError:
     HAS_TESTINTERNALCAPI = False
 
 
-# Bloom filter constants
-BLOOM_SEED = 20221211
-PyHASH_MULTIPLIER = 1000003
-BLOOM_K = 6
-BLOOM_WORDS = 8
+# Bloom filter constants from CPython's pycore_optimizer.h.
+# These must match the values used by the JIT's bloom filter implementation
+# to correctly replicate bloom_filter_may_contain().
+BLOOM_SEED = 20221211  # _Py_BLOOM_SEED
+PyHASH_MULTIPLIER = 1000003  # _PyHASH_MULTIPLIER (from pyhash.h)
+BLOOM_K = 6  # _Py_BLOOM_K (number of hash probes)
+BLOOM_WORDS = 8  # _Py_BLOOM_WORDS (uint32 words in filter)
 
 
 # ---------------------------------------------------------------------------

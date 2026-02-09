@@ -18,6 +18,7 @@ Output Protocol:
 from __future__ import annotations
 
 import argparse
+import collections.abc
 import ctypes
 import json
 import sys
@@ -178,15 +179,86 @@ if hasattr(sys, "set_int_max_str_digits"):
     sys.set_int_max_str_digits(4300)
 
 
-def get_jit_stats(namespace: dict) -> dict:
+def walk_code_objects(
+    code_obj: CodeType, visited: set | None = None
+) -> collections.abc.Generator[CodeType, None, None]:
+    """Recursively yield a code object and all its nested code objects."""
+    if visited is None:
+        visited = set()
+    if code_obj in visited:
+        return
+    visited.add(code_obj)
+    yield code_obj
+    for const in code_obj.co_consts:
+        if isinstance(const, CodeType):
+            yield from walk_code_objects(const, visited)
+
+
+def snapshot_executor_state(namespace: dict) -> dict[tuple[int, int], int]:
+    """Record exit_count for all JIT executors currently in the namespace.
+
+    Walks the shared namespace and records the current exit_count for every
+    executor, keyed by (id(code_object), bytecode_offset). This snapshot is
+    taken BEFORE a script runs so that after execution, get_jit_stats can
+    compute delta metrics isolating that script's contribution.
+
+    Args:
+        namespace: The shared globals dict from the session.
+
+    Returns:
+        A dict mapping (id(code_obj), bytecode_offset) -> exit_count.
+        Empty dict if _opcode is unavailable.
+    """
+    if not HAS_OPCODE:
+        return {}
+
+    snapshot: dict[tuple[int, int], int] = {}
+
+    for name, obj in namespace.items():
+        if not isinstance(name, str) or name.startswith("_"):
+            continue
+
+        root_code_objs: list[CodeType] = []
+        if isinstance(obj, FunctionType):
+            root_code_objs.append(obj.__code__)
+        elif isinstance(obj, MethodType):
+            root_code_objs.append(obj.__func__.__code__)
+        elif isinstance(obj, type):
+            for method in vars(obj).values():
+                if isinstance(method, FunctionType):
+                    root_code_objs.append(method.__code__)
+
+        for root_code in root_code_objs:
+            for code in walk_code_objects(root_code):
+                co_code = code.co_code
+                for offset in range(0, len(co_code), 2):
+                    try:
+                        executor = _opcode.get_executor(code, offset)
+                        if executor:
+                            executor_ptr = ctypes.cast(
+                                id(executor), ctypes.POINTER(PyExecutorObject)
+                            )
+                            snapshot[(id(code), offset)] = executor_ptr.contents.exit_count
+                    except (ValueError, TypeError):
+                        pass
+
+    return snapshot
+
+
+def get_jit_stats(namespace: dict, baseline: dict[tuple[int, int], int] | None = None) -> dict:
     """
     Scan a namespace for functions and count active JIT executors.
 
     Uses _opcode.get_executor() to check if functions have been JIT-compiled.
-    Scans bytecode offsets 0, 2, 4, ... up to 100 looking for executors.
+    Scans all bytecode offsets looking for executors.
+
+    When *baseline* is provided (from snapshot_executor_state), delta metrics
+    are computed isolating this script's contribution to executor instability.
 
     Args:
         namespace: The globals dict from the executed script.
+        baseline: Optional snapshot of executor exit counts taken before the
+            script ran. When provided, delta metrics are included in the result.
 
     Returns:
         A dict with executor count and other JIT metrics.
@@ -201,6 +273,13 @@ def get_jit_stats(namespace: dict) -> dict:
     min_code_size = float("inf")
     max_exit_density = 0.0
 
+    # Delta metrics (only computed when baseline is provided)
+    delta_max_exit_count = 0
+    delta_max_exit_density = 0.0
+    delta_total_exits = 0
+    delta_new_executors = 0
+    delta_new_zombies = 0
+
     if not HAS_OPCODE:
         return {
             "executors": 0,
@@ -213,13 +292,15 @@ def get_jit_stats(namespace: dict) -> dict:
             "max_exit_density": 0.0,
         }
 
-    def inspect_executor(executor):
+    def inspect_executor(executor, code_id: int, offset: int):
         nonlocal zombie_traces, valid_traces, warm_traces
         nonlocal max_exit_count, max_chain_depth, min_code_size, max_exit_density
+        nonlocal delta_max_exit_count, delta_max_exit_density, delta_total_exits
+        nonlocal delta_new_executors, delta_new_zombies
         try:
             executor_ptr = ctypes.cast(id(executor), ctypes.POINTER(PyExecutorObject))
 
-            # Access fields via .vm_data
+            # --- Existing absolute metrics (unchanged) ---
             if executor_ptr.contents.vm_data.pending_deletion:
                 zombie_traces += 1
             if executor_ptr.contents.vm_data.valid:
@@ -227,7 +308,6 @@ def get_jit_stats(namespace: dict) -> dict:
             if executor_ptr.contents.vm_data.warm:
                 warm_traces += 1
 
-            # Read new metrics
             exit_count = executor_ptr.contents.exit_count
             chain_depth = executor_ptr.contents.vm_data.chain_depth
             code_size = executor_ptr.contents.code_size
@@ -236,7 +316,6 @@ def get_jit_stats(namespace: dict) -> dict:
             max_chain_depth = max(max_chain_depth, chain_depth)
             if code_size > 0:
                 min_code_size = min(min_code_size, code_size)
-                # Calculate exit density (instability per instruction)
                 density = exit_count / code_size
                 max_exit_density = max(max_exit_density, density)
 
@@ -245,30 +324,39 @@ def get_jit_stats(namespace: dict) -> dict:
                     flush=True,
                 )
 
-                # Scan for watched variables if this executor is unstable
                 if density >= 0.0:  # DEBUG: Forced scan for testing
                     print(f"[DEBUG] Triggering scan for density {density:.2f} >= 0.0", flush=True)
                     watched = scan_watched_variables(executor_ptr, namespace)
                     if watched:
                         print(f"[EKG] WATCHED: {', '.join(watched)}", flush=True)
 
+            # --- Delta metrics (only when baseline provided) ---
+            if baseline is not None:
+                key = (code_id, offset)
+                if key in baseline:
+                    # Pre-existing executor: compute exit count increase
+                    delta_exits = exit_count - baseline[key]
+                    if delta_exits > 0:
+                        delta_max_exit_count = max(delta_max_exit_count, delta_exits)
+                        delta_total_exits += delta_exits
+                        if code_size > 0:
+                            delta_density = delta_exits / code_size
+                            delta_max_exit_density = max(delta_max_exit_density, delta_density)
+                else:
+                    # New executor created by this script
+                    delta_new_executors += 1
+                    delta_max_exit_count = max(delta_max_exit_count, exit_count)
+                    delta_total_exits += exit_count
+                    if code_size > 0:
+                        delta_density = exit_count / code_size
+                        delta_max_exit_density = max(delta_max_exit_density, delta_density)
+
+                    # Track new zombies (didn't exist before, now pending_deletion)
+                    if executor_ptr.contents.vm_data.pending_deletion:
+                        delta_new_zombies += 1
+
         except Exception as e:
             print(f"DEBUG: Introspection failed: {e}")
-
-    def walk_code_objects(code_obj: CodeType, visited: set | None = None):
-        """Recursively yield a code object and all its nested code objects."""
-        if visited is None:
-            visited = set()
-
-        if code_obj in visited:
-            return
-
-        visited.add(code_obj)
-        yield code_obj
-
-        for const in code_obj.co_consts:
-            if isinstance(const, CodeType):
-                yield from walk_code_objects(const, visited)
 
     for name, obj in namespace.items():
         if not isinstance(name, str) or name.startswith("_"):
@@ -289,19 +377,17 @@ def get_jit_stats(namespace: dict) -> dict:
         for root_code in root_code_objs:
             for code in walk_code_objects(root_code):
                 functions_scanned += 1
-                # Scan the ENTIRE bytecode, not just the first 100 bytes
                 co_code = code.co_code
                 for offset in range(0, len(co_code), 2):
                     try:
                         executor = _opcode.get_executor(code, offset)
                         if executor:
                             executor_count += 1
-                            inspect_executor(executor)
-                            # Don't break! A function can have multiple executors (loops).
+                            inspect_executor(executor, id(code), offset)
                     except (ValueError, TypeError):
                         pass
 
-    return {
+    result = {
         "executors": executor_count,
         "functions_scanned": functions_scanned,
         "jit_available": True,
@@ -313,6 +399,15 @@ def get_jit_stats(namespace: dict) -> dict:
         "min_code_size": min_code_size if min_code_size != float("inf") else 0,
         "max_exit_density": max_exit_density,
     }
+
+    if baseline is not None:
+        result["delta_max_exit_count"] = delta_max_exit_count
+        result["delta_max_exit_density"] = delta_max_exit_density
+        result["delta_total_exits"] = delta_total_exits
+        result["delta_new_executors"] = delta_new_executors
+        result["delta_new_zombies"] = delta_new_zombies
+
+    return result
 
 
 def run_session(files: list[str]) -> int:
@@ -352,6 +447,9 @@ def run_session(files: list[str]) -> int:
         # Save original sys.argv to restore later
         original_argv = sys.argv
 
+        # Snapshot executor state before this script runs
+        baseline = snapshot_executor_state(shared_globals)
+
         try:
             # Read and compile the script
             source = path.read_text(encoding="utf-8")
@@ -368,8 +466,8 @@ def run_session(files: list[str]) -> int:
             # Execute in shared namespace
             exec(code, shared_globals)
 
-            # Report JIT stats after successful execution
-            stats = get_jit_stats(shared_globals)
+            # Report JIT stats with delta from baseline
+            stats = get_jit_stats(shared_globals, baseline=baseline)
             stats["file"] = path.name
             stats["status"] = "success"
             print(f"[DRIVER:STATS] {json.dumps(stats)}", flush=True)

@@ -5,14 +5,20 @@ This module tests run_session error handling, JIT stats collection with
 degraded mode, and other edge cases that are hard to hit via subprocess.
 """
 
+import ctypes
 import json
 import tempfile
 import unittest
 from io import StringIO
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
-from lafleur.driver import run_session, get_jit_stats
+from lafleur.driver import (
+    get_jit_stats,
+    run_session,
+    snapshot_executor_state,
+    walk_code_objects,
+)
 
 
 class TestRunSessionErrorHandling(unittest.TestCase):
@@ -359,6 +365,302 @@ class TestDriverVerboseMode(unittest.TestCase):
 
         output = captured_stdout.getvalue()
         self.assertIn("Scripts to execute", output)
+
+
+def _make_mock_executor_ptr(
+    exit_count=0, code_size=10, pending_deletion=0, valid=1, warm=1, chain_depth=0
+):
+    """Create a mock executor pointer with configurable fields."""
+    mock_ptr = MagicMock()
+    mock_vm_data = MagicMock()
+    type(mock_vm_data).pending_deletion = unittest.mock.PropertyMock(return_value=pending_deletion)
+    type(mock_vm_data).valid = unittest.mock.PropertyMock(return_value=valid)
+    type(mock_vm_data).warm = unittest.mock.PropertyMock(return_value=warm)
+    type(mock_vm_data).chain_depth = unittest.mock.PropertyMock(return_value=chain_depth)
+    mock_ptr.contents.vm_data = mock_vm_data
+    type(mock_ptr.contents).exit_count = unittest.mock.PropertyMock(return_value=exit_count)
+    type(mock_ptr.contents).code_size = unittest.mock.PropertyMock(return_value=code_size)
+    # Provide a minimal bloom filter so scan_watched_variables doesn't crash
+    mock_bloom = MagicMock()
+    mock_bloom.bits = (ctypes.c_uint32 * 8)(*[0] * 8)
+    mock_vm_data.bloom = mock_bloom
+    return mock_ptr
+
+
+class TestWalkCodeObjects(unittest.TestCase):
+    """Tests for the module-level walk_code_objects function."""
+
+    def test_walk_yields_nested(self):
+        """Verify both outer and inner code objects are yielded."""
+
+        def outer():
+            def inner():
+                pass
+
+        code_objs = list(walk_code_objects(outer.__code__))
+        # Should yield at least 2: outer and inner
+        self.assertGreaterEqual(len(code_objs), 2)
+        self.assertIn(outer.__code__, code_objs)
+
+    def test_walk_no_infinite_recursion(self):
+        """Verify the visited set prevents infinite loops."""
+
+        def simple():
+            pass
+
+        # Call twice — should complete both times
+        list(walk_code_objects(simple.__code__))
+        result = list(walk_code_objects(simple.__code__))
+        self.assertGreaterEqual(len(result), 1)
+
+
+class TestSnapshotExecutorState(unittest.TestCase):
+    """Tests for snapshot_executor_state function."""
+
+    def test_snapshot_empty_namespace(self):
+        """Empty namespace returns empty snapshot."""
+        result = snapshot_executor_state({})
+        self.assertEqual(result, {})
+
+    def test_snapshot_without_opcode(self):
+        """Returns empty dict when _opcode is unavailable."""
+        with patch("lafleur.driver.HAS_OPCODE", False):
+            result = snapshot_executor_state({"func": lambda: None})
+        self.assertEqual(result, {})
+
+    def test_snapshot_skips_private_names(self):
+        """Private names (starting with _) should be skipped."""
+
+        def _private_func():
+            pass
+
+        mock_ptr = _make_mock_executor_ptr(exit_count=42)
+        mock_executor = MagicMock()
+
+        with (
+            patch("lafleur.driver.HAS_OPCODE", True),
+            patch("lafleur.driver._opcode") as mock_opcode,
+            patch("lafleur.driver.ctypes.cast", return_value=mock_ptr),
+        ):
+            mock_opcode.get_executor.return_value = mock_executor
+            result = snapshot_executor_state({"_private_func": _private_func})
+
+        self.assertEqual(result, {})
+
+    def test_snapshot_returns_dict_of_tuples(self):
+        """Verify snapshot captures (code_id, offset) -> exit_count."""
+
+        def dummy_func():
+            pass
+
+        mock_ptr = _make_mock_executor_ptr(exit_count=42)
+        mock_executor = MagicMock()
+
+        with (
+            patch("lafleur.driver.HAS_OPCODE", True),
+            patch("lafleur.driver._opcode") as mock_opcode,
+            patch("lafleur.driver.ctypes.cast", return_value=mock_ptr),
+        ):
+            # Return executor only for the first offset, None for the rest
+            mock_opcode.get_executor.side_effect = [mock_executor] + [None] * 5000
+            result = snapshot_executor_state({"func": dummy_func})
+
+        self.assertGreater(len(result), 0)
+        # All keys should be (int, int) tuples, all values should be 42
+        for key, value in result.items():
+            self.assertIsInstance(key, tuple)
+            self.assertEqual(len(key), 2)
+            self.assertEqual(value, 42)
+
+    def test_snapshot_handles_classes(self):
+        """Verify class methods are scanned."""
+
+        class MyClass:
+            def method(self):
+                pass
+
+        mock_ptr = _make_mock_executor_ptr(exit_count=10)
+        mock_executor = MagicMock()
+
+        with (
+            patch("lafleur.driver.HAS_OPCODE", True),
+            patch("lafleur.driver._opcode") as mock_opcode,
+            patch("lafleur.driver.ctypes.cast", return_value=mock_ptr),
+        ):
+            mock_opcode.get_executor.side_effect = [mock_executor] + [None] * 5000
+            result = snapshot_executor_state({"MyClass": MyClass})
+
+        self.assertGreater(len(result), 0)
+
+
+class TestGetJitStatsDelta(unittest.TestCase):
+    """Tests for get_jit_stats delta metrics with baseline."""
+
+    def test_without_baseline_no_delta_fields(self):
+        """Calling without baseline should NOT include delta fields."""
+
+        def dummy():
+            pass
+
+        with (
+            patch("lafleur.driver.HAS_OPCODE", True),
+            patch("lafleur.driver._opcode") as mock_opcode,
+        ):
+            mock_opcode.get_executor.return_value = None
+            stats = get_jit_stats({"func": dummy})
+
+        self.assertNotIn("delta_max_exit_density", stats)
+        self.assertNotIn("delta_total_exits", stats)
+        self.assertNotIn("delta_new_executors", stats)
+        self.assertNotIn("delta_new_zombies", stats)
+
+    def test_with_empty_baseline_all_executors_are_new(self):
+        """Empty baseline means all found executors are new."""
+
+        def dummy():
+            pass
+
+        mock_ptr = _make_mock_executor_ptr(exit_count=10, code_size=5)
+        mock_executor = MagicMock()
+
+        with (
+            patch("lafleur.driver.HAS_OPCODE", True),
+            patch("lafleur.driver._opcode") as mock_opcode,
+            patch("lafleur.driver.ctypes.cast", return_value=mock_ptr),
+            patch("sys.stdout", new_callable=StringIO),
+        ):
+            mock_opcode.get_executor.side_effect = [mock_executor] + [None] * 5000
+            stats = get_jit_stats({"func": dummy}, baseline={})
+
+        self.assertEqual(stats["delta_new_executors"], 1)
+        self.assertEqual(stats["delta_total_exits"], 10)
+        self.assertAlmostEqual(stats["delta_max_exit_density"], 2.0)
+        self.assertEqual(stats["delta_max_exit_count"], 10)
+
+    def test_with_matching_baseline_computes_delta(self):
+        """Pre-existing executor: delta = current - baseline."""
+
+        def dummy():
+            pass
+
+        mock_ptr = _make_mock_executor_ptr(exit_count=15, code_size=5)
+        mock_executor = MagicMock()
+
+        with (
+            patch("lafleur.driver.HAS_OPCODE", True),
+            patch("lafleur.driver._opcode") as mock_opcode,
+            patch("lafleur.driver.ctypes.cast", return_value=mock_ptr),
+            patch("sys.stdout", new_callable=StringIO),
+        ):
+            # We need to figure out which (code_id, offset) will be used
+            # The code_id is id(code) for the code object from walk_code_objects
+            # and offset is the first bytecode offset where get_executor returns non-None
+            code_obj = dummy.__code__
+            # The first code object yielded by walk_code_objects will be dummy.__code__
+            # The first offset is 0
+            baseline = {(id(code_obj), 0): 5}
+
+            mock_opcode.get_executor.side_effect = [mock_executor] + [None] * 5000
+            stats = get_jit_stats({"func": dummy}, baseline=baseline)
+
+        # delta = 15 - 5 = 10
+        self.assertEqual(stats["delta_total_exits"], 10)
+        self.assertAlmostEqual(stats["delta_max_exit_density"], 2.0)  # 10/5
+        self.assertEqual(stats["delta_new_executors"], 0)
+
+    def test_baseline_no_increase_no_delta(self):
+        """When exit count hasn't increased, delta should be zero."""
+
+        def dummy():
+            pass
+
+        mock_ptr = _make_mock_executor_ptr(exit_count=15, code_size=5)
+        mock_executor = MagicMock()
+
+        with (
+            patch("lafleur.driver.HAS_OPCODE", True),
+            patch("lafleur.driver._opcode") as mock_opcode,
+            patch("lafleur.driver.ctypes.cast", return_value=mock_ptr),
+            patch("sys.stdout", new_callable=StringIO),
+        ):
+            code_obj = dummy.__code__
+            baseline = {(id(code_obj), 0): 15}  # Same as current
+
+            mock_opcode.get_executor.side_effect = [mock_executor] + [None] * 5000
+            stats = get_jit_stats({"func": dummy}, baseline=baseline)
+
+        self.assertEqual(stats["delta_total_exits"], 0)
+        self.assertAlmostEqual(stats["delta_max_exit_density"], 0.0)
+
+    def test_delta_new_zombies(self):
+        """New executor with pending_deletion should count as delta_new_zombies."""
+
+        def dummy():
+            pass
+
+        mock_ptr = _make_mock_executor_ptr(exit_count=5, code_size=10, pending_deletion=1)
+        mock_executor = MagicMock()
+
+        with (
+            patch("lafleur.driver.HAS_OPCODE", True),
+            patch("lafleur.driver._opcode") as mock_opcode,
+            patch("lafleur.driver.ctypes.cast", return_value=mock_ptr),
+            patch("sys.stdout", new_callable=StringIO),
+        ):
+            mock_opcode.get_executor.side_effect = [mock_executor] + [None] * 5000
+            stats = get_jit_stats({"func": dummy}, baseline={})
+
+        self.assertEqual(stats["delta_new_zombies"], 1)
+        self.assertEqual(stats["delta_new_executors"], 1)
+
+
+class TestRunSessionDeltaStats(unittest.TestCase):
+    """Integration test for run_session emitting delta stats."""
+
+    def setUp(self):
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.temp_path = Path(self.temp_dir.name)
+
+    def tearDown(self):
+        self.temp_dir.cleanup()
+
+    def test_run_session_emits_delta_stats(self):
+        """Verify run_session passes baseline to get_jit_stats for each script."""
+        script_a = self.temp_path / "a.py"
+        script_a.write_text(
+            "def hot():\n"
+            "    total = 0\n"
+            "    for i in range(100):\n"
+            "        total += i\n"
+            "    return total\n"
+            "hot()\n"
+        )
+
+        script_b = self.temp_path / "b.py"
+        script_b.write_text("hot()\n")
+
+        captured_stdout = StringIO()
+        with patch("sys.stdout", captured_stdout):
+            run_session([str(script_a), str(script_b)])
+
+        output = captured_stdout.getvalue()
+        stats_lines = [line for line in output.splitlines() if line.startswith("[DRIVER:STATS]")]
+        self.assertEqual(len(stats_lines), 2)
+
+        stats_a = json.loads(stats_lines[0].split("[DRIVER:STATS] ", 1)[1])
+        stats_b = json.loads(stats_lines[1].split("[DRIVER:STATS] ", 1)[1])
+
+        # Both should have success status
+        self.assertEqual(stats_a["status"], "success")
+        self.assertEqual(stats_b["status"], "success")
+
+        # If JIT is available, delta fields should be present
+        if "delta_max_exit_density" in stats_a:
+            self.assertIsInstance(stats_a["delta_max_exit_density"], (int, float))
+            self.assertIsInstance(stats_a["delta_total_exits"], int)
+        if "delta_max_exit_density" in stats_b:
+            self.assertIsInstance(stats_b["delta_max_exit_density"], (int, float))
+            self.assertIsInstance(stats_b["delta_total_exits"], int)
 
 
 if __name__ == "__main__":

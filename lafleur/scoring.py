@@ -245,11 +245,16 @@ class ScoringManager:
         info = NewCoverageInfo()
         total_edges = 0
 
-        # Pre-build reverse map lookup
+        # Pre-build reverse map and counter attribute lookups
         reverse_maps = {
             "uops": self.coverage_manager.reverse_uop_map,
             "edges": self.coverage_manager.reverse_edge_map,
             "rare_events": self.coverage_manager.reverse_rare_event_map,
+        }
+        counter_attrs = {
+            "uops": ("global_uops", "relative_uops"),
+            "edges": ("global_edges", "relative_edges"),
+            "rare_events": ("global_rare_events", "relative_rare_events"),
         }
 
         for harness_id, child_data in child_coverage.items():
@@ -263,23 +268,19 @@ class ScoringManager:
                     cov_type, {}
                 )
                 reverse_map = reverse_maps[cov_type]
-
-                global_counter_attr = f"global_{cov_type}"
-                relative_counter_attr = f"relative_{cov_type}"
+                global_attr, relative_attr = counter_attrs[cov_type]
 
                 for item_id in child_data.get(cov_type, {}):
                     item_str = reverse_map.get(item_id, f"ID_{item_id}_(unknown)")
 
                     if item_id not in global_coverage_map:
-                        setattr(info, global_counter_attr, getattr(info, global_counter_attr) + 1)
+                        setattr(info, global_attr, getattr(info, global_attr) + 1)
                         print(
                             f"[NEW GLOBAL {cov_type.upper()[:-1]}] '{item_str}' in harness '{harness_id}'",
                             file=sys.stderr,
                         )
                     elif parent_id is not None and item_id not in lineage_set:
-                        setattr(
-                            info, relative_counter_attr, getattr(info, relative_counter_attr) + 1
-                        )
+                        setattr(info, relative_attr, getattr(info, relative_attr) + 1)
                         print(
                             f"[NEW RELATIVE {cov_type.upper()[:-1]}] '{item_str}' in harness '{harness_id}'",
                             file=sys.stderr,

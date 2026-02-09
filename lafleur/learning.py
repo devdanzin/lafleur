@@ -1,11 +1,16 @@
 """
-This module contains the adaptive learning engine for the lafleur fuzzer.
+Adaptive learning engine for the lafleur fuzzer.
 
-It houses the MutatorScoreTracker, which is responsible for evaluating the
-effectiveness of different mutation strategies over time. By tracking which
-mutators lead to new discoveries and applying a decay algorithm, it allows
-the fuzzer to dynamically adjust its strategy, favoring recently successful
-mutators to guide the evolutionary search more intelligently.
+Houses the MutatorScoreTracker, which evaluates the effectiveness of
+mutation strategies and individual transformers over time. Scores are
+incremented on each successful discovery and decayed periodically based
+on attempt count (every DECAY_INTERVAL attempts), so that recently
+successful mutators are favored while inactive ones gradually lose weight.
+
+Selection uses an epsilon-greedy policy: with probability epsilon the
+fuzzer explores uniformly, otherwise it exploits the learned weights.
+A grace period (min_attempts) ensures new or rarely-used candidates
+receive a neutral baseline weight until enough data is collected.
 """
 
 import json
@@ -21,7 +26,20 @@ MUTATOR_TELEMETRY_LOG = Path("logs/mutator_effectiveness.jsonl")
 
 
 class MutatorScoreTracker:
-    """Tracks the effectiveness of mutators and strategies to guide selection."""
+    """Tracks the effectiveness of mutators and strategies to guide selection.
+
+    Scoring model:
+        - Each discovery adds REWARD_INCREMENT to the responsible strategy
+          and transformer scores via record_success().
+        - Every DECAY_INTERVAL attempts (recorded via record_attempt()),
+          all scores are multiplied by decay_factor, favoring recent successes.
+        - get_weights() returns per-candidate weights for random.choices():
+          candidates below min_attempts get a neutral 1.0, others get their
+          score (floored at WEIGHT_FLOOR). With probability epsilon, uniform
+          weights are returned instead for exploration.
+
+    State is persisted to MUTATOR_SCORES_FILE between sessions.
+    """
 
     # Tuning constants for the adaptive learning algorithm
     REWARD_INCREMENT = 1.0  # Score added per success

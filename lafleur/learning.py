@@ -23,6 +23,11 @@ MUTATOR_TELEMETRY_LOG = Path("logs/mutator_effectiveness.jsonl")
 class MutatorScoreTracker:
     """Tracks the effectiveness of mutators and strategies to guide selection."""
 
+    # Tuning constants for the adaptive learning algorithm
+    REWARD_INCREMENT = 1.0  # Score added per success
+    WEIGHT_FLOOR = 0.05  # Minimum weight to ensure all mutators get some chance
+    DEFAULT_EPSILON = 0.1  # Probability of random exploration vs exploitation
+
     def __init__(
         self, all_transformers: list[type], decay_factor: float = 0.995, min_attempts: int = 10
     ):
@@ -61,19 +66,22 @@ class MutatorScoreTracker:
         )
 
         # Increment scores for the successful items
-        self.scores[strategy_name] += 1.0
+        self.scores[strategy_name] += self.REWARD_INCREMENT
         for t_name in transformer_names:
-            self.scores[t_name] += 1.0
+            self.scores[t_name] += self.REWARD_INCREMENT
 
         # Apply decay to all scores to favor recent successes
         for key in list(self.scores.keys()):
             self.scores[key] *= self.decay_factor
 
-    def get_weights(self, candidates: list[str], epsilon: float = 0.1) -> list[float]:
+    def get_weights(self, candidates: list[str], epsilon: float | None = None) -> list[float]:
         """
         Return a list of weights for a given list of candidates
         using an epsilon-greedy strategy with a grace period and a weight floor.
         """
+        if epsilon is None:
+            epsilon = self.DEFAULT_EPSILON
+
         # Epsilon-greedy: with epsilon probability, explore randomly.
         if random.random() < epsilon:
             return [1.0] * len(candidates)  # Uniform weights for exploration
@@ -86,7 +94,7 @@ class MutatorScoreTracker:
             else:
                 # Ensure even low-scoring mutators have a chance.
                 score = self.scores.get(candidate, 0.0)
-                weights.append(max(0.05, score))
+                weights.append(max(self.WEIGHT_FLOOR, score))
 
         return weights
 

@@ -246,6 +246,45 @@ class ArtifactManager:
             print(f"  [!] Warning: Error processing {label.lower()}: {e}", file=sys.stderr)
             return log_path
 
+    def _save_timeout_artifact(
+        self,
+        source_path: Path,
+        parent_path: Path,
+        dest_dir: Path,
+        label: str,
+        *,
+        log_path: Path | None = None,
+    ) -> None:
+        """Save a timeout artifact (source and optional processed log).
+
+        Args:
+            source_path: Path to the script that timed out.
+            parent_path: Path to the parent script.
+            dest_dir: Directory to save the artifact.
+            label: Human-readable label for messages (e.g. "Timeout", "Regression timeout").
+            log_path: Optional log file to process and save alongside the source.
+        """
+        dest_dir.mkdir(parents=True, exist_ok=True)
+
+        base_name = f"timeout_{source_path.stem}_{parent_path.name}"
+        dest_source = dest_dir / f"{base_name}.py"
+
+        if not self._safe_copy(source_path, dest_source, f"{label} source file"):
+            return
+
+        if log_path is not None:
+            log_to_save = self.process_log_file(
+                log_path, self.max_timeout_log_bytes, f"{label} log"
+            )
+            if log_to_save.exists():
+                log_suffix = self._get_log_suffix(log_to_save)
+                dest_log = dest_dir / f"{base_name}{log_suffix}"
+                self._safe_copy(log_to_save, dest_log, f"{label} log file")
+                if log_to_save != log_path:
+                    log_to_save.unlink()
+
+        print(f"  [+] {label} saved to {dest_source}", file=sys.stderr)
+
     def handle_timeout(
         self, child_source_path: Path, child_log_path: Path, parent_path: Path
     ) -> None:
@@ -261,26 +300,13 @@ class ArtifactManager:
             None (stat key: "timeouts_found")
         """
         print("  [!!!] TIMEOUT DETECTED! Saving test case.", file=sys.stderr)
-
-        # Use the centralized processor with timeout-specific limits
-        log_to_save = self.process_log_file(
-            child_log_path, self.max_timeout_log_bytes, "Timeout log"
+        self._save_timeout_artifact(
+            child_source_path,
+            parent_path,
+            self.timeouts_dir,
+            "Timeout",
+            log_path=child_log_path,
         )
-
-        timeout_source_path = (
-            self.timeouts_dir / f"timeout_{child_source_path.stem}_{parent_path.name}"
-        )
-
-        # Calculate destination log path, preserving truncation marker or compression
-        log_suffix = self._get_log_suffix(log_to_save)
-        timeout_log_path = timeout_source_path.with_name(f"{timeout_source_path.stem}{log_suffix}")
-
-        if log_to_save.exists():
-            shutil.copy(child_source_path, timeout_source_path)
-            shutil.copy(log_to_save, timeout_log_path)
-
-            if log_to_save != child_log_path:
-                log_to_save.unlink()
 
     def save_regression_timeout(self, source_path: Path, parent_path: Path) -> None:
         """
@@ -294,13 +320,12 @@ class ArtifactManager:
             None (stat key: "regression_timeouts_found")
         """
         print("  [!!!] JIT-INDUCED TIMEOUT DETECTED! Saving test case.", file=sys.stderr)
-
-        dest_dir = self.regressions_dir / "timeouts"
-        dest_dir.mkdir(parents=True, exist_ok=True)
-
-        dest_path = dest_dir / f"timeout_{source_path.stem}_{parent_path.name}.py"
-        if self._safe_copy(source_path, dest_path, "regression timeout file"):
-            print(f"  [+] Regression timeout saved to {dest_path}", file=sys.stderr)
+        self._save_timeout_artifact(
+            source_path,
+            parent_path,
+            self.regressions_dir / "timeouts",
+            "Regression timeout",
+        )
 
     def save_jit_hang(self, source_path: Path, parent_path: Path) -> None:
         """

@@ -22,9 +22,12 @@ if TYPE_CHECKING:
     from lafleur.artifacts import ArtifactManager
     from lafleur.corpus_manager import CorpusManager
 
-# Tachycardia (instability) tracking: decay factor to prevent local optima
-# By decaying the saved density, persistent instability remains interesting over generations
+# Coverage types tracked by the fuzzer
+COVERAGE_TYPES = ("uops", "edges", "rare_events")
+
+# Tachycardia (instability) tracking constants
 TACHYCARDIA_DECAY_FACTOR = 0.95
+MAX_DENSITY_GROWTH_FACTOR = 5.0
 
 
 @dataclass
@@ -251,7 +254,7 @@ class ScoringManager:
             def get_reverse_map(cov_type: str) -> dict:
                 return getattr(self.coverage_manager, f"reverse_{cov_type}_map")
 
-            for cov_type in ["uops", "edges", "rare_events"]:
+            for cov_type in COVERAGE_TYPES:
                 lineage_set = lineage_harness_data.get(cov_type, set())
                 global_coverage_map = self.coverage_manager.state["global_coverage"].get(
                     cov_type, {}
@@ -432,7 +435,7 @@ class ScoringManager:
         """Commit the coverage from a new, interesting child to the global state."""
         global_coverage = self.coverage_manager.state["global_coverage"]
         for harness_id, data in child_coverage.items():
-            for cov_type in ["uops", "edges", "rare_events"]:
+            for cov_type in COVERAGE_TYPES:
                 # The data already contains integer IDs from the parser.
                 for item_id, count in data.get(cov_type, {}).items():
                     global_coverage[cov_type].setdefault(item_id, 0)
@@ -576,7 +579,7 @@ class ScoringManager:
 
             if parent_density > 0:
                 # Allow exponential growth (up to 5x), but clamp massive outliers.
-                clamped_density = min(parent_density * 5.0, child_density)
+                clamped_density = min(parent_density * MAX_DENSITY_GROWTH_FACTOR, child_density)
             else:
                 # First generation or no parent data: trust the child's value.
                 clamped_density = child_density

@@ -12,6 +12,7 @@ from lafleur.coverage import (
     RARE_EVENT_REGEX,
     UOP_REGEX,
     CoverageManager,
+    ensure_state_schema,
     parse_log_for_edge_coverage,
 )
 
@@ -350,6 +351,41 @@ ADD_TO_TRACE: _BINARY_OP_ADD_INT
         fake_path = Path("/tmp/nonexistent_log_file_12345.log")
         coverage = parse_log_for_edge_coverage(fake_path, self.manager)
         self.assertEqual(coverage, {})
+
+
+class TestEnsureStateSchema(unittest.TestCase):
+    """Test the ensure_state_schema function."""
+
+    def test_ensure_state_schema_empty_dict(self):
+        """Test that all required keys are created on an empty dict."""
+        state: dict = {}
+        ensure_state_schema(state)
+
+        self.assertIn("uop_map", state)
+        self.assertIn("edge_map", state)
+        self.assertIn("rare_event_map", state)
+        self.assertIn("next_id_map", state)
+        self.assertIn("global_coverage", state)
+        self.assertIn("per_file_coverage", state)
+        self.assertEqual(state["next_id_map"], {"uop": 0, "edge": 0, "rare_event": 0})
+        self.assertEqual(state["global_coverage"], {"uops": {}, "edges": {}, "rare_events": {}})
+
+    def test_ensure_state_schema_preserves_existing(self):
+        """Test that existing values are not overwritten."""
+        state = {"uop_map": {"_LOAD_FAST": 0}, "per_file_coverage": {"f1.py": {}}}
+        ensure_state_schema(state)
+
+        self.assertEqual(state["uop_map"], {"_LOAD_FAST": 0})
+        self.assertEqual(state["per_file_coverage"], {"f1.py": {}})
+
+    def test_ensure_state_schema_idempotent(self):
+        """Test that calling twice produces no changes on the second call."""
+        state: dict = {}
+        ensure_state_schema(state)
+        snapshot = {k: v for k, v in state.items()}
+        ensure_state_schema(state)
+
+        self.assertEqual(state, snapshot)
 
 
 if __name__ == "__main__":

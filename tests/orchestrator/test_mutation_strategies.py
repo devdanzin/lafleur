@@ -27,9 +27,14 @@ class TestApplyMutationStrategy(unittest.TestCase):
         self.controller.ast_mutator = MagicMock()
         self.controller.ast_mutator.transformers = [MagicMock, MagicMock]
 
-        # Mock score_tracker
+        # Mock score_tracker with record_attempt wired to real attempts dict
         self.controller.score_tracker = MagicMock()
         self.controller.score_tracker.attempts = defaultdict(int)
+        self.controller.score_tracker.record_attempt.side_effect = (
+            lambda name: self.controller.score_tracker.attempts.__setitem__(
+                name, self.controller.score_tracker.attempts[name] + 1
+            )
+        )
         self.controller.score_tracker.get_weights.return_value = [1.0, 1.0, 1.0, 1.0]
 
         # Create default mock strategy methods with __name__ attributes
@@ -317,9 +322,14 @@ class TestRunHavocStage(unittest.TestCase):
         self.mock_transformer.return_value.visit = MagicMock(side_effect=lambda x: x)
         self.controller.ast_mutator.transformers = [self.mock_transformer]
 
-        # Mock score_tracker
+        # Mock score_tracker with record_attempt wired to real attempts dict
         self.controller.score_tracker = MagicMock()
         self.controller.score_tracker.attempts = defaultdict(int)
+        self.controller.score_tracker.record_attempt.side_effect = (
+            lambda name: self.controller.score_tracker.attempts.__setitem__(
+                name, self.controller.score_tracker.attempts[name] + 1
+            )
+        )
         self.controller.score_tracker.get_weights.return_value = [1.0]
 
     def test_small_ast_applies_multiple_mutations(self):
@@ -524,9 +534,14 @@ class TestRunSniperStage(unittest.TestCase):
         self.mock_transformer.return_value.visit = MagicMock(side_effect=lambda x: x)
         self.controller.ast_mutator.transformers = [self.mock_transformer]
 
-        # Mock score_tracker (needed by havoc fallback)
+        # Mock score_tracker with record_attempt wired to real attempts dict
         self.controller.score_tracker = MagicMock()
         self.controller.score_tracker.attempts = defaultdict(int)
+        self.controller.score_tracker.record_attempt.side_effect = (
+            lambda name: self.controller.score_tracker.attempts.__setitem__(
+                name, self.controller.score_tracker.attempts[name] + 1
+            )
+        )
         self.controller.score_tracker.get_weights.return_value = [1.0]
 
         self.tree = ast.parse(
@@ -588,9 +603,14 @@ class TestRunHelperSniperStage(unittest.TestCase):
         self.mock_transformer.return_value.visit = MagicMock(side_effect=lambda x: x)
         self.controller.ast_mutator.transformers = [self.mock_transformer]
 
-        # Mock score_tracker (needed by havoc fallback)
+        # Mock score_tracker with record_attempt wired to real attempts dict
         self.controller.score_tracker = MagicMock()
         self.controller.score_tracker.attempts = defaultdict(int)
+        self.controller.score_tracker.record_attempt.side_effect = (
+            lambda name: self.controller.score_tracker.attempts.__setitem__(
+                name, self.controller.score_tracker.attempts[name] + 1
+            )
+        )
         self.controller.score_tracker.get_weights.return_value = [1.0]
 
         self.tree = ast.parse(

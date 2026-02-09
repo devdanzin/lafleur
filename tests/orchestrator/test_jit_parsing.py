@@ -1,3 +1,4 @@
+import io
 import unittest
 import json
 from unittest.mock import patch
@@ -93,6 +94,40 @@ class TestJITParsing(unittest.TestCase):
         # Should return safe defaults
         self.assertEqual(stats["max_exit_count"], 0)
         self.assertEqual(stats["zombie_traces"], 0)
+
+    def test_parse_jit_stats_malformed_json_warns_stderr(self):
+        """Test that malformed JSON in driver stats logs a warning to stderr."""
+        valid_stats = {"max_exit_count": 42, "max_chain_depth": 3, "zombie_traces": 1}
+        log_content = (
+            f"[DRIVER:STATS] {{not valid json}}\n[DRIVER:STATS] {json.dumps(valid_stats)}\n"
+        )
+
+        stderr_capture = io.StringIO()
+        with patch("sys.stderr", stderr_capture):
+            parsed = self.orch.scoring_manager.parse_jit_stats(log_content)
+
+        # Warning should appear on stderr
+        warning_output = stderr_capture.getvalue()
+        self.assertIn("[!] Warning: Failed to parse JIT stats line:", warning_output)
+        self.assertIn("{not valid json}", warning_output)
+
+        # Valid line should still be parsed
+        self.assertEqual(parsed["max_exit_count"], 42)
+        self.assertEqual(parsed["zombie_traces"], 1)
+
+    def test_parse_jit_stats_ekg_parsing(self):
+        """Test that valid EKG watched lines are parsed correctly."""
+        log_content = "[EKG] WATCHED: var1, var2\n[EKG] WATCHED: var3\n"
+
+        parsed = self.orch.scoring_manager.parse_jit_stats(log_content)
+        self.assertEqual(sorted(parsed["watched_dependencies"]), ["var1", "var2", "var3"])
+
+    def test_parse_jit_stats_ekg_empty_watched(self):
+        """Test that EKG watched line with empty content is handled gracefully."""
+        log_content = "[EKG] WATCHED:\n[EKG] WATCHED: valid_var\n"
+
+        parsed = self.orch.scoring_manager.parse_jit_stats(log_content)
+        self.assertEqual(parsed["watched_dependencies"], ["valid_var"])
 
 
 if __name__ == "__main__":

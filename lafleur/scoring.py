@@ -336,8 +336,12 @@ class ScoringManager:
                     if code_size > 0:
                         min_code_sizes.append(code_size)
 
-                except (json.JSONDecodeError, IndexError):
-                    pass
+                except (json.JSONDecodeError, IndexError) as e:
+                    print(
+                        f"  [!] Warning: Failed to parse JIT stats line: {e}. "
+                        f"Line content: {line[:200]}",
+                        file=sys.stderr,
+                    )
             elif line.startswith("[EKG] WATCHED:"):
                 try:
                     variables = line.split("[EKG] WATCHED:", 1)[1].strip()
@@ -346,8 +350,12 @@ class ScoringManager:
                             var = var.strip()
                             if var:
                                 watched_dependencies.add(var)
-                except IndexError:
-                    pass
+                except IndexError as e:
+                    print(
+                        f"  [!] Warning: Failed to parse EKG watched line: {e}. "
+                        f"Line content: {line[:200]}",
+                        file=sys.stderr,
+                    )
 
         if min_code_sizes:
             aggregated_stats["min_code_size"] = min(min_code_sizes)

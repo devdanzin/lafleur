@@ -557,7 +557,6 @@ class LafleurOrchestrator:
                     mutation_seed,
                     ctx.parent_file_size,
                     ctx.parent_lineage_edge_count,
-                    self.differential_testing,
                 )
 
                 nojit_cv = exec_result.nojit_cv

@@ -115,6 +115,30 @@ class ArtifactManager:
         self.divergences_dir.mkdir(parents=True, exist_ok=True)
         self.regressions_dir.mkdir(parents=True, exist_ok=True)
 
+    def _safe_copy(
+        self, src: Path, dst: Path, label: str, *, preserve_metadata: bool = False
+    ) -> bool:
+        """Copy a file, logging on IOError instead of crashing.
+
+        Args:
+            src: Source path.
+            dst: Destination path.
+            label: Human-readable label for error messages (e.g. "regression file").
+            preserve_metadata: If True, use shutil.copy2 to preserve timestamps.
+
+        Returns:
+            True if the copy succeeded, False otherwise.
+        """
+        try:
+            if preserve_metadata:
+                shutil.copy2(src, dst)
+            else:
+                shutil.copy(src, dst)
+            return True
+        except IOError as e:
+            print(f"  [!] CRITICAL: Could not save {label}: {e}", file=sys.stderr)
+            return False
+
     def truncate_huge_log(self, log_path: Path, original_size: int) -> Path:
         """
         Truncate a huge log file by keeping only the head and tail.
@@ -268,11 +292,8 @@ class ArtifactManager:
         dest_dir.mkdir(parents=True, exist_ok=True)
 
         dest_path = dest_dir / f"timeout_{source_path.stem}_{parent_path.name}.py"
-        try:
-            shutil.copy(source_path, dest_path)
+        if self._safe_copy(source_path, dest_path, "regression timeout file"):
             print(f"  [+] Regression timeout saved to {dest_path}", file=sys.stderr)
-        except IOError as e:
-            print(f"  [!] CRITICAL: Could not save regression timeout file: {e}", file=sys.stderr)
 
     def save_jit_hang(self, source_path: Path, parent_path: Path) -> None:
         """
@@ -291,11 +312,8 @@ class ArtifactManager:
         dest_dir.mkdir(parents=True, exist_ok=True)
 
         dest_path = dest_dir / f"hang_{source_path.stem}_{parent_path.name}.py"
-        try:
-            shutil.copy(source_path, dest_path)
+        if self._safe_copy(source_path, dest_path, "JIT hang file"):
             print(f"  [+] JIT hang saved to {dest_path}", file=sys.stderr)
-        except IOError as e:
-            print(f"  [!] CRITICAL: Could not save JIT hang file: {e}", file=sys.stderr)
 
     def save_session_crash(
         self, scripts: list[Path], exit_code: int, crash_signature: CrashSignature | None = None
@@ -341,7 +359,9 @@ class ArtifactManager:
                 dest_name = f"{i:02d}_script.py"
 
             dest_path = crash_dir / dest_name
-            shutil.copy2(script_path, dest_path)
+            self._safe_copy(
+                script_path, dest_path, f"session script {dest_name}", preserve_metadata=True
+            )
             script_names.append(dest_name)
 
         # Create reproduce.sh script
@@ -467,13 +487,10 @@ class ArtifactManager:
 
                 crash_log_path = crash_dir / crash_log_name
 
-                try:
-                    shutil.copy(log_to_save, crash_log_path)
+                if self._safe_copy(log_to_save, crash_log_path, "session crash log"):
                     if log_to_save != log_path:
                         log_to_save.unlink()
                     print(f"  [!!!] Session crash bundle saved to: {crash_dir}", file=sys.stderr)
-                except IOError as e:
-                    print(f"  [!] Error saving session crash log: {e}", file=sys.stderr)
 
             else:
                 # Standard mode: save single child file
@@ -492,15 +509,11 @@ class ArtifactManager:
                 else:
                     crash_log_path = self.crashes_dir / f"{Path(crash_base_name).stem}.log"
 
-                try:
-                    shutil.copy(source_path, crash_source_path)
-                    shutil.copy(log_to_save, crash_log_path)
-
+                self._safe_copy(source_path, crash_source_path, "crash source file")
+                if self._safe_copy(log_to_save, crash_log_path, "crash log file"):
                     # Clean up the processed temp log if we created one
                     if log_to_save != log_path:
                         log_to_save.unlink()
-                except IOError as e:
-                    print(f"  [!] Error saving crash artifacts: {e}", file=sys.stderr)
 
             return True
 
@@ -533,22 +546,23 @@ class ArtifactManager:
         # Create a .diff file to show the difference
         diff_path = dest_dir / f"{base_filename}.diff"
 
+        if not self._safe_copy(source_path, dest_source_path, "divergence source file"):
+            return
+
+        # Use difflib to create a clear diff of the outputs
+        diff = difflib.unified_diff(
+            nojit_output.splitlines(keepends=True),
+            jit_output.splitlines(keepends=True),
+            fromfile="nojit_output",
+            tofile="jit_output",
+        )
         try:
-            shutil.copy(source_path, dest_source_path)
-
-            # Use difflib to create a clear diff of the outputs
-            diff = difflib.unified_diff(
-                nojit_output.splitlines(keepends=True),
-                jit_output.splitlines(keepends=True),
-                fromfile="nojit_output",
-                tofile="jit_output",
-            )
             diff_path.write_text("".join(diff))
-
-            print(f"  [+] Divergence artifacts saved to {dest_dir}", file=sys.stderr)
-
         except IOError as e:
-            print(f"  [!] CRITICAL: Could not save divergence files: {e}", file=sys.stderr)
+            print(f"  [!] CRITICAL: Could not save divergence diff: {e}", file=sys.stderr)
+            return
+
+        print(f"  [+] Divergence artifacts saved to {dest_dir}", file=sys.stderr)
 
     def save_regression(self, source_path: Path, jit_time: float, nojit_time: float) -> None:
         """
@@ -568,11 +582,8 @@ class ArtifactManager:
         filename = f"regression_jit_{jit_time:.0f}ms_nojit_{nojit_time:.0f}ms_{source_path.name}"
         dest_path = self.regressions_dir / filename
 
-        try:
-            shutil.copy(source_path, dest_path)
+        if self._safe_copy(source_path, dest_path, "regression file"):
             print(f"  [+] Regression saved to {dest_path}", file=sys.stderr)
-        except IOError as e:
-            print(f"  [!] CRITICAL: Could not save regression file: {e}", file=sys.stderr)
 
     def update_and_save_run_stats(self, global_seed_counter: int) -> None:
         """Update dynamic run statistics and save them to the stats file."""

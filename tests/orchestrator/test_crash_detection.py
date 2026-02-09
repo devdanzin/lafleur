@@ -139,13 +139,14 @@ class TestCheckForCrash(unittest.TestCase):
         with patch.object(
             self.artifact_manager, "process_log_file", return_value=mock_processed_log
         ) as mock_process:
-            with patch("shutil.copy"):
-                with patch("sys.stderr", new_callable=io.StringIO):
-                    self.artifact_manager.check_for_crash(0, log_content, source_path, log_path)
+            with patch.object(self.artifact_manager, "_safe_copy", return_value=True):
+                with patch("pathlib.Path.unlink"):
+                    with patch("sys.stderr", new_callable=io.StringIO):
+                        self.artifact_manager.check_for_crash(0, log_content, source_path, log_path)
 
-                    mock_process.assert_called_once_with(
-                        log_path, self.artifact_manager.max_crash_log_bytes, "Crash log"
-                    )
+                        mock_process.assert_called_once_with(
+                            log_path, self.artifact_manager.max_crash_log_bytes, "Crash log"
+                        )
 
     def test_saves_crash_artifacts(self):
         """Test that source and log files are copied to crashes/ directory."""
@@ -279,8 +280,8 @@ class TestCheckForCrash(unittest.TestCase):
 
                     # Should still return True (crash detected)
                     self.assertTrue(result)
-                    # Should log the error
-                    self.assertIn("Error saving crash artifacts", mock_stderr.getvalue())
+                    # Should log the error via _safe_copy
+                    self.assertIn("CRITICAL: Could not save", mock_stderr.getvalue())
 
 
 class TestFilterJitStderr(unittest.TestCase):
@@ -689,6 +690,50 @@ class TestSaveSessionCrashLabels(unittest.TestCase):
             self.assertEqual(calls[0][0][1].name, "00_warmup.py")
             self.assertEqual(calls[1][0][1].name, "01_script.py")
             self.assertEqual(calls[2][0][1].name, "02_attack.py")
+
+
+class TestSafeCopy(unittest.TestCase):
+    """Test ArtifactManager._safe_copy helper."""
+
+    def setUp(self):
+        self.artifact_manager = ArtifactManager(
+            crashes_dir=Path("/tmp/crashes"),
+            timeouts_dir=Path("/tmp/timeouts"),
+            divergences_dir=Path("/tmp/divergences"),
+            regressions_dir=Path("/tmp/regressions"),
+            fingerprinter=CrashFingerprinter(),
+            max_timeout_log_bytes=10_000_000,
+            max_crash_log_bytes=10_000_000,
+        )
+
+    def test_returns_true_on_success(self):
+        """Test that _safe_copy returns True when copy succeeds."""
+        with patch("shutil.copy"):
+            result = self.artifact_manager._safe_copy(
+                Path("/tmp/src.py"), Path("/tmp/dst.py"), "test file"
+            )
+            self.assertTrue(result)
+
+    def test_returns_false_on_ioerror(self):
+        """Test that _safe_copy returns False and logs on IOError."""
+        with patch("shutil.copy", side_effect=IOError("Disk full")):
+            with patch("sys.stderr", new_callable=io.StringIO) as mock_stderr:
+                result = self.artifact_manager._safe_copy(
+                    Path("/tmp/src.py"), Path("/tmp/dst.py"), "test file"
+                )
+                self.assertFalse(result)
+                self.assertIn("Could not save test file", mock_stderr.getvalue())
+
+    def test_preserve_metadata_uses_copy2(self):
+        """Test that preserve_metadata=True uses shutil.copy2."""
+        with patch("shutil.copy2") as mock_copy2:
+            self.artifact_manager._safe_copy(
+                Path("/tmp/src.py"),
+                Path("/tmp/dst.py"),
+                "test file",
+                preserve_metadata=True,
+            )
+            mock_copy2.assert_called_once()
 
 
 if __name__ == "__main__":

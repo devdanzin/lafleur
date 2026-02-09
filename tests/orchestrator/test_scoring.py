@@ -7,8 +7,9 @@ classes that determine which mutations are worth keeping.
 """
 
 import unittest
+from unittest.mock import MagicMock, Mock, patch
 
-from lafleur.scoring import NewCoverageInfo, InterestingnessScorer
+from lafleur.scoring import NewCoverageInfo, InterestingnessScorer, ScoringManager
 
 
 class TestNewCoverageInfo(unittest.TestCase):
@@ -292,6 +293,79 @@ class TestInterestingnessScorer(unittest.TestCase):
     def test_min_interesting_score_constant(self):
         """Test that MIN_INTERESTING_SCORE is set to 10.0."""
         self.assertEqual(InterestingnessScorer.MIN_INTERESTING_SCORE, 10.0)
+
+
+class TestAnalyzeRunMutationInfo(unittest.TestCase):
+    """Test that analyze_run does not mutate the caller's mutation_info dict."""
+
+    def setUp(self):
+        self.coverage_manager = MagicMock()
+        self.coverage_manager.state = {"per_file_coverage": {}}
+        self.artifact_manager = MagicMock()
+        self.artifact_manager.check_for_crash.return_value = False
+        self.corpus_manager = MagicMock()
+        self.corpus_manager.known_hashes = set()
+
+        self.scoring_manager = ScoringManager(
+            coverage_manager=self.coverage_manager,
+            artifact_manager=self.artifact_manager,
+            corpus_manager=self.corpus_manager,
+            get_core_code_func=lambda code: code,
+            run_stats={"divergences_found": 0},
+        )
+
+    @patch("lafleur.scoring.parse_log_for_edge_coverage")
+    def test_mutation_info_not_mutated_on_new_coverage(self, mock_parse_coverage):
+        """Verify that the caller's mutation_info dict is not modified."""
+        mock_parse_coverage.return_value = {"edges": {1}, "uops": set(), "rare_events": set()}
+
+        # Make find_new_coverage return interesting results
+        self.scoring_manager.find_new_coverage = Mock(
+            return_value=NewCoverageInfo(global_edges=5, total_child_edges=10)
+        )
+        self.scoring_manager.parse_jit_stats = Mock(
+            return_value={
+                "max_exit_count": 0,
+                "max_chain_depth": 0,
+                "zombie_traces": 0,
+                "min_code_size": 0,
+                "max_exit_density": 0.0,
+                "watched_dependencies": [],
+            }
+        )
+        self.scoring_manager._update_global_coverage = Mock()
+        self.scoring_manager._calculate_coverage_hash = Mock(return_value="abc123")
+
+        exec_result = MagicMock()
+        exec_result.is_divergence = False
+        exec_result.log_path = MagicMock()
+        exec_result.log_path.read_text.return_value = "log content"
+        exec_result.source_path = MagicMock()
+        exec_result.source_path.read_text.return_value = "print('hello')"
+        exec_result.returncode = 0
+        exec_result.execution_time_ms = 100
+        exec_result.jit_avg_time_ms = 50.0
+        exec_result.nojit_avg_time_ms = 60.0
+        exec_result.nojit_cv = 0.1
+
+        original_mutation_info = {"mutator": "test_mutator", "stage": "havoc"}
+        caller_mutation_info = original_mutation_info.copy()
+
+        result = self.scoring_manager.analyze_run(
+            exec_result=exec_result,
+            parent_lineage_profile={},
+            parent_id=None,
+            mutation_info=caller_mutation_info,
+            mutation_seed=42,
+            parent_file_size=100,
+            parent_lineage_edge_count=50,
+        )
+
+        # The returned mutation_info should contain jit_stats
+        self.assertIn("jit_stats", result["mutation_info"])
+        # But the caller's dict should be unchanged
+        self.assertEqual(caller_mutation_info, original_mutation_info)
+        self.assertNotIn("jit_stats", caller_mutation_info)
 
 
 if __name__ == "__main__":

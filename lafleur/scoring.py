@@ -15,7 +15,11 @@ import sys
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Callable
 
-from lafleur.coverage import CoverageManager, parse_log_for_edge_coverage
+from lafleur.coverage import (
+    CoverageManager,
+    merge_coverage_into_global,
+    parse_log_for_edge_coverage,
+)
 from lafleur.utils import ExecutionResult
 
 if TYPE_CHECKING:
@@ -496,13 +500,7 @@ class ScoringManager:
 
     def _update_global_coverage(self, child_coverage: dict) -> None:
         """Commit the coverage from a new, interesting child to the global state."""
-        global_coverage = self.coverage_manager.state["global_coverage"]
-        for harness_id, data in child_coverage.items():
-            for cov_type in COVERAGE_TYPES:
-                # The data already contains integer IDs from the parser.
-                for item_id, count in data.get(cov_type, {}).items():
-                    global_coverage[cov_type].setdefault(item_id, 0)
-                    global_coverage[cov_type][item_id] += count
+        merge_coverage_into_global(self.coverage_manager.state, child_coverage)
 
     def _calculate_coverage_hash(self, coverage_profile: dict) -> str:
         """Create a deterministic SHA256 hash of a coverage profile's edges."""

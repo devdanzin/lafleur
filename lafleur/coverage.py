@@ -314,6 +314,41 @@ def save_coverage_state(state: dict[str, Any]) -> None:
                 )
 
 
+def merge_coverage_into_global(
+    state: dict[str, Any],
+    per_harness_coverage: dict,
+) -> list[tuple[str, str, str]]:
+    """Merge per-harness coverage into the global coverage state.
+
+    Updates the global coverage counters with new coverage data. Returns
+    a list of newly discovered items for reporting.
+
+    Args:
+        state: The full coverage state dict (with "global_coverage" key).
+        per_harness_coverage: Coverage data keyed by harness ID.
+
+    Returns:
+        List of (coverage_type, item_key, harness_id) tuples for newly
+        discovered items. coverage_type is one of "UOP", "EDGE", "RARE EVENT".
+    """
+    discoveries: list[tuple[str, str, str]] = []
+    global_cov = state["global_coverage"]
+
+    for harness_id, data in per_harness_coverage.items():
+        for cov_type in ("uops", "edges", "rare_events"):
+            global_map = global_cov[cov_type]
+            for item_id, count in data.get(cov_type, {}).items():
+                if item_id not in global_map:
+                    # Derive the display name from cov_type:
+                    # "uops" -> "UOP", "edges" -> "EDGE", "rare_events" -> "RARE EVENT"
+                    display_type = cov_type.rstrip("s").upper().replace("_", " ")
+                    discoveries.append((display_type, str(item_id), harness_id))
+                    global_map[item_id] = 0
+                global_map[item_id] += count
+
+    return discoveries
+
+
 def main() -> None:
     """Run the coverage parser as a standalone command-line tool."""
     parser = argparse.ArgumentParser(
@@ -322,56 +357,25 @@ def main() -> None:
     parser.add_argument("log_file", type=Path, help="Path to the JIT log file to be parsed.")
     args = parser.parse_args()
 
-    # 1. Load the persistent global coverage state.
     global_coverage_state = load_coverage_state()
-    newly_discovered = False
 
-    # 2. Parse the current log for per-harness coverage.
     coverage_manager = CoverageManager(global_coverage_state)
     per_harness_coverage = parse_log_for_edge_coverage(args.log_file, coverage_manager)
     if not per_harness_coverage:
         print("No per-harness coverage found in the log file.", file=sys.stderr)
         return
 
-    # 3. Iterate through the new coverage and update the global state.
-    for harness_id, data in per_harness_coverage.items():
-        # Update uops
-        for uop, count in data["uops"].items():
-            if uop not in global_coverage_state["uops"]:
-                print(
-                    f"[NEW UOP] Discovered new uop in harness '{harness_id}': {uop}",
-                    file=sys.stderr,
-                )
-                newly_discovered = True
-                global_coverage_state["uops"][uop] = 0
-            global_coverage_state["uops"][uop] += count
+    discoveries = merge_coverage_into_global(global_coverage_state, per_harness_coverage)
 
-        # Update edges
-        for edge, count in data["edges"].items():
-            if edge not in global_coverage_state["edges"]:
-                print(
-                    f"[NEW EDGE] Discovered new edge in harness '{harness_id}': {edge}",
-                    file=sys.stderr,
-                )
-                newly_discovered = True
-                global_coverage_state["edges"][edge] = 0
-            global_coverage_state["edges"][edge] += count
-
-        # Update rare events
-        for event, count in data["rare_events"].items():
-            if event not in global_coverage_state["rare_events"]:
-                print(
-                    f"[NEW RARE EVENT] Discovered new rare event in harness '{harness_id}': {event}",
-                    file=sys.stderr,
-                )
-                newly_discovered = True
-                global_coverage_state["rare_events"][event] = 0
-            global_coverage_state["rare_events"][event] += count
-
-    if not newly_discovered:
+    if discoveries:
+        for cov_type, item_key, harness_id in discoveries:
+            print(
+                f"[NEW {cov_type}] Discovered in harness '{harness_id}': {item_key}",
+                file=sys.stderr,
+            )
+    else:
         print("No new coverage found in this run.", file=sys.stderr)
 
-    # 4. Save the updated state back to the file.
     save_coverage_state(global_coverage_state)
     print(f"Global coverage state updated: {COVERAGE_STATE_FILE}", file=sys.stderr)
 

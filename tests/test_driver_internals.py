@@ -415,6 +415,18 @@ class TestWalkCodeObjects(unittest.TestCase):
         result = list(walk_code_objects(simple.__code__))
         self.assertGreaterEqual(len(result), 1)
 
+    def test_walk_shared_visited_prevents_duplicates(self):
+        """Passing the same code object with a shared visited set yields no duplicates."""
+
+        def func():
+            pass
+
+        visited: set = set()
+        first = list(walk_code_objects(func.__code__, visited))
+        second = list(walk_code_objects(func.__code__, visited))
+        self.assertGreaterEqual(len(first), 1)
+        self.assertEqual(len(second), 0)
+
 
 class TestSnapshotExecutorState(unittest.TestCase):
     """Tests for snapshot_executor_state function."""

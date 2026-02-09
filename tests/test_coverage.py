@@ -167,6 +167,11 @@ class TestCoverageManager(unittest.TestCase):
         self.assertEqual(self.state["next_id_map"]["edge"], 0)
         self.assertEqual(self.state["next_id_map"]["rare_event"], 0)
 
+    def test_get_or_create_id_invalid_type_raises(self):
+        """Test that an invalid item_type raises KeyError."""
+        with self.assertRaises(KeyError):
+            self.manager.get_or_create_id("invalid_type", "foo")
+
 
 class TestParseLogForEdgeCoverage(unittest.TestCase):
     """Test the parse_log_for_edge_coverage function."""

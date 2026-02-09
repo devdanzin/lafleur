@@ -274,6 +274,148 @@ class ExecutionManager:
             parent_path=parent_path,
         ), None
 
+    def _run_differential_stage(
+        self,
+        source_code: str,
+        child_source_path: Path,
+        child_log_path: Path,
+        parent_path: Path,
+    ) -> tuple[ExecutionResult | None, str | None] | None:
+        """Run differential correctness testing (JIT vs non-JIT).
+
+        Compares exit codes, stderr, and stdout between JIT and non-JIT runs
+        to detect correctness divergences.
+
+        Note: Always runs the child in isolation, even when session fuzzing is
+        enabled. Session mode would introduce non-determinism that causes false
+        positives in the comparison.
+
+        Args:
+            source_code: The source code to execute.
+            child_source_path: Path where the child script will be written.
+            child_log_path: Path for the execution log.
+            parent_path: Path to the parent script.
+
+        Returns:
+            - Tuple of (ExecutionResult, stat_key) if a divergence or timeout occurred.
+            - None if no divergence was found (continue to next stage).
+        """
+        instrumented_code = source_code + "\n" + SERIALIZATION_SNIPPET
+        child_source_path.write_text(instrumented_code)
+
+        # Run Non-JIT
+        nojit_run = None
+        try:
+            nojit_env = self._build_env(jit=False)
+            print("[DIFFERENTIAL] Running child with JIT=False.", file=sys.stderr)
+            nojit_run = subprocess.run(
+                [self.target_python, str(child_source_path)],
+                capture_output=True,
+                text=True,
+                timeout=self.timeout,
+                env=nojit_env,
+            )
+        except subprocess.TimeoutExpired:
+            self.artifact_manager.handle_timeout(child_source_path, child_log_path, parent_path)
+            return None, "timeouts_found"
+
+        # Run JIT
+        jit_run = None
+        try:
+            jit_env = self._build_env(jit=True)
+            print("[DIFFERENTIAL] Running child with JIT=True.", file=sys.stderr)
+            jit_run = subprocess.run(
+                [self.target_python, str(child_source_path)],
+                capture_output=True,
+                text=True,
+                timeout=self.timeout,
+                env=jit_env,
+            )
+        except subprocess.TimeoutExpired:
+            self.artifact_manager.save_jit_hang(child_source_path, parent_path)
+            return None, "jit_hangs_found"
+
+        # If both runs completed, compare their results sequentially.
+        if nojit_run and jit_run:
+            # 1. Check for exit code mismatch
+            if jit_run.returncode != nojit_run.returncode:
+                return self._make_divergence_result(
+                    child_source_path,
+                    child_log_path,
+                    parent_path,
+                    reason="exit_code_mismatch",
+                    jit_output=f"Exit Code: {jit_run.returncode}",
+                    nojit_output=f"Exit Code: {nojit_run.returncode}",
+                )
+
+            # 2. Check for stderr mismatch (after filtering)
+            filtered_jit_stderr = self._filter_jit_stderr(jit_run.stderr)
+            filtered_nojit_stderr = self._filter_jit_stderr(nojit_run.stderr)
+            if filtered_jit_stderr != filtered_nojit_stderr:
+                return self._make_divergence_result(
+                    child_source_path,
+                    child_log_path,
+                    parent_path,
+                    reason="stderr_mismatch",
+                    jit_output=filtered_jit_stderr,
+                    nojit_output=filtered_nojit_stderr,
+                )
+
+            # 3. Check for stdout mismatch
+            if jit_run.stdout != nojit_run.stdout:
+                return self._make_divergence_result(
+                    child_source_path,
+                    child_log_path,
+                    parent_path,
+                    reason="stdout_mismatch",
+                    jit_output=jit_run.stdout,
+                    nojit_output=nojit_run.stdout,
+                )
+
+        print("  [~] No divergences found.", file=sys.stderr)
+        return None  # Continue to next stage
+
+    def _run_timing_stage(
+        self,
+        source_code: str,
+        child_source_path: Path,
+        child_log_path: Path,
+        parent_path: Path,
+    ) -> tuple[
+        tuple[float | None, float | None, float | None],
+        tuple[ExecutionResult | None, str | None] | None,
+    ]:
+        """Run performance timing fuzzing (JIT vs non-JIT timing comparison).
+
+        Args:
+            source_code: The source code to execute.
+            child_source_path: Path where the child script will be written.
+            child_log_path: Path for the execution log.
+            parent_path: Path to the parent script.
+
+        Returns:
+            A tuple of:
+            - (jit_avg_ms, nojit_avg_ms, nojit_cv): Timing results.
+            - Early exit result if a timeout occurred, or None to continue.
+        """
+        child_source_path.write_text(source_code)
+
+        nojit_avg_ms, timed_out, nojit_cv = self._run_timed_trial(
+            child_source_path, self.TIMING_NUM_RUNS, jit_enabled=False
+        )
+        if timed_out:
+            self.artifact_manager.handle_timeout(child_source_path, child_log_path, parent_path)
+            return (None, None, None), (None, "timeouts_found")
+
+        jit_avg_ms, timed_out, _ = self._run_timed_trial(
+            child_source_path, self.TIMING_NUM_RUNS, jit_enabled=True
+        )
+        if timed_out:
+            self.artifact_manager.save_regression_timeout(child_source_path, parent_path)
+            return (None, None, None), (None, "regression_timeouts_found")
+
+        return (jit_avg_ms, nojit_avg_ms, nojit_cv), None
+
     def execute_child(
         self,
         source_code: str,
@@ -307,106 +449,24 @@ class ExecutionManager:
         nojit_avg_ms: float | None = None
         nojit_cv: float | None = None
 
-        # --- Stage 1: Differential Correctness Fuzzing (if enabled) ---
-        # Note: Differential testing always runs the child in isolation, even when
-        # session fuzzing is enabled. Session mode introduces non-determinism
-        # (mixer polluters, shared JIT state) that would cause false positives
-        # in the JIT vs non-JIT comparison.
+        # --- Stage 1: Differential Correctness Fuzzing ---
         if self.differential_testing:
-            instrumented_code = source_code + "\n" + SERIALIZATION_SNIPPET
-            child_source_path.write_text(instrumented_code)
+            diff_result = self._run_differential_stage(
+                source_code, child_source_path, child_log_path, parent_path
+            )
+            if diff_result is not None:
+                return diff_result
 
-            # Run Non-JIT
-            nojit_run = None
-            try:
-                nojit_env = self._build_env(jit=False)
-                print("[DIFFERENTIAL] Running child with JIT=False.", file=sys.stderr)
-                nojit_run = subprocess.run(
-                    [self.target_python, str(child_source_path)],
-                    capture_output=True,
-                    text=True,
-                    timeout=self.timeout,
-                    env=nojit_env,
-                )
-            except subprocess.TimeoutExpired:
-                self.artifact_manager.handle_timeout(child_source_path, child_log_path, parent_path)
-                return None, "timeouts_found"
-
-            # Run JIT
-            jit_run = None
-            try:
-                jit_env = self._build_env(jit=True)
-                print("[DIFFERENTIAL] Running child with JIT=True.", file=sys.stderr)
-                jit_run = subprocess.run(
-                    [self.target_python, str(child_source_path)],
-                    capture_output=True,
-                    text=True,
-                    timeout=self.timeout,
-                    env=jit_env,
-                )
-            except subprocess.TimeoutExpired:
-                self.artifact_manager.save_jit_hang(child_source_path, parent_path)
-                return None, "jit_hangs_found"
-
-            # If both runs completed, compare their results sequentially.
-            if nojit_run and jit_run:
-                # 1. Check for exit code mismatch
-                if jit_run.returncode != nojit_run.returncode:
-                    return self._make_divergence_result(
-                        child_source_path,
-                        child_log_path,
-                        parent_path,
-                        reason="exit_code_mismatch",
-                        jit_output=f"Exit Code: {jit_run.returncode}",
-                        nojit_output=f"Exit Code: {nojit_run.returncode}",
-                    )
-
-                # 2. Check for stderr mismatch (after filtering)
-                filtered_jit_stderr = self._filter_jit_stderr(jit_run.stderr)
-                filtered_nojit_stderr = self._filter_jit_stderr(nojit_run.stderr)
-                if filtered_jit_stderr != filtered_nojit_stderr:
-                    return self._make_divergence_result(
-                        child_source_path,
-                        child_log_path,
-                        parent_path,
-                        reason="stderr_mismatch",
-                        jit_output=filtered_jit_stderr,
-                        nojit_output=filtered_nojit_stderr,
-                    )
-
-                # 3. Check for stdout mismatch
-                if jit_run.stdout != nojit_run.stdout:
-                    return self._make_divergence_result(
-                        child_source_path,
-                        child_log_path,
-                        parent_path,
-                        reason="stdout_mismatch",
-                        jit_output=jit_run.stdout,
-                        nojit_output=nojit_run.stdout,
-                    )
-            print("  [~] No divergences found.", file=sys.stderr)
-
-        # --- Stage 2: Performance Timing Fuzzing (if enabled) ---
-        # This runs if differential testing is off, or if it found no divergence.
+        # --- Stage 2: Performance Timing Fuzzing ---
         if self.timing_fuzz:
-            child_source_path.write_text(source_code)  # Ensure original code is used
-
-            nojit_avg_ms, timed_out, nojit_cv = self._run_timed_trial(
-                child_source_path, self.TIMING_NUM_RUNS, jit_enabled=False
+            timings, early_exit = self._run_timing_stage(
+                source_code, child_source_path, child_log_path, parent_path
             )
-            if timed_out:
-                self.artifact_manager.handle_timeout(child_source_path, child_log_path, parent_path)
-                return None, "timeouts_found"
-
-            jit_avg_ms, timed_out, _ = self._run_timed_trial(
-                child_source_path, self.TIMING_NUM_RUNS, jit_enabled=True
-            )
-            if timed_out:
-                self.artifact_manager.save_regression_timeout(child_source_path, parent_path)
-                return None, "regression_timeouts_found"
+            if early_exit is not None:
+                return early_exit
+            jit_avg_ms, nojit_avg_ms, nojit_cv = timings
 
         # --- Stage 3: Normal Coverage-Gathering Run ---
-        # This always runs unless a critical bug was found in a previous stage.
         try:
             print("[COVERAGE] Running child with JIT=True.", file=sys.stderr)
             # Re-write the original source to ensure we're not running instrumented code

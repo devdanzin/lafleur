@@ -695,6 +695,146 @@ class TestMakeDivergenceResult(unittest.TestCase):
         self.assertIsNone(second)
 
 
+class TestRunDifferentialStage(unittest.TestCase):
+    """Test ExecutionManager._run_differential_stage."""
+
+    def setUp(self):
+        """Set up ExecutionManager with mocks."""
+        self.artifact_manager = MagicMock()
+        self.corpus_manager = MagicMock()
+        self.em = ExecutionManager(
+            target_python="/usr/bin/python3",
+            timeout=10,
+            artifact_manager=self.artifact_manager,
+            corpus_manager=self.corpus_manager,
+            differential_testing=True,
+        )
+        self.source = "def uop_harness_test():\n    pass"
+        self.source_path = Path("/tmp/child.py")
+        self.log_path = Path("/tmp/child.log")
+        self.parent_path = Path("/tmp/parent.py")
+
+    def test_returns_none_on_no_divergence(self):
+        """No divergence returns None (continue to next stage)."""
+        identical = subprocess.CompletedProcess(args=[], returncode=0, stdout="out", stderr="")
+        with patch("pathlib.Path.write_text"):
+            with patch("subprocess.run", return_value=identical):
+                with patch("sys.stderr", new_callable=io.StringIO):
+                    result = self.em._run_differential_stage(
+                        self.source, self.source_path, self.log_path, self.parent_path
+                    )
+        self.assertIsNone(result)
+
+    def test_detects_exit_code_mismatch(self):
+        """Different return codes trigger exit_code_mismatch divergence."""
+        nojit = subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
+        jit = subprocess.CompletedProcess(args=[], returncode=1, stdout="", stderr="")
+        with patch("pathlib.Path.write_text"):
+            with patch("subprocess.run", side_effect=[nojit, jit]):
+                with patch("sys.stderr", new_callable=io.StringIO):
+                    result = self.em._run_differential_stage(
+                        self.source, self.source_path, self.log_path, self.parent_path
+                    )
+        exec_result, stat_key = result
+        self.assertTrue(exec_result.is_divergence)
+        self.assertEqual(exec_result.divergence_reason, "exit_code_mismatch")
+        self.assertIsNone(stat_key)
+
+    def test_timeout_nojit(self):
+        """Timeout on non-JIT run returns timeouts_found."""
+        with patch("pathlib.Path.write_text"):
+            with patch("subprocess.run", side_effect=subprocess.TimeoutExpired("cmd", 10)):
+                with patch("sys.stderr", new_callable=io.StringIO):
+                    result = self.em._run_differential_stage(
+                        self.source, self.source_path, self.log_path, self.parent_path
+                    )
+        self.assertEqual(result, (None, "timeouts_found"))
+        self.artifact_manager.handle_timeout.assert_called_once()
+
+    def test_timeout_jit(self):
+        """Timeout on JIT run returns jit_hangs_found."""
+        nojit = subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
+        with patch("pathlib.Path.write_text"):
+            with patch(
+                "subprocess.run",
+                side_effect=[nojit, subprocess.TimeoutExpired("cmd", 10)],
+            ):
+                with patch("sys.stderr", new_callable=io.StringIO):
+                    result = self.em._run_differential_stage(
+                        self.source, self.source_path, self.log_path, self.parent_path
+                    )
+        self.assertEqual(result, (None, "jit_hangs_found"))
+        self.artifact_manager.save_jit_hang.assert_called_once()
+
+
+class TestRunTimingStage(unittest.TestCase):
+    """Test ExecutionManager._run_timing_stage."""
+
+    def setUp(self):
+        """Set up ExecutionManager with mocks."""
+        self.artifact_manager = MagicMock()
+        self.corpus_manager = MagicMock()
+        self.em = ExecutionManager(
+            target_python="/usr/bin/python3",
+            timeout=10,
+            artifact_manager=self.artifact_manager,
+            corpus_manager=self.corpus_manager,
+            timing_fuzz=True,
+        )
+        self.source = "def uop_harness_test():\n    pass"
+        self.source_path = Path("/tmp/child.py")
+        self.log_path = Path("/tmp/child.log")
+        self.parent_path = Path("/tmp/parent.py")
+
+    def test_returns_timings(self):
+        """Successful timing returns timing data and None for early_exit."""
+        with patch("pathlib.Path.write_text"):
+            with patch.object(
+                self.em,
+                "_run_timed_trial",
+                side_effect=[
+                    (50.0, False, 0.1),  # nojit
+                    (30.0, False, 0.05),  # jit
+                ],
+            ):
+                timings, early_exit = self.em._run_timing_stage(
+                    self.source, self.source_path, self.log_path, self.parent_path
+                )
+        self.assertEqual(timings, (30.0, 50.0, 0.1))
+        self.assertIsNone(early_exit)
+
+    def test_timeout_nojit(self):
+        """Timeout on non-JIT trial returns early exit with timeouts_found."""
+        with patch("pathlib.Path.write_text"):
+            with patch.object(
+                self.em,
+                "_run_timed_trial",
+                return_value=(None, True, None),
+            ):
+                timings, early_exit = self.em._run_timing_stage(
+                    self.source, self.source_path, self.log_path, self.parent_path
+                )
+        self.assertEqual(timings, (None, None, None))
+        self.assertEqual(early_exit, (None, "timeouts_found"))
+
+    def test_timeout_jit(self):
+        """Timeout on JIT trial returns early exit with regression_timeouts_found."""
+        with patch("pathlib.Path.write_text"):
+            with patch.object(
+                self.em,
+                "_run_timed_trial",
+                side_effect=[
+                    (50.0, False, 0.1),  # nojit succeeds
+                    (None, True, None),  # jit times out
+                ],
+            ):
+                timings, early_exit = self.em._run_timing_stage(
+                    self.source, self.source_path, self.log_path, self.parent_path
+                )
+        self.assertEqual(timings, (None, None, None))
+        self.assertEqual(early_exit, (None, "regression_timeouts_found"))
+
+
 class TestBuildEnv(unittest.TestCase):
     """Test ExecutionManager._build_env helper."""
 

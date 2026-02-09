@@ -38,7 +38,10 @@ TIMEOUT_LOG_COMPRESSION_THRESHOLD = 1_048_576  # 1 MB
 TRUNCATE_HEAD_SIZE = 50 * 1024  # 50 KB
 TRUNCATE_TAIL_SIZE = 300 * 1024  # 300 KB
 
-# Keywords that indicate a crash even if exit code is 0
+# Keywords that indicate a crash even if exit code is 0.
+# Matching is case-insensitive (keyword.lower() vs log_content.lower()).
+# Trailing spaces in "Assertion " and "Abort " prevent false positives
+# on Python-level exceptions like AssertionError and AbortError.
 CRASH_KEYWORDS = [
     "Segmentation fault",
     "JITCorrectnessError",

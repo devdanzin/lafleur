@@ -95,7 +95,7 @@ class PyExecutorObject(ctypes.Structure):
     ]
 
 
-def check_bloom(bloom_filter: _PyBloomFilter, obj_address: int, debug_name: str = "") -> bool:
+def check_bloom(bloom_filter: _PyBloomFilter, obj_address: int) -> bool:
     """Replicate CPython's bloom_filter_may_contain."""
     uhash = BLOOM_SEED
     addr = obj_address
@@ -104,21 +104,14 @@ def check_bloom(bloom_filter: _PyBloomFilter, obj_address: int, debug_name: str 
         uhash = (uhash * PyHASH_MULTIPLIER) & 0xFFFFFFFFFFFFFFFF  # Keep 64-bit
         addr >>= 8
 
-    # Check K bits
-    bits_to_check = []
     for _ in range(BLOOM_K):
         bit_index = uhash & 255
         word_idx = bit_index >> 5
         bit_mask = 1 << (bit_index & 31)
-        bits_to_check.append((word_idx, bit_index, bit_mask))
         if not (bloom_filter.bits[word_idx] & bit_mask):
-            # if debug_name:
-            #     print(f"[DEBUG] {debug_name}: bit {bit_index} (word {word_idx}) NOT SET", flush=True)
             return False
         uhash >>= 8
 
-    if debug_name:
-        print(f"[DEBUG] {debug_name}: ALL {BLOOM_K} bits matched! {bits_to_check}", flush=True)
     return True
 
 
@@ -129,48 +122,35 @@ def scan_watched_variables(
     """Identify which globals/builtins are watched by this executor."""
     watched = []
     bloom = executor_ptr.contents.vm_data.bloom
-    print(f"[DEBUG] Scanning watched vars. Bloom bits: {list(bloom.bits)[:4]}...", flush=True)
 
-    def is_watched(obj, name: str = "") -> bool:
-        if check_bloom(bloom, id(obj), f"{name}_obj"):
+    def is_watched(obj) -> bool:
+        if check_bloom(bloom, id(obj)):
             return True
-        # Also check code object for functions
-        if hasattr(obj, "__code__") and check_bloom(bloom, id(obj.__code__), f"{name}_code"):
+        if hasattr(obj, "__code__") and check_bloom(bloom, id(obj.__code__)):
             return True
         return False
 
     try:
-        # First, check if the namespace dict itself is watched
-        if check_bloom(bloom, id(namespace), "namespace_dict"):
-            print("[DEBUG] The globals() dict itself is watched!", flush=True)
+        check_bloom(bloom, id(namespace))
 
-        # Check globals
-        print(f"[DEBUG] Checking {len(namespace)} globals...", flush=True)
         for name, obj in namespace.items():
-            if isinstance(name, str) and is_watched(obj, f"global_{name}"):
-                print(f"[DEBUG] Global match: {name}", flush=True)
+            if isinstance(name, str) and is_watched(obj):
                 watched.append(name)
 
-        # Check builtins from the namespace (can be dict or module)
         builtins_val = namespace.get("__builtins__")
         if builtins_val:
-            # Check if the builtins dict/module itself is watched
-            if check_bloom(bloom, id(builtins_val), "builtins_dict_or_module"):
-                print("[DEBUG] The __builtins__ dict/module itself is watched!", flush=True)
+            check_bloom(bloom, id(builtins_val))
 
             builtins_dict = builtins_val
             if isinstance(builtins_val, ModuleType):
                 builtins_dict = vars(builtins_val)
 
             if isinstance(builtins_dict, dict):
-                print(f"[DEBUG] Checking {len(builtins_dict)} builtins...", flush=True)
                 for name, obj in builtins_dict.items():
-                    if isinstance(name, str) and is_watched(obj, f"builtin_{name}"):
-                        print(f"[DEBUG] Builtin match: {name}", flush=True)
+                    if isinstance(name, str) and is_watched(obj):
                         watched.append(name)
     except Exception as e:
-        print(f"[DEBUG] scan_watched_variables failed: {e}", flush=True)
-        pass
+        print(f"[!] scan_watched_variables failed: {e}", file=sys.stderr)
     return watched
 
 
@@ -319,13 +299,9 @@ def get_jit_stats(namespace: dict, baseline: dict[tuple[int, int], int] | None =
                 density = exit_count / code_size
                 max_exit_density = max(max_exit_density, density)
 
-                print(
-                    f"[DEBUG] Executor: exit={exit_count} size={code_size} density={density:.2f}",
-                    flush=True,
-                )
-
-                if density >= 0.0:  # DEBUG: Forced scan for testing
-                    print(f"[DEBUG] Triggering scan for density {density:.2f} >= 0.0", flush=True)
+                # Scan for watched variables on executors with meaningful exit density.
+                # A density of 0.0 means no bailouts — nothing interesting to scan.
+                if density > 0.0:
                     watched = scan_watched_variables(executor_ptr, namespace)
                     if watched:
                         print(f"[EKG] WATCHED: {', '.join(watched)}", flush=True)
@@ -356,7 +332,7 @@ def get_jit_stats(namespace: dict, baseline: dict[tuple[int, int], int] | None =
                         delta_new_zombies += 1
 
         except Exception as e:
-            print(f"DEBUG: Introspection failed: {e}")
+            print(f"[!] Introspection failed: {e}", file=sys.stderr)
 
     for name, obj in namespace.items():
         if not isinstance(name, str) or name.startswith("_"):

@@ -330,10 +330,10 @@ class ArtifactManager:
         # Copy scripts with sequential prefixes
         script_names = []
         for i, script_path in enumerate(scripts):
-            if i == 0:
-                dest_name = f"{i:02d}_warmup.py"
-            elif i == len(scripts) - 1:
+            if i == len(scripts) - 1:
                 dest_name = f"{i:02d}_attack.py"
+            elif i == 0:
+                dest_name = f"{i:02d}_warmup.py"
             else:
                 dest_name = f"{i:02d}_script.py"
 

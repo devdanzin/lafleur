@@ -41,6 +41,13 @@ try:
 except ImportError:
     HAS_TESTINTERNALCAPI = False
 
+# Limit integer-to-string conversion length to prevent DoS from fuzzed
+# scripts that construct astronomically large integers. The default limit
+# (4300 digits) is Python's built-in safety valve; we set it explicitly
+# here because some environments may have increased or removed it.
+if hasattr(sys, "set_int_max_str_digits"):
+    sys.set_int_max_str_digits(4300)
+
 
 # Bloom filter constants from CPython's pycore_optimizer.h.
 # These must match the values used by the JIT's bloom filter implementation
@@ -170,11 +177,6 @@ def scan_watched_variables(
     except Exception as e:
         print(f"[!] scan_watched_variables failed: {e}", file=sys.stderr)
     return watched
-
-
-# Limit integer string conversion to prevent DOS attacks
-if hasattr(sys, "set_int_max_str_digits"):
-    sys.set_int_max_str_digits(4300)
 
 
 def walk_code_objects(

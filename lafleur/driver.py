@@ -49,6 +49,22 @@ BLOOM_K = 6
 BLOOM_WORDS = 8
 
 
+# ---------------------------------------------------------------------------
+# ctypes mirrors of CPython JIT internals from pycore_optimizer.h
+#
+# These structs must match the memory layout of the corresponding C structs
+# in CPython. If CPython's struct layout changes (fields added, reordered,
+# or resized), these definitions will silently read wrong memory.
+#
+# Target: CPython 3.15 (main branch as of 2026-02)
+# Source: Include/internal/pycore_optimizer.h
+#
+# If introspection produces unexpected values after a CPython update,
+# compare ctypes.sizeof(PyExecutorObject) against the C struct size
+# and update these definitions accordingly.
+# ---------------------------------------------------------------------------
+
+
 class _PyBloomFilter(ctypes.Structure):
     _fields_ = [("bits", ctypes.c_uint32 * BLOOM_WORDS)]
 

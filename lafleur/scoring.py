@@ -611,8 +611,8 @@ class ScoringManager:
             jit_stats_for_save = jit_stats.copy()
             jit_stats_for_save["max_exit_density"] = saved_density
 
-            # Inject jit_stats into mutation_info so it gets saved with the file
-            mutation_info["jit_stats"] = jit_stats_for_save
+            # Create a copy so we don't mutate the caller's dict
+            saved_mutation_info = {**mutation_info, "jit_stats": jit_stats_for_save}
 
             return {
                 "status": "NEW_COVERAGE",
@@ -622,11 +622,10 @@ class ScoringManager:
                 "coverage_hash": coverage_hash,
                 "execution_time_ms": exec_result.execution_time_ms,
                 "parent_id": parent_id,
-                "mutation_info": mutation_info,
+                "mutation_info": saved_mutation_info,
                 "mutation_seed": mutation_seed,
                 "jit_avg_time_ms": exec_result.jit_avg_time_ms,
                 "nojit_avg_time_ms": exec_result.nojit_avg_time_ms,
-                # jit_stats is now inside mutation_info, no need to pass separately if not used by caller
             }
 
         return {"status": "NO_CHANGE"}

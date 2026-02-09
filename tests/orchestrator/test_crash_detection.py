@@ -736,5 +736,24 @@ class TestSafeCopy(unittest.TestCase):
             mock_copy2.assert_called_once()
 
 
+class TestGetLogSuffix(unittest.TestCase):
+    """Test ArtifactManager._get_log_suffix helper."""
+
+    def test_truncated_log(self):
+        """Test that _truncated.log suffix is detected."""
+        result = ArtifactManager._get_log_suffix(Path("/tmp/child_test_truncated.log"))
+        self.assertEqual(result, "_truncated.log")
+
+    def test_compressed_log(self):
+        """Test that .log.zst suffix is detected."""
+        result = ArtifactManager._get_log_suffix(Path("/tmp/child_test.log.zst"))
+        self.assertEqual(result, ".log.zst")
+
+    def test_plain_log(self):
+        """Test that plain .log suffix is returned as default."""
+        result = ArtifactManager._get_log_suffix(Path("/tmp/child_test.log"))
+        self.assertEqual(result, ".log")
+
+
 if __name__ == "__main__":
     unittest.main()

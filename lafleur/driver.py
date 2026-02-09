@@ -266,6 +266,8 @@ def get_jit_stats(namespace: dict, baseline: dict[tuple[int, int], int] | None =
             "functions_scanned": 0,
             "jit_available": False,
             "zombie_traces": 0,
+            "valid_traces": 0,
+            "warm_traces": 0,
             "max_exit_count": 0,
             "max_chain_depth": 0,
             "min_code_size": 0,

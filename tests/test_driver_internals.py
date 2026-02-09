@@ -218,6 +218,8 @@ class TestGetJitStats(unittest.TestCase):
         self.assertEqual(stats["executors"], 0)
         self.assertEqual(stats["functions_scanned"], 0)
         self.assertFalse(stats["jit_available"])
+        self.assertEqual(stats["valid_traces"], 0)
+        self.assertEqual(stats["warm_traces"], 0)
 
     def test_get_jit_stats_with_empty_namespace(self):
         """Test get_jit_stats with empty namespace."""

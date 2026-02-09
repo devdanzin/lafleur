@@ -341,6 +341,7 @@ class TestAnalyzeRunMutationInfo(unittest.TestCase):
         exec_result.log_path = MagicMock()
         exec_result.log_path.read_text.return_value = "log content"
         exec_result.source_path = MagicMock()
+        exec_result.source_path.stat.return_value.st_size = 150
         exec_result.source_path.read_text.return_value = "print('hello')"
         exec_result.returncode = 0
         exec_result.execution_time_ms = 100

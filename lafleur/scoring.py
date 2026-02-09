@@ -561,7 +561,7 @@ class ScoringManager:
             mutation_info,
             parent_file_size,
             parent_lineage_edge_count,
-            len(exec_result.source_path.read_text().encode("utf-8")),
+            exec_result.source_path.stat().st_size,
             exec_result.jit_avg_time_ms,
             exec_result.nojit_avg_time_ms,
             exec_result.nojit_cv,

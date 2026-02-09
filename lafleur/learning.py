@@ -60,6 +60,7 @@ class MutatorScoreTracker:
 
     def save_state(self):
         """Save the current scores and attempts to a file."""
+        MUTATOR_SCORES_FILE.parent.mkdir(parents=True, exist_ok=True)
         data = {"scores": dict(self.scores), "attempts": dict(self.attempts)}
         with open(MUTATOR_SCORES_FILE, "w") as f:
             json.dump(data, f, indent=2)
@@ -108,6 +109,7 @@ class MutatorScoreTracker:
 
     def save_telemetry(self):
         """Save a snapshot of the current effectiveness metrics to a log."""
+        MUTATOR_TELEMETRY_LOG.parent.mkdir(parents=True, exist_ok=True)
         success_rates = {
             name: self.scores[name] / max(1, self.attempts.get(name, 1))
             for name in self.strategies + self.all_transformers

@@ -193,6 +193,9 @@ class TestMutatorScoreTracker(unittest.TestCase):
             with patch("json.dump") as mock_json_dump:
                 self.tracker.save_state()
 
+                # Verify parent directory is created
+                mock_file_path.parent.mkdir.assert_called_once_with(parents=True, exist_ok=True)
+
                 # Verify json.dump was called with correct data
                 mock_json_dump.assert_called_once()
                 saved_data = mock_json_dump.call_args[0][0]
@@ -200,6 +203,18 @@ class TestMutatorScoreTracker(unittest.TestCase):
                 self.assertEqual(saved_data["scores"]["havoc"], 42.5)
                 self.assertEqual(saved_data["scores"]["spam"], 17.3)
                 self.assertEqual(saved_data["attempts"]["havoc"], 100)
+
+    @patch("lafleur.learning.MUTATOR_TELEMETRY_LOG")
+    @patch("lafleur.learning.MUTATOR_SCORES_FILE")
+    def test_save_telemetry_creates_parent_dirs(self, mock_scores_file, mock_telemetry_log):
+        """Test that save_telemetry creates parent directories before writing."""
+        mock_scores_file.is_file.return_value = False
+
+        mock_file = mock_open()
+        with patch("builtins.open", mock_file):
+            self.tracker.save_telemetry()
+
+        mock_telemetry_log.parent.mkdir.assert_called_once_with(parents=True, exist_ok=True)
 
     @patch("lafleur.learning.MUTATOR_SCORES_FILE")
     def test_decay_factor_applied_correctly(self, mock_file_path):

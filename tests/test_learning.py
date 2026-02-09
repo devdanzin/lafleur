@@ -252,6 +252,18 @@ class TestMutatorScoreTracker(unittest.TestCase):
         self.assertIn("MockTransformer2", tracker.all_transformers)
         self.assertIn("MockTransformer3", tracker.all_transformers)
 
+    @patch("lafleur.learning.MUTATOR_SCORES_FILE")
+    def test_load_state_handles_corrupted_file(self, mock_file_path):
+        """Test that corrupted state file is handled gracefully."""
+        mock_file_path.is_file.return_value = True
+
+        with patch("builtins.open", mock_open(read_data="{ corrupted json")):
+            tracker = MutatorScoreTracker(self.transformers, decay_factor=0.995)
+
+        # Should have fresh/empty state, not crash
+        self.assertEqual(dict(tracker.scores), {})
+        self.assertEqual(dict(tracker.attempts), {})
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

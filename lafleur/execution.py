@@ -14,6 +14,7 @@ import statistics
 import subprocess
 import sys
 import time
+import traceback
 from pathlib import Path
 from textwrap import dedent, indent
 from typing import TYPE_CHECKING
@@ -557,7 +558,11 @@ class ExecutionManager:
             # Instead of letting the exception propagate, we create a "failure"
             # result so the analyzer can inspect the log and non-zero exit code.
             print(
-                f"  [!] An OS-level error occurred during child execution: {e}",
+                f"  [!] An OS-level error occurred during child execution: {type(e).__name__}: {e}",
+                file=sys.stderr,
+            )
+            print(
+                f"  [!] Traceback:\n{indent(traceback.format_exc(), '      ')}",
                 file=sys.stderr,
             )
             # A common exit code for segfaults is -11. We'll use a high

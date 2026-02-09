@@ -603,6 +603,28 @@ class TestExecuteChild(unittest.TestCase):
         self.assertEqual(result.log_path, log_path)
         self.assertIsNone(stat_key)
 
+    def test_execute_child_logs_traceback_on_exception(self):
+        """Exception in coverage stage logs type, message, and traceback."""
+        source = "def uop_harness_test():\n    pass"
+        source_path = Path("/tmp/child.py")
+        log_path = Path("/tmp/child.log")
+        parent_path = Path("/tmp/parent.py")
+
+        with patch("pathlib.Path.write_text"):
+            with patch("subprocess.run", side_effect=PermissionError("access denied")):
+                with patch("sys.stderr", new_callable=io.StringIO) as mock_stderr:
+                    result, stat_key = self.execution_manager.execute_child(
+                        source, source_path, log_path, parent_path
+                    )
+
+                    stderr_output = mock_stderr.getvalue()
+                    self.assertIn("PermissionError", stderr_output)
+                    self.assertIn("access denied", stderr_output)
+                    self.assertIn("Traceback", stderr_output)
+
+        self.assertEqual(result.returncode, 255)
+        self.assertIsNone(stat_key)
+
 
 class TestVerifyTargetCapabilities(unittest.TestCase):
     """Test ExecutionManager.verify_target_capabilities method."""

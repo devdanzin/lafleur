@@ -45,9 +45,8 @@ Optimized trace (length 50):
 
         # Mock load_coverage_state to return the structure main() expects
         mock_state = {
-            "uops": {},
-            "edges": {},
-            "rare_events": {},
+            "global_coverage": {"uops": {}, "edges": {}, "rare_events": {}},
+            "per_file_coverage": {},
             "uop_map": {},
             "edge_map": {},
             "rare_event_map": {},
@@ -106,9 +105,8 @@ ADD_TO_TRACE: _STORE_FAST
 
         # Mock load_coverage_state to return the structure main() expects
         mock_state = {
-            "uops": {},
-            "edges": {},
-            "rare_events": {},
+            "global_coverage": {"uops": {}, "edges": {}, "rare_events": {}},
+            "per_file_coverage": {},
             "uop_map": {},
             "edge_map": {},
             "rare_event_map": {},
@@ -141,9 +139,8 @@ Bailing on recursive call
 
         # Mock load_coverage_state to return the structure main() expects
         mock_state = {
-            "uops": {},
-            "edges": {},
-            "rare_events": {},
+            "global_coverage": {"uops": {}, "edges": {}, "rare_events": {}},
+            "per_file_coverage": {},
             "uop_map": {},
             "edge_map": {},
             "rare_event_map": {},

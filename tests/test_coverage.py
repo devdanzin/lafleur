@@ -7,12 +7,15 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from collections import Counter
+
 from lafleur.coverage import (
     HARNESS_MARKER_REGEX,
     RARE_EVENT_REGEX,
     UOP_REGEX,
     CoverageManager,
     ensure_state_schema,
+    merge_coverage_into_global,
     parse_log_for_edge_coverage,
 )
 
@@ -391,6 +394,102 @@ class TestEnsureStateSchema(unittest.TestCase):
         ensure_state_schema(state)
 
         self.assertEqual(state, snapshot)
+
+
+class TestMergeCoverageIntoGlobal(unittest.TestCase):
+    """Test the merge_coverage_into_global function."""
+
+    def _make_state(self) -> dict:
+        """Create a fresh state with empty global coverage."""
+        state: dict = {}
+        ensure_state_schema(state)
+        return state
+
+    def test_merge_coverage_new_items_returns_discoveries(self):
+        """Test that new items are returned as discoveries and global is updated."""
+        state = self._make_state()
+        coverage = {
+            "f1": {
+                "uops": Counter({0: 5, 1: 3}),
+                "edges": Counter({10: 2}),
+                "rare_events": Counter(),
+            }
+        }
+
+        discoveries = merge_coverage_into_global(state, coverage)
+
+        self.assertEqual(len(discoveries), 3)
+        types = {d[0] for d in discoveries}
+        self.assertIn("UOP", types)
+        self.assertIn("EDGE", types)
+        # Verify global coverage was updated
+        self.assertEqual(state["global_coverage"]["uops"][0], 5)
+        self.assertEqual(state["global_coverage"]["uops"][1], 3)
+        self.assertEqual(state["global_coverage"]["edges"][10], 2)
+
+    def test_merge_coverage_existing_items_no_discoveries(self):
+        """Test that existing items produce no discoveries but counts are incremented."""
+        state = self._make_state()
+        state["global_coverage"]["uops"][0] = 10
+        state["global_coverage"]["edges"][10] = 5
+
+        coverage = {
+            "f1": {
+                "uops": Counter({0: 3}),
+                "edges": Counter({10: 2}),
+                "rare_events": Counter(),
+            }
+        }
+
+        discoveries = merge_coverage_into_global(state, coverage)
+
+        self.assertEqual(len(discoveries), 0)
+        self.assertEqual(state["global_coverage"]["uops"][0], 13)
+        self.assertEqual(state["global_coverage"]["edges"][10], 7)
+
+    def test_merge_coverage_mixed_new_and_existing(self):
+        """Test that only new items appear in discoveries."""
+        state = self._make_state()
+        state["global_coverage"]["uops"][0] = 10  # Existing
+
+        coverage = {
+            "f1": {
+                "uops": Counter({0: 3, 1: 5}),  # 0 existing, 1 new
+                "edges": Counter(),
+                "rare_events": Counter(),
+            }
+        }
+
+        discoveries = merge_coverage_into_global(state, coverage)
+
+        self.assertEqual(len(discoveries), 1)
+        self.assertEqual(discoveries[0][0], "UOP")
+        self.assertEqual(discoveries[0][1], "1")
+
+    def test_merge_coverage_multiple_harnesses(self):
+        """Test that items from all harnesses are processed."""
+        state = self._make_state()
+        coverage = {
+            "f1": {
+                "uops": Counter({0: 5}),
+                "edges": Counter(),
+                "rare_events": Counter(),
+            },
+            "f2": {
+                "uops": Counter({1: 3}),
+                "edges": Counter({10: 1}),
+                "rare_events": Counter({20: 2}),
+            },
+        }
+
+        discoveries = merge_coverage_into_global(state, coverage)
+
+        self.assertEqual(len(discoveries), 4)
+        # Verify all items in global
+        self.assertEqual(state["global_coverage"]["uops"][0], 5)
+        self.assertEqual(state["global_coverage"]["uops"][1], 3)
+        self.assertEqual(state["global_coverage"]["edges"][10], 1)
+        self.assertEqual(state["global_coverage"]["rare_events"][20], 2)
 
 
 if __name__ == "__main__":

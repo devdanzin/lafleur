@@ -29,6 +29,12 @@ if TYPE_CHECKING:
 # Session fuzzing: The Mixer strategy
 MIXER_PROBABILITY = 0.3  # 30% chance to prepend polluter scripts
 
+# Probability that a session run uses only the child script (no parent warmup,
+# no mixer polluters). This creates "cold JIT" fuzzing diversity — the child
+# faces a fresh JIT with no pre-warmed traces, type feedback, or bloom filter
+# state. Solo sessions still use the session driver and crash bundle format.
+SOLO_SESSION_PROBABILITY = 0.15
+
 # Code snippet for differential testing state serialization
 SERIALIZATION_SNIPPET = dedent("""
     # --- BEGIN INJECTED SERIALIZATION CODE ---
@@ -362,37 +368,48 @@ class ExecutionManager:
             # Build the command based on session fuzzing mode
             session_files: list[Path] | None = None
             if self.session_fuzz:
-                # Session mode: run parent (warmup) then child (attack) in same process
-                print("[SESSION] Using session driver for warm JIT fuzzing.", file=sys.stderr)
-
-                # The Mixer: Prepend random corpus files to pollute JIT state
-                if random.random() < MIXER_PROBABILITY:
-                    # Select 1-3 random polluter scripts from corpus
-                    num_polluters = random.randint(1, 3)
-                    polluters: list[Path] = []
-
-                    # Try to get polluters from corpus (handle empty corpus gracefully)
-                    try:
-                        for _ in range(num_polluters):
-                            selection = self.corpus_manager.select_parent()
-                            if selection:
-                                polluters.append(selection[0])
-                    except (AttributeError, IndexError):
-                        # Corpus empty or select_parent not available
-                        pass
-
-                    if polluters:
-                        session_files = polluters + [parent_path, child_source_path]
-                        print(
-                            f"  [MIXER] Active: Added {len(polluters)} polluter(s) to session.",
-                            file=sys.stderr,
-                        )
-                    else:
-                        # Fallback to standard session
-                        session_files = [parent_path, child_source_path]
+                if random.random() < SOLO_SESSION_PROBABILITY:
+                    # Solo session: child only, cold JIT
+                    print(
+                        "[SESSION] Solo mode: child-only execution (cold JIT).",
+                        file=sys.stderr,
+                    )
+                    session_files = [child_source_path]
                 else:
-                    # Standard session mode
-                    session_files = [parent_path, child_source_path]
+                    # Normal session: parent warmup + optional mixer
+                    print(
+                        "[SESSION] Using session driver for warm JIT fuzzing.",
+                        file=sys.stderr,
+                    )
+
+                    # The Mixer: Prepend random corpus files to pollute JIT state
+                    if random.random() < MIXER_PROBABILITY:
+                        # Select 1-3 random polluter scripts from corpus
+                        num_polluters = random.randint(1, 3)
+                        polluters: list[Path] = []
+
+                        # Try to get polluters from corpus (handle empty corpus gracefully)
+                        try:
+                            for _ in range(num_polluters):
+                                selection = self.corpus_manager.select_parent()
+                                if selection:
+                                    polluters.append(selection[0])
+                        except (AttributeError, IndexError):
+                            # Corpus empty or select_parent not available
+                            pass
+
+                        if polluters:
+                            session_files = polluters + [parent_path, child_source_path]
+                            print(
+                                f"  [MIXER] Active: Added {len(polluters)} polluter(s) to session.",
+                                file=sys.stderr,
+                            )
+                        else:
+                            # Fallback to standard session
+                            session_files = [parent_path, child_source_path]
+                    else:
+                        # Standard session mode
+                        session_files = [parent_path, child_source_path]
 
                 cmd = [
                     self.target_python,

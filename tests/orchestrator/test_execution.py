@@ -9,6 +9,7 @@ This module contains unit tests for:
 
 import ast
 import io
+import random
 import subprocess
 import unittest
 from pathlib import Path
@@ -662,6 +663,163 @@ class TestVerifyTargetCapabilities(unittest.TestCase):
                 # Check environment variables
                 call_kwargs = mock_run.call_args[1]
                 self.assertIn("env", call_kwargs)
+
+
+class TestSoloSessionProbability(unittest.TestCase):
+    """Test solo session probability for cold-JIT fuzzing diversity."""
+
+    def setUp(self):
+        """Set up ExecutionManager with session_fuzz=True."""
+        self.artifact_manager = MagicMock()
+        self.corpus_manager = MagicMock()
+        self.execution_manager = ExecutionManager(
+            target_python="/usr/bin/python3",
+            timeout=10,
+            artifact_manager=self.artifact_manager,
+            corpus_manager=self.corpus_manager,
+            differential_testing=False,
+            timing_fuzz=False,
+            session_fuzz=True,
+        )
+        self.source = "def uop_harness_test():\n    pass"
+        self.source_path = Path("/tmp/child.py")
+        self.log_path = Path("/tmp/child.log")
+        self.parent_path = Path("/tmp/parent.py")
+
+    def test_solo_session_probability_child_only(self):
+        """Solo session includes only the child script, no parent or polluters."""
+        # First random.random() call < SOLO_SESSION_PROBABILITY triggers solo
+        with patch("lafleur.execution.random.random", return_value=0.1):
+            with patch("pathlib.Path.write_text"):
+                with patch("subprocess.run") as mock_run:
+                    mock_run.return_value = subprocess.CompletedProcess(args=[], returncode=0)
+                    with patch("sys.stderr", new_callable=io.StringIO) as mock_stderr:
+                        result, _ = self.execution_manager.execute_child(
+                            self.source, self.source_path, self.log_path, self.parent_path
+                        )
+
+                    # Verify the command uses only the child script
+                    cmd = mock_run.call_args[0][0]
+                    script_args = cmd[3:]  # After [python, -m, lafleur.driver]
+                    self.assertEqual(script_args, [str(self.source_path)])
+                    self.assertIn("Solo mode: child-only execution", mock_stderr.getvalue())
+
+        # Verify session_files has only the child
+        self.assertEqual(result.session_files, [self.source_path])
+
+    def test_normal_session_when_solo_not_triggered(self):
+        """When solo not triggered and mixer not triggered, session is [parent, child]."""
+        # First call > SOLO_SESSION_PROBABILITY, second call > MIXER_PROBABILITY
+        with patch("lafleur.execution.random.random", side_effect=[0.5, 0.5]):
+            with patch("pathlib.Path.write_text"):
+                with patch("subprocess.run") as mock_run:
+                    mock_run.return_value = subprocess.CompletedProcess(args=[], returncode=0)
+                    with patch("sys.stderr", new_callable=io.StringIO) as mock_stderr:
+                        result, _ = self.execution_manager.execute_child(
+                            self.source, self.source_path, self.log_path, self.parent_path
+                        )
+
+                    cmd = mock_run.call_args[0][0]
+                    script_args = cmd[3:]
+                    self.assertEqual(
+                        script_args,
+                        [str(self.parent_path), str(self.source_path)],
+                    )
+                    self.assertIn("warm JIT fuzzing", mock_stderr.getvalue())
+                    self.assertNotIn("Solo mode", mock_stderr.getvalue())
+
+    def test_solo_session_skips_mixer(self):
+        """When solo triggers, corpus_manager.select_parent is NOT called for polluters."""
+        with patch("lafleur.execution.random.random", return_value=0.1):
+            with patch("pathlib.Path.write_text"):
+                with patch("subprocess.run") as mock_run:
+                    mock_run.return_value = subprocess.CompletedProcess(args=[], returncode=0)
+                    with patch("sys.stderr", new_callable=io.StringIO):
+                        self.execution_manager.execute_child(
+                            self.source, self.source_path, self.log_path, self.parent_path
+                        )
+
+        # select_parent should NOT have been called (mixer was skipped)
+        self.corpus_manager.select_parent.assert_not_called()
+
+    def test_session_distribution_approximate(self):
+        """Statistical sanity check: solo ~15%, warm ~55-65%, mixer ~20-30%."""
+        solo_count = 0
+        warm_count = 0
+        mixer_count = 0
+        iterations = 1000
+
+        for _ in range(iterations):
+            # Simulate the branching logic
+            if random.random() < 0.15:
+                solo_count += 1
+            elif random.random() < 0.3:
+                mixer_count += 1
+            else:
+                warm_count += 1
+
+        # Generous bounds to avoid flaky tests
+        self.assertGreater(solo_count, 80)  # >8%
+        self.assertLess(solo_count, 250)  # <25%
+        self.assertGreater(warm_count, 400)  # >40%
+        self.assertGreater(mixer_count, 100)  # >10%
+
+    def test_solo_session_crash_bundle_single_file(self):
+        """Crash during solo session passes single-element session_files to check_for_crash."""
+        from lafleur.artifacts import ArtifactManager
+        from lafleur.analysis import CrashFingerprinter
+
+        artifact_mgr = ArtifactManager(
+            crashes_dir=Path("/tmp/crashes"),
+            timeouts_dir=Path("/tmp/timeouts"),
+            divergences_dir=Path("/tmp/divergences"),
+            regressions_dir=Path("/tmp/regressions"),
+            fingerprinter=CrashFingerprinter(),
+            max_timeout_log_bytes=1_000_000,
+            max_crash_log_bytes=10_000_000,
+            session_fuzz=True,
+        )
+
+        solo_session_files = [self.source_path]
+
+        with patch.object(artifact_mgr, "process_log_file", return_value=self.log_path):
+            with patch.object(artifact_mgr, "save_session_crash") as mock_save:
+                with patch("sys.stderr", new_callable=io.StringIO):
+                    # Simulate a SIGSEGV crash with session_files=[child_only]
+                    artifact_mgr.check_for_crash(
+                        return_code=-11,
+                        log_content="Fatal Python error: Segmentation fault",
+                        source_path=self.source_path,
+                        log_path=self.log_path,
+                        parent_path=self.parent_path,
+                        session_files=solo_session_files,
+                    )
+
+                # save_session_crash should be called with only the child script
+                mock_save.assert_called_once()
+                scripts_arg = mock_save.call_args[0][0]
+                self.assertEqual(scripts_arg, [self.source_path])
+
+    def test_solo_session_with_session_fuzz_disabled(self):
+        """SOLO_SESSION_PROBABILITY has no effect when session_fuzz=False."""
+        self.execution_manager.session_fuzz = False
+
+        with patch("lafleur.execution.random.random") as mock_random:
+            with patch("pathlib.Path.write_text"):
+                with patch("subprocess.run") as mock_run:
+                    mock_run.return_value = subprocess.CompletedProcess(args=[], returncode=0)
+                    with patch("sys.stderr", new_callable=io.StringIO):
+                        result, _ = self.execution_manager.execute_child(
+                            self.source, self.source_path, self.log_path, self.parent_path
+                        )
+
+            # random.random() should NOT have been called (no session assembly)
+            mock_random.assert_not_called()
+            # Should use direct execution, not session driver
+            cmd = mock_run.call_args[0][0]
+            self.assertNotIn("-m", cmd)
+            self.assertNotIn("lafleur.driver", cmd)
+            self.assertIsNone(result.session_files)
 
 
 if __name__ == "__main__":

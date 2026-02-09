@@ -245,21 +245,24 @@ class ScoringManager:
         info = NewCoverageInfo()
         total_edges = 0
 
+        # Pre-build reverse map lookup
+        reverse_maps = {
+            "uops": self.coverage_manager.reverse_uop_map,
+            "edges": self.coverage_manager.reverse_edge_map,
+            "rare_events": self.coverage_manager.reverse_rare_event_map,
+        }
+
         for harness_id, child_data in child_coverage.items():
             lineage_harness_data = parent_lineage_profile.get(harness_id, {})
 
             total_edges += len(child_data.get("edges", {}))
-
-            # Helper to get the correct reverse map for a given coverage type
-            def get_reverse_map(cov_type: str) -> dict:
-                return getattr(self.coverage_manager, f"reverse_{cov_type}_map")
 
             for cov_type in COVERAGE_TYPES:
                 lineage_set = lineage_harness_data.get(cov_type, set())
                 global_coverage_map = self.coverage_manager.state["global_coverage"].get(
                     cov_type, {}
                 )
-                reverse_map = get_reverse_map(cov_type.rstrip("s"))
+                reverse_map = reverse_maps[cov_type]
 
                 global_counter_attr = f"global_{cov_type}"
                 relative_counter_attr = f"relative_{cov_type}"

@@ -630,5 +630,66 @@ class TestSaveRegressionTimeout(unittest.TestCase):
                     )
 
 
+class TestSaveSessionCrashLabels(unittest.TestCase):
+    """Test script labeling in ArtifactManager.save_session_crash."""
+
+    def setUp(self):
+        self.artifact_manager = ArtifactManager(
+            crashes_dir=Path("/tmp/crashes"),
+            timeouts_dir=Path("/tmp/timeouts"),
+            divergences_dir=Path("/tmp/divergences"),
+            regressions_dir=Path("/tmp/regressions"),
+            fingerprinter=CrashFingerprinter(),
+            max_timeout_log_bytes=10_000_000,
+            max_crash_log_bytes=10_000_000,
+            session_fuzz=True,
+        )
+
+    def test_solo_session_labels_attack(self):
+        """Single-script session labels the child as attack, not warmup."""
+        scripts = [Path("/tmp/child.py")]
+        with (
+            patch("pathlib.Path.mkdir"),
+            patch("shutil.copy2") as mock_copy2,
+            patch("pathlib.Path.write_text"),
+            patch("pathlib.Path.chmod"),
+        ):
+            self.artifact_manager.save_session_crash(scripts, -11)
+
+            dest = mock_copy2.call_args[0][1]
+            self.assertEqual(dest.name, "00_attack.py")
+
+    def test_two_scripts_labels_correctly(self):
+        """Two-script session: warmup + attack."""
+        scripts = [Path("/tmp/parent.py"), Path("/tmp/child.py")]
+        with (
+            patch("pathlib.Path.mkdir"),
+            patch("shutil.copy2") as mock_copy2,
+            patch("pathlib.Path.write_text"),
+            patch("pathlib.Path.chmod"),
+        ):
+            self.artifact_manager.save_session_crash(scripts, -11)
+
+            calls = mock_copy2.call_args_list
+            self.assertEqual(calls[0][0][1].name, "00_warmup.py")
+            self.assertEqual(calls[1][0][1].name, "01_attack.py")
+
+    def test_three_scripts_labels_correctly(self):
+        """Three-script session: warmup + script + attack."""
+        scripts = [Path("/tmp/parent.py"), Path("/tmp/mixer.py"), Path("/tmp/child.py")]
+        with (
+            patch("pathlib.Path.mkdir"),
+            patch("shutil.copy2") as mock_copy2,
+            patch("pathlib.Path.write_text"),
+            patch("pathlib.Path.chmod"),
+        ):
+            self.artifact_manager.save_session_crash(scripts, -11)
+
+            calls = mock_copy2.call_args_list
+            self.assertEqual(calls[0][0][1].name, "00_warmup.py")
+            self.assertEqual(calls[1][0][1].name, "01_script.py")
+            self.assertEqual(calls[2][0][1].name, "02_attack.py")
+
+
 if __name__ == "__main__":
     unittest.main()

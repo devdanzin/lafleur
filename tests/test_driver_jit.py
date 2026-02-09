@@ -1,4 +1,5 @@
 import unittest
+from io import StringIO
 from unittest.mock import MagicMock, patch
 
 # Ensure lafleur.driver is imported
@@ -88,6 +89,38 @@ class TestJITIntrospection(unittest.TestCase):
             self.assertEqual(stats["zombie_traces"], 0)
             self.assertEqual(stats["valid_traces"], 0)
             self.assertEqual(stats["warm_traces"], 0)
+
+    def test_inspect_executor_logs_first_failure_only(self):
+        """Error message should appear once even when multiple executors fail."""
+        mock_executor = MagicMock()
+
+        with (
+            patch.object(driver, "HAS_OPCODE", True),
+            patch.object(driver, "_opcode", create=True) as mock_opcode,
+            patch.object(driver.ctypes, "cast") as mock_cast,
+            patch("sys.stderr", new_callable=StringIO) as mock_stderr,
+        ):
+            mock_cast.side_effect = ValueError("Cast failed")
+            # Return executor for two offsets so inspect_executor fires twice
+            mock_opcode.get_executor.side_effect = [mock_executor, mock_executor] + [None] * 5000
+
+            def my_func():
+                pass
+                pass
+
+            namespace = {"my_func": my_func}
+            stats = driver.get_jit_stats(namespace)
+
+        stderr_output = mock_stderr.getvalue()
+        # The error message should appear exactly once
+        self.assertEqual(
+            stderr_output.count("[!] Executor introspection failed"),
+            1,
+            f"Expected exactly 1 error message, got:\n{stderr_output}",
+        )
+        self.assertIn("Suppressing further", stderr_output)
+        # Stats should still be returned
+        self.assertEqual(stats["executors"], 2)
 
 
 if __name__ == "__main__":

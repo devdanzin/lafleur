@@ -298,11 +298,14 @@ def get_jit_stats(namespace: dict, baseline: dict[tuple[int, int], int] | None =
             "max_exit_density": 0.0,
         }
 
+    introspection_error_logged = False
+
     def inspect_executor(executor, code_id: int, offset: int):
         nonlocal zombie_traces, valid_traces, warm_traces
         nonlocal max_exit_count, max_chain_depth, min_code_size, max_exit_density
         nonlocal delta_max_exit_count, delta_max_exit_density, delta_total_exits
         nonlocal delta_new_executors, delta_new_zombies
+        nonlocal introspection_error_logged
         try:
             executor_ptr = ctypes.cast(id(executor), ctypes.POINTER(PyExecutorObject))
 
@@ -358,7 +361,16 @@ def get_jit_stats(namespace: dict, baseline: dict[tuple[int, int], int] | None =
                         delta_new_zombies += 1
 
         except Exception as e:
-            print(f"[!] Introspection failed: {e}", file=sys.stderr)
+            if not introspection_error_logged:
+                print(
+                    f"[!] Executor introspection failed: {e}\n"
+                    f"    This may indicate a CPython version mismatch with the"
+                    f" ctypes struct definitions.\n"
+                    f"    Suppressing further introspection warnings for this session.",
+                    file=sys.stderr,
+                )
+                traceback.print_exc(file=sys.stderr)
+                introspection_error_logged = True
 
     for name, obj in namespace.items():
         if not isinstance(name, str) or name.startswith("_"):

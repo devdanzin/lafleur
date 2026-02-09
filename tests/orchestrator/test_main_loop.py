@@ -85,10 +85,10 @@ class TestCalculateMutations(unittest.TestCase):
 
 
 class TestUpdateAndSaveRunStats(unittest.TestCase):
-    """Test ArtifactManager.update_and_save_run_stats method."""
+    """Test TelemetryManager.update_and_save_run_stats method."""
 
     def setUp(self):
-        from lafleur.artifacts import ArtifactManager
+        from lafleur.artifacts import TelemetryManager
 
         self.run_stats = {}
         self.coverage_manager = MagicMock()
@@ -107,18 +107,20 @@ class TestUpdateAndSaveRunStats(unittest.TestCase):
         self.corpus_manager = MagicMock()
         self.corpus_manager.corpus_file_counter = 123
 
-        # Create ArtifactManager with required dependencies
-        self.artifact_manager = ArtifactManager.__new__(ArtifactManager)
-        self.artifact_manager.run_stats = self.run_stats
-        self.artifact_manager.coverage_manager = self.coverage_manager
-        self.artifact_manager.corpus_manager = self.corpus_manager
+        self.telemetry_manager = TelemetryManager(
+            run_stats=self.run_stats,
+            coverage_manager=self.coverage_manager,
+            corpus_manager=self.corpus_manager,
+            score_tracker=MagicMock(),
+            timeseries_log_path=Path("/tmp/timeseries.jsonl"),
+        )
 
     def test_updates_timestamp(self):
         """Test that last_update_time is set to current time."""
         with patch("lafleur.artifacts.save_run_stats"):
             with patch("lafleur.artifacts.generate_corpus_stats"):
                 before = datetime.now(timezone.utc)
-                self.artifact_manager.update_and_save_run_stats(global_seed_counter=42)
+                self.telemetry_manager.update_and_save_run_stats(global_seed_counter=42)
                 after = datetime.now(timezone.utc)
 
                 timestamp = datetime.fromisoformat(self.run_stats["last_update_time"])
@@ -129,7 +131,7 @@ class TestUpdateAndSaveRunStats(unittest.TestCase):
         """Test that corpus_size reflects per_file_coverage count."""
         with patch("lafleur.artifacts.save_run_stats"):
             with patch("lafleur.artifacts.generate_corpus_stats"):
-                self.artifact_manager.update_and_save_run_stats(global_seed_counter=42)
+                self.telemetry_manager.update_and_save_run_stats(global_seed_counter=42)
 
                 self.assertEqual(self.run_stats["corpus_size"], 3)
 
@@ -137,7 +139,7 @@ class TestUpdateAndSaveRunStats(unittest.TestCase):
         """Test that global coverage metrics are counted."""
         with patch("lafleur.artifacts.save_run_stats"):
             with patch("lafleur.artifacts.generate_corpus_stats"):
-                self.artifact_manager.update_and_save_run_stats(global_seed_counter=42)
+                self.telemetry_manager.update_and_save_run_stats(global_seed_counter=42)
 
                 self.assertEqual(self.run_stats["global_uops"], 2)
                 self.assertEqual(self.run_stats["global_edges"], 3)
@@ -147,7 +149,7 @@ class TestUpdateAndSaveRunStats(unittest.TestCase):
         """Test that global_seed_counter and corpus_file_counter are updated."""
         with patch("lafleur.artifacts.save_run_stats"):
             with patch("lafleur.artifacts.generate_corpus_stats"):
-                self.artifact_manager.update_and_save_run_stats(global_seed_counter=42)
+                self.telemetry_manager.update_and_save_run_stats(global_seed_counter=42)
 
                 self.assertEqual(self.run_stats["global_seed_counter"], 42)
                 self.assertEqual(self.run_stats["corpus_file_counter"], 123)
@@ -159,7 +161,7 @@ class TestUpdateAndSaveRunStats(unittest.TestCase):
 
         with patch("lafleur.artifacts.save_run_stats"):
             with patch("lafleur.artifacts.generate_corpus_stats"):
-                self.artifact_manager.update_and_save_run_stats(global_seed_counter=42)
+                self.telemetry_manager.update_and_save_run_stats(global_seed_counter=42)
 
                 self.assertEqual(self.run_stats["average_mutations_per_find"], 25.0)
 
@@ -169,7 +171,7 @@ class TestUpdateAndSaveRunStats(unittest.TestCase):
 
         with patch("lafleur.artifacts.save_run_stats"):
             with patch("lafleur.artifacts.generate_corpus_stats"):
-                self.artifact_manager.update_and_save_run_stats(global_seed_counter=42)
+                self.telemetry_manager.update_and_save_run_stats(global_seed_counter=42)
 
                 self.assertNotIn("average_mutations_per_find", self.run_stats)
 
@@ -177,7 +179,7 @@ class TestUpdateAndSaveRunStats(unittest.TestCase):
         """Test that save_run_stats is called with updated stats."""
         with patch("lafleur.artifacts.save_run_stats") as mock_save:
             with patch("lafleur.artifacts.generate_corpus_stats"):
-                self.artifact_manager.update_and_save_run_stats(global_seed_counter=42)
+                self.telemetry_manager.update_and_save_run_stats(global_seed_counter=42)
 
                 mock_save.assert_called_once_with(self.run_stats)
 
@@ -198,6 +200,7 @@ class TestRunEvolutionaryLoop(unittest.TestCase):
         self.orchestrator.score_tracker = MagicMock()
         self.orchestrator.global_seed_counter = 0
         self.orchestrator.artifact_manager = MagicMock()
+        self.orchestrator.telemetry_manager = MagicMock()
         self.orchestrator.scoring_manager = MagicMock()
 
     def test_bootstraps_corpus_when_below_minimum(self):
@@ -744,6 +747,7 @@ class TestRunStatsKeyErrorWithEmptyStats(unittest.TestCase):
         self.orchestrator.mutation_controller = MagicMock()
         self.orchestrator.scoring_manager = MagicMock()
         self.orchestrator.artifact_manager = MagicMock()
+        self.orchestrator.telemetry_manager = MagicMock()
         self.orchestrator.score_tracker = MagicMock()
         self.orchestrator.timing_fuzz = False
         self.orchestrator.differential_testing = False
@@ -835,8 +839,8 @@ class TestRunStatsKeyErrorWithEmptyStats(unittest.TestCase):
                 self.orchestrator.execute_mutation_and_analysis_cycle(parent_path, 100.0, 1, False)
 
         # Stats saving should be done by run_evolutionary_loop, not the cycle method
-        self.orchestrator.artifact_manager.update_and_save_run_stats.assert_not_called()
-        self.orchestrator.artifact_manager.log_timeseries_datapoint.assert_not_called()
+        self.orchestrator.telemetry_manager.update_and_save_run_stats.assert_not_called()
+        self.orchestrator.telemetry_manager.log_timeseries_datapoint.assert_not_called()
 
 
 class TestHandleAnalysisDataFlowControl(unittest.TestCase):

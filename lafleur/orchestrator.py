@@ -28,7 +28,7 @@ from textwrap import dedent
 from lafleur.corpus_manager import CORPUS_DIR, CorpusManager
 from lafleur.coverage import CoverageManager, load_coverage_state
 from lafleur.analysis import CrashFingerprinter
-from lafleur.artifacts import ArtifactManager
+from lafleur.artifacts import ArtifactManager, TelemetryManager
 from lafleur.execution import ExecutionManager
 from lafleur.scoring import ScoringManager
 from lafleur.learning import MutatorScoreTracker
@@ -177,7 +177,7 @@ class LafleurOrchestrator:
             f"[+] Time-series analytics for this run will be saved to: {self.timeseries_log_path}"
         )
 
-        # Initialize the artifact manager for handling crashes, timeouts, divergences, and stats
+        # Initialize the artifact manager for handling crashes, timeouts, divergences
         self.artifact_manager = ArtifactManager(
             crashes_dir=CRASHES_DIR,
             timeouts_dir=TIMEOUTS_DIR,
@@ -187,6 +187,10 @@ class LafleurOrchestrator:
             max_timeout_log_bytes=max_timeout_log_bytes,
             max_crash_log_bytes=max_crash_log_bytes,
             session_fuzz=session_fuzz,
+        )
+
+        # Initialize the telemetry manager for run stats and time-series logging
+        self.telemetry_manager = TelemetryManager(
             run_stats=self.run_stats,
             coverage_manager=self.coverage_manager,
             corpus_manager=self.corpus_manager,
@@ -310,16 +314,16 @@ class LafleurOrchestrator:
                     )
 
                 # Update dynamic stats after each session
-                self.artifact_manager.update_and_save_run_stats(self.global_seed_counter)
+                self.telemetry_manager.update_and_save_run_stats(self.global_seed_counter)
                 if session_num % 10 == 0:
                     print(f"[*] Logging time-series data point at session {session_num}...")
-                    self.artifact_manager.log_timeseries_datapoint()
+                    self.telemetry_manager.log_timeseries_datapoint()
         finally:
             # Crash-safety: save stats even if interrupted mid-session.
             # The per-session save above handles the normal case.
             print("\n[+] Fuzzing loop terminating. Saving final stats...")
-            self.artifact_manager.update_and_save_run_stats(self.global_seed_counter)
-            self.artifact_manager.log_timeseries_datapoint()
+            self.telemetry_manager.update_and_save_run_stats(self.global_seed_counter)
+            self.telemetry_manager.log_timeseries_datapoint()
 
             self.score_tracker.save_state()
 

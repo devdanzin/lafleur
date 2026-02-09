@@ -447,6 +447,91 @@ class TestPrepareNewCoverageResult(unittest.TestCase):
         saved_density = result["mutation_info"]["jit_stats"]["max_exit_density"]
         self.assertAlmostEqual(saved_density, 47.5)
 
+    def test_delta_density_clamped_to_parent_growth_factor(self):
+        """Test delta density is clamped relative to parent's delta density."""
+        result = self.scoring_manager._prepare_new_coverage_result(
+            exec_result=self.exec_result,
+            child_coverage={"edges": {1}},
+            jit_stats={
+                "max_exit_density": 0.0,
+                "child_delta_max_exit_density": 100.0,
+            },
+            parent_jit_stats={
+                "max_exit_density": 0.0,
+                "child_delta_max_exit_density": 1.0,
+            },
+            parent_id=None,
+            mutation_info={},
+            mutation_seed=0,
+        )
+
+        # Clamped: min(1.0 * 5.0, 100.0) = 5.0, then decay: 5.0 * 0.95 = 4.75
+        saved = result["mutation_info"]["jit_stats"]["child_delta_max_exit_density"]
+        self.assertAlmostEqual(saved, 4.75)
+
+    def test_delta_density_no_parent_trusts_child(self):
+        """Test that with no parent delta, child value is trusted (no clamping)."""
+        result = self.scoring_manager._prepare_new_coverage_result(
+            exec_result=self.exec_result,
+            child_coverage={"edges": {1}},
+            jit_stats={
+                "max_exit_density": 0.0,
+                "child_delta_max_exit_density": 3.0,
+            },
+            parent_jit_stats={
+                "max_exit_density": 0.0,
+                "child_delta_max_exit_density": 0.0,
+            },
+            parent_id=None,
+            mutation_info={},
+            mutation_seed=0,
+        )
+
+        # No parent delta → no clamping. Decay: 3.0 * 0.95 = 2.85
+        saved = result["mutation_info"]["jit_stats"]["child_delta_max_exit_density"]
+        self.assertAlmostEqual(saved, 2.85)
+
+    def test_delta_density_decay_applied(self):
+        """Test that delta density is decayed by TACHYCARDIA_DECAY_FACTOR."""
+        result = self.scoring_manager._prepare_new_coverage_result(
+            exec_result=self.exec_result,
+            child_coverage={"edges": {1}},
+            jit_stats={
+                "max_exit_density": 0.0,
+                "child_delta_max_exit_density": 2.0,
+            },
+            parent_jit_stats={},
+            parent_id=None,
+            mutation_info={},
+            mutation_seed=0,
+        )
+
+        # 2.0 * 0.95 = 1.9
+        saved = result["mutation_info"]["jit_stats"]["child_delta_max_exit_density"]
+        self.assertAlmostEqual(saved, 1.9)
+
+    def test_original_mutation_info_not_modified_with_delta(self):
+        """Confirm mutation_info is still not mutated after delta changes."""
+        original = {"mutator": "test", "stage": "havoc"}
+        caller_copy = original.copy()
+
+        result = self.scoring_manager._prepare_new_coverage_result(
+            exec_result=self.exec_result,
+            child_coverage={"edges": {1}},
+            jit_stats={
+                "max_exit_density": 0.0,
+                "child_delta_max_exit_density": 1.0,
+            },
+            parent_jit_stats={},
+            parent_id=None,
+            mutation_info=caller_copy,
+            mutation_seed=0,
+        )
+
+        self.assertEqual(caller_copy, original)
+        self.assertNotIn("jit_stats", caller_copy)
+        self.assertIn("jit_stats", result["mutation_info"])
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

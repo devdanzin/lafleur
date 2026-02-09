@@ -93,6 +93,10 @@ class ExecutionManager:
     - Session mode with the mixer strategy
     """
 
+    # Timing fuzzing configuration
+    TIMING_NUM_RUNS = 5
+    TIMING_CV_THRESHOLD = 0.20  # Discard if coefficient of variation > 20%
+
     def __init__(
         self,
         target_python: str,
@@ -183,8 +187,7 @@ class ExecutionManager:
         cv = stdev / mean  # Coefficient of Variation
 
         # If variation is > 20%, the measurement is too noisy to be reliable.
-        CV_THRESHOLD = 0.20
-        if cv > CV_THRESHOLD:
+        if cv > self.TIMING_CV_THRESHOLD:
             print(
                 f"  [~] Timing measurements too noisy (CV={cv:.2f}). Discarding run.",
                 file=sys.stderr,
@@ -342,17 +345,16 @@ class ExecutionManager:
         # This runs if differential testing is off, or if it found no divergence.
         if self.timing_fuzz:
             child_source_path.write_text(source_code)  # Ensure original code is used
-            num_timing_runs = 5
 
             nojit_avg_ms, timed_out, nojit_cv = self._run_timed_trial(
-                child_source_path, num_timing_runs, jit_enabled=False
+                child_source_path, self.TIMING_NUM_RUNS, jit_enabled=False
             )
             if timed_out:
                 self.artifact_manager.handle_timeout(child_source_path, child_log_path, parent_path)
                 return None, "timeouts_found"
 
             jit_avg_ms, timed_out, _ = self._run_timed_trial(
-                child_source_path, num_timing_runs, jit_enabled=True
+                child_source_path, self.TIMING_NUM_RUNS, jit_enabled=True
             )
             if timed_out:
                 self.artifact_manager.save_regression_timeout(child_source_path, parent_path)

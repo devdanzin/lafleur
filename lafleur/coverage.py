@@ -102,33 +102,42 @@ class CoverageManager:
         ensure_state_schema(state)
         self._initialize_reverse_maps()
 
-    def _initialize_reverse_maps(self):
+        # Pre-compute map references to avoid per-call string formatting
+        # in get_or_create_id. Maps item_type -> (forward_map, reverse_map).
+        self._type_maps: dict[str, tuple[dict[str, int], dict[int, str]]] = {
+            "uop": (self.state["uop_map"], self.reverse_uop_map),
+            "edge": (self.state["edge_map"], self.reverse_edge_map),
+            "rare_event": (self.state["rare_event_map"], self.reverse_rare_event_map),
+        }
+
+    def _initialize_reverse_maps(self) -> None:
         """Create reverse mappings from integer IDs to strings."""
-        self.reverse_uop_map = {v: k for k, v in self.state["uop_map"].items()}
-        self.reverse_edge_map = {v: k for k, v in self.state["edge_map"].items()}
-        self.reverse_rare_event_map = {v: k for k, v in self.state["rare_event_map"].items()}
+        self.reverse_uop_map: dict[int, str] = {v: k for k, v in self.state["uop_map"].items()}
+        self.reverse_edge_map: dict[int, str] = {v: k for k, v in self.state["edge_map"].items()}
+        self.reverse_rare_event_map: dict[int, str] = {
+            v: k for k, v in self.state["rare_event_map"].items()
+        }
 
     def get_or_create_id(self, item_type: str, item_string: str) -> int:
+        """Get the integer ID for a string, creating a new one if first seen.
+
+        Args:
+            item_type: One of "uop", "edge", "rare_event".
+            item_string: The string representation of the coverage item.
+
+        Returns:
+            Integer ID for the item.
         """
-        Get the integer ID for a string, creating a new ID if it's the first time
-        seeing the string for that item type.
-        """
-        map_name = f"{item_type}_map"
-        id_counter_name = item_type
+        forward_map, reverse_map = self._type_maps[item_type]
 
-        # Use the existing ID if the string has been seen before.
-        if item_string in self.state[map_name]:
-            return self.state[map_name][item_string]
+        existing_id = forward_map.get(item_string)
+        if existing_id is not None:
+            return existing_id
 
-        # Otherwise, create a new ID.
-        new_id = self.state["next_id_map"][id_counter_name]
-        self.state[map_name][item_string] = new_id
-        self.state["next_id_map"][id_counter_name] += 1
-
-        # Keep the reverse map in sync.
-        reverse_map_name = f"reverse_{item_type}_map"
-        getattr(self, reverse_map_name)[new_id] = item_string
-
+        new_id = self.state["next_id_map"][item_type]
+        forward_map[item_string] = new_id
+        self.state["next_id_map"][item_type] += 1
+        reverse_map[new_id] = item_string
         return new_id
 
 

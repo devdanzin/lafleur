@@ -56,6 +56,33 @@ class InterestingnessScorer:
 
     MIN_INTERESTING_SCORE = 10.0
 
+    # --- Coverage scoring weights ---
+    GLOBAL_EDGE_WEIGHT = 10.0
+    GLOBAL_UOP_WEIGHT = 5.0
+    GLOBAL_RARE_EVENT_WEIGHT = 10.0
+    RELATIVE_EDGE_WEIGHT = 1.0
+    RELATIVE_UOP_WEIGHT = 0.5
+
+    # --- Richness and density weights ---
+    RICHNESS_BONUS_WEIGHT = 5.0
+    RICHNESS_THRESHOLD = 0.1
+    DENSITY_PENALTY_WEIGHT = 2.0
+    DENSITY_PENALTY_THRESHOLD = 0.5
+
+    # --- Timing weights ---
+    TIMING_BONUS_MULTIPLIER = 50.0
+    TIMING_CV_MULTIPLIER = 3.0
+
+    # --- JIT Vitals bonuses ---
+    TACHYCARDIA_BONUS = 20.0
+    TACHYCARDIA_MIN_DENSITY = 10.0
+    TACHYCARDIA_PARENT_MULTIPLIER = 1.25
+    ZOMBIE_BONUS = 50.0
+    CHAIN_DEPTH_BONUS = 10.0
+    CHAIN_DEPTH_THRESHOLD = 3
+    STUB_BONUS = 5.0
+    STUB_SIZE_THRESHOLD = 5
+
     def __init__(
         self,
         coverage_info: NewCoverageInfo,
@@ -95,7 +122,7 @@ class InterestingnessScorer:
                 # relative to the noise of the baseline measurement.
                 # We require the slowdown to be at least 3x the noise.
                 nojit_cv = self.nojit_cv if self.nojit_cv is not None else 0.0
-                dynamic_threshold = 1.0 + (3 * nojit_cv)
+                dynamic_threshold = 1.0 + (self.TIMING_CV_MULTIPLIER * nojit_cv)
 
                 print(
                     f"  [~] Timing slowdown ratio (JIT/non-JIT) is {slowdown_ratio:.3f} (minimum: {dynamic_threshold:.3f}).",
@@ -103,59 +130,59 @@ class InterestingnessScorer:
                 )
 
                 if slowdown_ratio > dynamic_threshold:
-                    performance_bonus = (slowdown_ratio - 1.0) * 50.0
+                    performance_bonus = (slowdown_ratio - 1.0) * self.TIMING_BONUS_MULTIPLIER
                     score += performance_bonus
 
         # --- JIT Vitals Scoring ---
         zombie_traces = self.jit_stats.get("zombie_traces", 0)
         max_chain_depth = self.jit_stats.get("max_chain_depth", 0)
-        min_code_size = self.jit_stats.get("min_code_size", 0)  # Less critical
+        min_code_size = self.jit_stats.get("min_code_size", 0)
 
         # Differential Scoring for Exit Density
         child_density = self.jit_stats.get("max_exit_density", 0.0)
         parent_density = self.parent_jit_stats.get("max_exit_density", 0.0)
-        density_threshold = max(10.0, parent_density * 1.25)
+        density_threshold = max(
+            self.TACHYCARDIA_MIN_DENSITY, parent_density * self.TACHYCARDIA_PARENT_MULTIPLIER
+        )
 
         if child_density > density_threshold:
             print(
                 f"  [+] JIT Tachycardia intensified (Density: {child_density:.2f} > {density_threshold:.2f})",
                 file=sys.stderr,
             )
-            score += 20.0
+            score += self.TACHYCARDIA_BONUS
 
         if zombie_traces > 0:
             print("  [!] JIT ZOMBIE STATE DETECTED!", file=sys.stderr)
-            score += 50.0
+            score += self.ZOMBIE_BONUS
 
-        if max_chain_depth > 3:
+        if max_chain_depth > self.CHAIN_DEPTH_THRESHOLD:
             print("  [+] JIT Hyper-Extension (Deep Chains) detected.", file=sys.stderr)
-            score += 10.0
+            score += self.CHAIN_DEPTH_BONUS
 
-        if 0 < min_code_size < 5:
-            # Reward tiny code sizes (stubs) which often indicate interesting edge cases
-            score += 5.0
+        if 0 < min_code_size < self.STUB_SIZE_THRESHOLD:
+            score += self.STUB_BONUS
 
         # 1. Heavily reward new global discoveries.
-        score += self.info.global_edges * 10.0
-        score += self.info.global_uops * 5.0
-        score += self.info.global_rare_events * 10.0
+        score += self.info.global_edges * self.GLOBAL_EDGE_WEIGHT
+        score += self.info.global_uops * self.GLOBAL_UOP_WEIGHT
+        score += self.info.global_rare_events * self.GLOBAL_RARE_EVENT_WEIGHT
 
         # 2. Add smaller rewards for new relative discoveries.
-        score += self.info.relative_edges * 1.0
-        score += self.info.relative_uops * 0.5
+        score += self.info.relative_edges * self.RELATIVE_EDGE_WEIGHT
+        score += self.info.relative_uops * self.RELATIVE_UOP_WEIGHT
 
         # 3. Reward for richness (% increase in total coverage).
         if self.parent_lineage_edge_count > 0:
             percent_increase = (self.info.total_child_edges / self.parent_lineage_edge_count) - 1.0
-            if percent_increase > 0.1:  # Reward if > 10% richer
-                score += percent_increase * 5.0  # Add up to 5 points for a 100% increase
+            if percent_increase > self.RICHNESS_THRESHOLD:
+                score += percent_increase * self.RICHNESS_BONUS_WEIGHT
 
         # 4. Penalize for low coverage density (large size increase for little gain).
         if self.info.global_edges == 0 and self.info.relative_edges > 0:
             size_increase_ratio = (self.child_file_size / (self.parent_file_size + 1)) - 1.0
-            if size_increase_ratio > 0.5:  # Penalize if > 50% larger
-                # This penalty can offset the small gain from relative edges
-                score -= size_increase_ratio * 2.0
+            if size_increase_ratio > self.DENSITY_PENALTY_THRESHOLD:
+                score -= size_increase_ratio * self.DENSITY_PENALTY_WEIGHT
 
         return score
 

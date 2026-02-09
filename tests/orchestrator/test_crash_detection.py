@@ -627,7 +627,8 @@ class TestSaveRegressionTimeout(unittest.TestCase):
                     self.artifact_manager.save_regression_timeout(source_path, parent_path)
 
                     self.assertIn(
-                        "CRITICAL: Could not save regression timeout", mock_stderr.getvalue()
+                        "CRITICAL: Could not save Regression timeout source file",
+                        mock_stderr.getvalue(),
                     )
 
 
@@ -753,6 +754,61 @@ class TestGetLogSuffix(unittest.TestCase):
         """Test that plain .log suffix is returned as default."""
         result = ArtifactManager._get_log_suffix(Path("/tmp/child_test.log"))
         self.assertEqual(result, ".log")
+
+
+class TestSaveTimeoutArtifact(unittest.TestCase):
+    """Test ArtifactManager._save_timeout_artifact helper."""
+
+    def setUp(self):
+        self.artifact_manager = ArtifactManager(
+            crashes_dir=Path("/tmp/crashes"),
+            timeouts_dir=Path("/tmp/timeouts"),
+            divergences_dir=Path("/tmp/divergences"),
+            regressions_dir=Path("/tmp/regressions"),
+            fingerprinter=CrashFingerprinter(),
+            max_timeout_log_bytes=10_000_000,
+            max_crash_log_bytes=10_000_000,
+        )
+
+    def test_saves_source_without_log(self):
+        """Test that source is saved when no log_path is provided."""
+        with (
+            patch("pathlib.Path.mkdir"),
+            patch("shutil.copy") as mock_copy,
+            patch("sys.stderr", new_callable=io.StringIO) as mock_stderr,
+        ):
+            self.artifact_manager._save_timeout_artifact(
+                Path("/tmp/child.py"),
+                Path("/corpus/parent.py"),
+                Path("/tmp/dest"),
+                "Test timeout",
+            )
+            mock_copy.assert_called_once()
+            self.assertIn("Test timeout saved to", mock_stderr.getvalue())
+
+    def test_saves_source_and_log(self):
+        """Test that both source and log are saved when log_path is provided."""
+        log_path = Path("/tmp/child.log")
+        with (
+            patch("pathlib.Path.mkdir"),
+            patch("shutil.copy") as mock_copy,
+            patch.object(
+                self.artifact_manager,
+                "process_log_file",
+                return_value=log_path,
+            ),
+            patch("pathlib.Path.exists", return_value=True),
+            patch("sys.stderr", new_callable=io.StringIO),
+        ):
+            self.artifact_manager._save_timeout_artifact(
+                Path("/tmp/child.py"),
+                Path("/corpus/parent.py"),
+                Path("/tmp/dest"),
+                "Test timeout",
+                log_path=log_path,
+            )
+            # Two copies: source + log
+            self.assertEqual(mock_copy.call_count, 2)
 
 
 if __name__ == "__main__":

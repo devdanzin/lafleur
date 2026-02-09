@@ -60,6 +60,12 @@ RARE_EVENT_REGEX = re.compile(
     r"|Rare event builtin dict|Rare event watched globals modification)"
 )
 
+# Sentinel UOP used to seed the edge chain at the start of each harness.
+# This creates edges like "_START_OF_HARNESS_->_LOAD_FAST", capturing
+# which UOP each harness begins execution with. Not in UOP_NAMES — it
+# passes through because the spurious-UOP check only applies to current_uop.
+_START_OF_HARNESS = "_START_OF_HARNESS_"
+
 # Define paths for the coverage directory and the new state file.
 COVERAGE_DIR = Path("coverage")
 COVERAGE_STATE_FILE = COVERAGE_DIR / "coverage_state.pkl"
@@ -178,7 +184,7 @@ def parse_log_for_edge_coverage(
 
                 # Reset state for the new harness.
                 current_harness_id = harness_match.group(1)
-                previous_uop = "_START_OF_HARNESS_"
+                previous_uop = _START_OF_HARNESS
                 current_state = JitState.EXECUTING
                 current_trace_length = 0
                 current_side_exits = 0

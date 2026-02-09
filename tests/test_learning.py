@@ -39,33 +39,30 @@ class TestMutatorScoreTracker(unittest.TestCase):
         # Record a success
         self.tracker.record_success("havoc", ["MockTransformer1", "MockTransformer2"])
 
-        # Check that scores were incremented
-        self.assertEqual(self.tracker.scores["havoc"], 0.995)  # 1.0 * 0.995
-        self.assertEqual(self.tracker.scores["MockTransformer1"], 0.995)
-        self.assertEqual(self.tracker.scores["MockTransformer2"], 0.995)
+        # Check that scores were incremented (no decay on success)
+        self.assertEqual(self.tracker.scores["havoc"], 1.0)
+        self.assertEqual(self.tracker.scores["MockTransformer1"], 1.0)
+        self.assertEqual(self.tracker.scores["MockTransformer2"], 1.0)
 
     @patch("lafleur.learning.MUTATOR_SCORES_FILE")
-    def test_record_success_applies_decay_to_all_scores(self, mock_file_path):
-        """Test that record_success applies decay to ALL scores, not just the updated ones."""
+    def test_record_success_does_not_decay(self, mock_file_path):
+        """Test that record_success does not apply decay (decay is attempt-based)."""
         mock_file_path.is_file.return_value = False
 
         # Set up some initial scores
         self.tracker.scores["havoc"] = 10.0
         self.tracker.scores["spam"] = 5.0
-        self.tracker.scores["MockTransformer1"] = 8.0
 
         # Record a success for a different strategy
         self.tracker.record_success("deterministic", ["MockTransformer2"])
 
-        # Check that:
-        # 1. The successful items got incremented THEN decayed
-        self.assertEqual(self.tracker.scores["deterministic"], 0.995)  # (0 + 1.0) * 0.995 = 0.995
-        self.assertEqual(self.tracker.scores["MockTransformer2"], 0.995)
+        # Successful items got incremented, no decay
+        self.assertEqual(self.tracker.scores["deterministic"], 1.0)
+        self.assertEqual(self.tracker.scores["MockTransformer2"], 1.0)
 
-        # 2. ALL other scores got decayed
-        self.assertEqual(self.tracker.scores["havoc"], 10.0 * 0.995)
-        self.assertEqual(self.tracker.scores["spam"], 5.0 * 0.995)
-        self.assertEqual(self.tracker.scores["MockTransformer1"], 8.0 * 0.995)
+        # Other scores remain unchanged (no decay on success)
+        self.assertEqual(self.tracker.scores["havoc"], 10.0)
+        self.assertEqual(self.tracker.scores["spam"], 5.0)
 
     @patch("lafleur.learning.MUTATOR_SCORES_FILE")
     def test_get_weights_with_min_attempts_not_met(self, mock_file_path):
@@ -160,6 +157,7 @@ class TestMutatorScoreTracker(unittest.TestCase):
         saved_state = {
             "scores": {"havoc": 25.5, "spam": 10.2, "MockTransformer1": 15.0},
             "attempts": {"havoc": 50, "spam": 30},
+            "attempt_counter": 17,
         }
 
         # Mock the file path to exist
@@ -176,6 +174,7 @@ class TestMutatorScoreTracker(unittest.TestCase):
                 self.assertEqual(tracker.scores["MockTransformer1"], 15.0)
                 self.assertEqual(tracker.attempts["havoc"], 50)
                 self.assertEqual(tracker.attempts["spam"], 30)
+                self.assertEqual(tracker._attempt_counter, 17)
 
     @patch("lafleur.learning.MUTATOR_SCORES_FILE")
     def test_save_state_to_file(self, mock_file_path):
@@ -203,6 +202,7 @@ class TestMutatorScoreTracker(unittest.TestCase):
                 self.assertEqual(saved_data["scores"]["havoc"], 42.5)
                 self.assertEqual(saved_data["scores"]["spam"], 17.3)
                 self.assertEqual(saved_data["attempts"]["havoc"], 100)
+                self.assertEqual(saved_data["attempt_counter"], 0)
 
     @patch("lafleur.learning.MUTATOR_TELEMETRY_LOG")
     @patch("lafleur.learning.MUTATOR_SCORES_FILE")
@@ -217,38 +217,37 @@ class TestMutatorScoreTracker(unittest.TestCase):
         mock_telemetry_log.parent.mkdir.assert_called_once_with(parents=True, exist_ok=True)
 
     @patch("lafleur.learning.MUTATOR_SCORES_FILE")
-    def test_decay_factor_applied_correctly(self, mock_file_path):
-        """Test that the decay factor is applied as expected."""
+    def test_record_attempt_increments_and_triggers_decay(self, mock_file_path):
+        """Test that record_attempt increments attempts and triggers decay at interval."""
         mock_file_path.is_file.return_value = False
 
-        # Create tracker with specific decay factor
         tracker = MutatorScoreTracker(self.transformers, decay_factor=0.9)
-
-        # Set up initial scores
         tracker.scores["havoc"] = 10.0
         tracker.scores["spam"] = 20.0
 
-        # Record a success
-        tracker.record_success("deterministic", [])
+        # Record 49 attempts — no decay yet
+        for _ in range(49):
+            tracker.record_attempt("deterministic")
+        self.assertEqual(tracker.scores["havoc"], 10.0)
+        self.assertEqual(tracker.scores["spam"], 20.0)
 
-        # Check decay was applied
-        self.assertEqual(tracker.scores["havoc"], 10.0 * 0.9)
-        self.assertEqual(tracker.scores["spam"], 20.0 * 0.9)
-        self.assertEqual(tracker.scores["deterministic"], 1.0 * 0.9)
+        # 50th attempt triggers decay
+        tracker.record_attempt("deterministic")
+        self.assertAlmostEqual(tracker.scores["havoc"], 10.0 * 0.9)
+        self.assertAlmostEqual(tracker.scores["spam"], 20.0 * 0.9)
+        self.assertEqual(tracker.attempts["deterministic"], 50)
 
     @patch("lafleur.learning.MUTATOR_SCORES_FILE")
-    def test_multiple_successes_compound_decay(self, mock_file_path):
-        """Test that multiple successes compound the decay effect."""
+    def test_record_attempt_compound_decay(self, mock_file_path):
+        """Test that multiple decay intervals compound the decay effect."""
         mock_file_path.is_file.return_value = False
 
-        # Set initial score
         self.tracker.scores["havoc"] = 100.0
 
-        # Record multiple successes for a different strategy
-        self.tracker.record_success("spam", [])
-        self.tracker.record_success("spam", [])
+        # Record 100 attempts = 2 decay intervals
+        for _ in range(100):
+            self.tracker.record_attempt("spam")
 
-        # havoc score should be decayed twice
         expected = 100.0 * (0.995**2)
         self.assertAlmostEqual(self.tracker.scores["havoc"], expected, places=5)
 

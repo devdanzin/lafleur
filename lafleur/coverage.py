@@ -9,7 +9,6 @@ fuzzer's persistent state with integer-based IDs.
 """
 
 import argparse
-import os
 import pickle
 import re
 import secrets
@@ -300,7 +299,7 @@ def save_coverage_state(state: dict[str, Any]) -> None:
         with open(tmp_path, "wb") as f:  # Open in binary write mode
             pickle.dump(state, f)
         # The write was successful, now atomically rename the file.
-        os.rename(tmp_path, COVERAGE_STATE_FILE)
+        tmp_path.rename(COVERAGE_STATE_FILE)
     except (IOError, OSError, pickle.PicklingError) as e:
         print(f"[!] Error during atomic save of coverage state: {e}", file=sys.stderr)
         # If an error occurred, try to clean up the temporary file.

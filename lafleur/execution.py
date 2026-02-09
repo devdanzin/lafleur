@@ -26,14 +26,17 @@ if TYPE_CHECKING:
     from lafleur.corpus_manager import CorpusManager
 
 
-# Session fuzzing: The Mixer strategy
-MIXER_PROBABILITY = 0.3  # 30% chance to prepend polluter scripts
-
-# Probability that a session run uses only the child script (no parent warmup,
-# no mixer polluters). This creates "cold JIT" fuzzing diversity — the child
-# faces a fresh JIT with no pre-warmed traces, type feedback, or bloom filter
-# state. Solo sessions still use the session driver and crash bundle format.
+# --- Session composition probabilities ---
+# These control the distribution of JIT states across mutation cycles:
+#
+# | Session Type                      | Probability | JIT State                        |
+# |-----------------------------------|-------------|----------------------------------|
+# | Solo (child only)                 | ~15%        | Cold — no warmup, no pollution   |
+# | Warm (parent + child)             | ~59.5%      | Warm — parent establishes traces |
+# | Full (polluters + parent + child) | ~25.5%      | Hot — polluted caches + warm     |
+#
 SOLO_SESSION_PROBABILITY = 0.15
+MIXER_PROBABILITY = 0.30
 
 # Code snippet for differential testing state serialization
 SERIALIZATION_SNIPPET = dedent("""

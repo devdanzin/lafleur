@@ -138,7 +138,10 @@ class LafleurOrchestrator:
         self.run_stats = run_stats if run_stats is not None else load_run_stats()
 
         self.timing_fuzz = timing_fuzz
-        self.score_tracker = MutatorScoreTracker(ast_mutator.transformers)
+        self.score_tracker = MutatorScoreTracker(
+            ast_mutator.transformers,
+            strategies=["deterministic", "havoc", "spam", "helper_sniper", "sniper"],
+        )
 
         # Initialize the mutation controller for managing mutation strategies
         self.mutation_controller = MutationController(

@@ -162,7 +162,18 @@ if hasattr(sys, "set_int_max_str_digits"):
 def walk_code_objects(
     code_obj: CodeType, visited: set | None = None
 ) -> collections.abc.Generator[CodeType, None, None]:
-    """Recursively yield a code object and all its nested code objects."""
+    """Recursively yield a code object and all its nested code objects.
+
+    Walks the constant pool of each code object to find nested functions,
+    classes, and comprehensions.
+
+    Args:
+        code_obj: Root code object to start from.
+        visited: Set of already-visited code objects (for cycle detection).
+
+    Yields:
+        Each code object reachable from the root.
+    """
     if visited is None:
         visited = set()
     if code_obj in visited:

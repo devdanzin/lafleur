@@ -369,5 +369,84 @@ class TestAnalyzeRunMutationInfo(unittest.TestCase):
         self.assertNotIn("jit_stats", caller_mutation_info)
 
 
+class TestPrepareNewCoverageResult(unittest.TestCase):
+    """Test the extracted _prepare_new_coverage_result method."""
+
+    def setUp(self):
+        self.coverage_manager = MagicMock()
+        self.corpus_manager = MagicMock()
+        self.corpus_manager.known_hashes = set()
+
+        self.scoring_manager = ScoringManager(
+            coverage_manager=self.coverage_manager,
+            corpus_manager=self.corpus_manager,
+            get_core_code_func=lambda code: code,
+            run_stats={},
+        )
+        self.scoring_manager._update_global_coverage = Mock()
+        self.scoring_manager._calculate_coverage_hash = Mock(return_value="covhash")
+
+        self.exec_result = MagicMock()
+        self.exec_result.source_path.read_text.return_value = "print('hello')"
+        self.exec_result.execution_time_ms = 100
+        self.exec_result.jit_avg_time_ms = 50.0
+        self.exec_result.nojit_avg_time_ms = 60.0
+
+    def test_returns_new_coverage_result(self):
+        """Test normal path returns NEW_COVERAGE with all expected keys."""
+        result = self.scoring_manager._prepare_new_coverage_result(
+            exec_result=self.exec_result,
+            child_coverage={"edges": {1}},
+            jit_stats={"max_exit_density": 0.0},
+            parent_jit_stats={},
+            parent_id="parent.py",
+            mutation_info={"mutator": "test"},
+            mutation_seed=42,
+        )
+
+        self.assertEqual(result["status"], "NEW_COVERAGE")
+        self.assertIn("core_code", result)
+        self.assertIn("content_hash", result)
+        self.assertIn("coverage_hash", result)
+        self.assertEqual(result["parent_id"], "parent.py")
+        self.assertEqual(result["mutation_seed"], 42)
+        self.scoring_manager._update_global_coverage.assert_called_once()
+
+    def test_duplicate_returns_no_change(self):
+        """Test that known duplicate hashes return NO_CHANGE."""
+        # Pre-populate known_hashes with what will be computed
+        content_hash = __import__("hashlib").sha256(b"print('hello')").hexdigest()
+        self.corpus_manager.known_hashes = {(content_hash, "covhash")}
+
+        result = self.scoring_manager._prepare_new_coverage_result(
+            exec_result=self.exec_result,
+            child_coverage={"edges": {1}},
+            jit_stats={"max_exit_density": 0.0},
+            parent_jit_stats={},
+            parent_id=None,
+            mutation_info={"mutator": "test"},
+            mutation_seed=0,
+        )
+
+        self.assertEqual(result["status"], "NO_CHANGE")
+        self.scoring_manager._update_global_coverage.assert_not_called()
+
+    def test_density_clamping_applied(self):
+        """Test that density clamping limits child density relative to parent."""
+        result = self.scoring_manager._prepare_new_coverage_result(
+            exec_result=self.exec_result,
+            child_coverage={"edges": {1}},
+            jit_stats={"max_exit_density": 1000.0},
+            parent_jit_stats={"max_exit_density": 10.0},
+            parent_id=None,
+            mutation_info={},
+            mutation_seed=0,
+        )
+
+        # Clamped: min(10.0 * 5.0, 1000.0) = 50.0, then decay: 50.0 * 0.95 = 47.5
+        saved_density = result["mutation_info"]["jit_stats"]["max_exit_density"]
+        self.assertAlmostEqual(saved_density, 47.5)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

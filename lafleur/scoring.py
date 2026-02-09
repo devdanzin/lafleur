@@ -570,62 +570,83 @@ class ScoringManager:
         )
 
         if is_interesting:
-            core_code_to_save = self._get_core_code(exec_result.source_path.read_text())
-            content_hash = hashlib.sha256(core_code_to_save.encode("utf-8")).hexdigest()
-            coverage_hash = self._calculate_coverage_hash(child_coverage)
-
-            if (content_hash, coverage_hash) in self.corpus_manager.known_hashes:
-                print(
-                    f"  [~] New coverage found, but this is a known duplicate behavior (ContentHash: {content_hash[:10]}, CoverageHash: {coverage_hash[:10]}). Skipping.",
-                    file=sys.stderr,
-                )
-                return {"status": "NO_CHANGE"}
-
-            # This is the crucial step: if it's new and not a duplicate, we commit the coverage.
-            self._update_global_coverage(child_coverage)
-
-            # --- Dynamic Density Clamping ---
-            # Prevent a single massive spike from setting an unreachable bar for the next generation.
-            child_density = jit_stats.get("max_exit_density", 0.0)
-            parent_density = parent_jit_stats.get("max_exit_density", 0.0)
-
-            if parent_density > 0:
-                # Allow exponential growth (up to 5x), but clamp massive outliers.
-                clamped_density = min(parent_density * MAX_DENSITY_GROWTH_FACTOR, child_density)
-            else:
-                # First generation or no parent data: trust the child's value.
-                clamped_density = child_density
-
-            # --- Tachycardia Decay ---
-            # Apply decay to the saved metric so persistent instability remains interesting.
-            # This prevents the fuzzer from getting stuck in local optima where high baseline
-            # densities make incremental improvements invisible.
-            saved_density = clamped_density * TACHYCARDIA_DECAY_FACTOR
-            if clamped_density > 0:
-                print(
-                    f"  [~] Tachycardia decay: {clamped_density:.4f} -> {saved_density:.4f}",
-                    file=sys.stderr,
-                )
-
-            # Create a copy of stats for persistence, with the decayed density.
-            jit_stats_for_save = jit_stats.copy()
-            jit_stats_for_save["max_exit_density"] = saved_density
-
-            # Create a copy so we don't mutate the caller's dict
-            saved_mutation_info = {**mutation_info, "jit_stats": jit_stats_for_save}
-
-            return {
-                "status": "NEW_COVERAGE",
-                "core_code": core_code_to_save,
-                "baseline_coverage": child_coverage,
-                "content_hash": content_hash,
-                "coverage_hash": coverage_hash,
-                "execution_time_ms": exec_result.execution_time_ms,
-                "parent_id": parent_id,
-                "mutation_info": saved_mutation_info,
-                "mutation_seed": mutation_seed,
-                "jit_avg_time_ms": exec_result.jit_avg_time_ms,
-                "nojit_avg_time_ms": exec_result.nojit_avg_time_ms,
-            }
+            return self._prepare_new_coverage_result(
+                exec_result,
+                child_coverage,
+                jit_stats,
+                parent_jit_stats,
+                parent_id,
+                mutation_info,
+                mutation_seed,
+            )
 
         return {"status": "NO_CHANGE"}
+
+    def _prepare_new_coverage_result(
+        self,
+        exec_result: ExecutionResult,
+        child_coverage: dict,
+        jit_stats: dict,
+        parent_jit_stats: dict,
+        parent_id: str | None,
+        mutation_info: dict,
+        mutation_seed: int,
+    ) -> dict:
+        """Deduplicate, commit coverage, apply density decay, and build the result dict."""
+        assert self.corpus_manager is not None
+        assert self._get_core_code is not None
+
+        core_code_to_save = self._get_core_code(exec_result.source_path.read_text())
+        content_hash = hashlib.sha256(core_code_to_save.encode("utf-8")).hexdigest()
+        coverage_hash = self._calculate_coverage_hash(child_coverage)
+
+        if (content_hash, coverage_hash) in self.corpus_manager.known_hashes:
+            print(
+                f"  [~] New coverage found, but this is a known duplicate behavior (ContentHash: {content_hash[:10]}, CoverageHash: {coverage_hash[:10]}). Skipping.",
+                file=sys.stderr,
+            )
+            return {"status": "NO_CHANGE"}
+
+        # This is the crucial step: if it's new and not a duplicate, we commit the coverage.
+        self._update_global_coverage(child_coverage)
+
+        # --- Dynamic Density Clamping ---
+        # Prevent a single massive spike from setting an unreachable bar for the next generation.
+        child_density = jit_stats.get("max_exit_density", 0.0)
+        parent_density = parent_jit_stats.get("max_exit_density", 0.0)
+
+        if parent_density > 0:
+            # Allow exponential growth (up to 5x), but clamp massive outliers.
+            clamped_density = min(parent_density * MAX_DENSITY_GROWTH_FACTOR, child_density)
+        else:
+            # First generation or no parent data: trust the child's value.
+            clamped_density = child_density
+
+        # --- Tachycardia Decay ---
+        saved_density = clamped_density * TACHYCARDIA_DECAY_FACTOR
+        if clamped_density > 0:
+            print(
+                f"  [~] Tachycardia decay: {clamped_density:.4f} -> {saved_density:.4f}",
+                file=sys.stderr,
+            )
+
+        # Create a copy of stats for persistence, with the decayed density.
+        jit_stats_for_save = jit_stats.copy()
+        jit_stats_for_save["max_exit_density"] = saved_density
+
+        # Create a copy so we don't mutate the caller's dict
+        saved_mutation_info = {**mutation_info, "jit_stats": jit_stats_for_save}
+
+        return {
+            "status": "NEW_COVERAGE",
+            "core_code": core_code_to_save,
+            "baseline_coverage": child_coverage,
+            "content_hash": content_hash,
+            "coverage_hash": coverage_hash,
+            "execution_time_ms": exec_result.execution_time_ms,
+            "parent_id": parent_id,
+            "mutation_info": saved_mutation_info,
+            "mutation_seed": mutation_seed,
+            "jit_avg_time_ms": exec_result.jit_avg_time_ms,
+            "nojit_avg_time_ms": exec_result.nojit_avg_time_ms,
+        }

@@ -71,6 +71,27 @@ COVERAGE_DIR = Path("coverage")
 COVERAGE_STATE_FILE = COVERAGE_DIR / "coverage_state.pkl"
 
 
+def ensure_state_schema(state: dict[str, Any]) -> None:
+    """Ensure all required keys exist in a coverage state dictionary.
+
+    This is the single source of truth for the state schema. Called by
+    both load_coverage_state (for freshly loaded/created states) and
+    CoverageManager.__init__ (for the map subset).
+
+    Args:
+        state: Coverage state dictionary to initialize in-place.
+    """
+    # ID mapping tables
+    state.setdefault("uop_map", {})
+    state.setdefault("edge_map", {})
+    state.setdefault("rare_event_map", {})
+    state.setdefault("next_id_map", {"uop": 0, "edge": 0, "rare_event": 0})
+
+    # Coverage data
+    state.setdefault("global_coverage", {"uops": {}, "edges": {}, "rare_events": {}})
+    state.setdefault("per_file_coverage", {})
+
+
 class CoverageManager:
     """
     Encapsulates the fuzzer's coverage state and manages integer ID mappings.
@@ -78,16 +99,8 @@ class CoverageManager:
 
     def __init__(self, state: dict[str, Any]):
         self.state = state
-        self._initialize_maps()
-        # Create the reverse maps for readable logging.
+        ensure_state_schema(state)
         self._initialize_reverse_maps()
-
-    def _initialize_maps(self):
-        """Ensure all mapping tables and counters exist in the state."""
-        self.state.setdefault("uop_map", {})
-        self.state.setdefault("edge_map", {})
-        self.state.setdefault("rare_event_map", {})
-        self.state.setdefault("next_id_map", {"uop": 0, "edge": 0, "rare_event": 0})
 
     def _initialize_reverse_maps(self):
         """Create reverse mappings from integer IDs to strings."""
@@ -236,13 +249,12 @@ def parse_log_for_edge_coverage(
 def load_coverage_state() -> dict[str, Any]:
     """Load the coverage state, auto-migrating if it's in the old format."""
     if not COVERAGE_STATE_FILE.is_file():
-        return {
-            "global_coverage": {"uops": {}, "edges": {}, "rare_events": {}},
-            "per_file_coverage": {},
-        }
+        state: dict[str, Any] = {}
+        ensure_state_schema(state)
+        return state
     try:
         with open(COVERAGE_STATE_FILE, "rb") as f:
-            state: dict[str, Any] = pickle.load(f)
+            state = pickle.load(f)
 
         # Auto-migration check
         if "uop_map" not in state:
@@ -259,18 +271,13 @@ def load_coverage_state() -> dict[str, Any]:
                 )
                 state = {}  # Start fresh if migration isn't possible
 
-        # Initialize/ensure all keys exist for the new format
-        CoverageManager(state)  # Use the manager's init to set defaults
-
-        state.setdefault("global_coverage", {"uops": {}, "edges": {}, "rare_events": {}})
-        state.setdefault("per_file_coverage", {})
+        ensure_state_schema(state)
         return state
     except (pickle.UnpicklingError, IOError, EOFError) as e:
         print(f"Warning: Could not load coverage state file. Error: {e}", file=sys.stderr)
-        return {
-            "global_coverage": {"uops": {}, "edges": {}, "rare_events": {}},
-            "per_file_coverage": {},
-        }
+        state = {}
+        ensure_state_schema(state)
+        return state
 
 
 def save_coverage_state(state: dict[str, Any]) -> None:

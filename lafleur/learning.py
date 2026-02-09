@@ -27,6 +27,7 @@ class MutatorScoreTracker:
     REWARD_INCREMENT = 1.0  # Score added per success
     WEIGHT_FLOOR = 0.05  # Minimum weight to ensure all mutators get some chance
     DEFAULT_EPSILON = 0.1  # Probability of random exploration vs exploitation
+    DECAY_INTERVAL = 50  # Apply decay every N attempts
 
     DEFAULT_STRATEGIES = ["deterministic", "havoc", "spam"]
 
@@ -45,6 +46,7 @@ class MutatorScoreTracker:
         # Initialize scores and attempts from a saved state or fresh.
         self.scores: defaultdict[str, float] = defaultdict(float)
         self.attempts: defaultdict[str, int] = defaultdict(int)
+        self._attempt_counter = 0
         self.load_state()
 
     def load_state(self):
@@ -55,6 +57,7 @@ class MutatorScoreTracker:
                     data = json.load(f)
                 self.scores = defaultdict(float, data.get("scores", {}))
                 self.attempts = defaultdict(int, data.get("attempts", {}))
+                self._attempt_counter = data.get("attempt_counter", 0)
                 print("[+] Loading mutator scores from previous run.")
             except (json.JSONDecodeError, KeyError, TypeError) as e:
                 print(
@@ -67,14 +70,25 @@ class MutatorScoreTracker:
     def save_state(self):
         """Save the current scores and attempts to a file."""
         MUTATOR_SCORES_FILE.parent.mkdir(parents=True, exist_ok=True)
-        data = {"scores": dict(self.scores), "attempts": dict(self.attempts)}
+        data = {
+            "scores": dict(self.scores),
+            "attempts": dict(self.attempts),
+            "attempt_counter": self._attempt_counter,
+        }
         with open(MUTATOR_SCORES_FILE, "w") as f:
             json.dump(data, f, indent=2)
 
+    def record_attempt(self, name: str) -> None:
+        """Record an attempt for a strategy or transformer, applying periodic decay."""
+        self.attempts[name] += 1
+        self._attempt_counter += 1
+        if self._attempt_counter >= self.DECAY_INTERVAL:
+            self._attempt_counter = 0
+            for key in list(self.scores.keys()):
+                self.scores[key] *= self.decay_factor
+
     def record_success(self, strategy_name: str, transformer_names: list[str]):
-        """
-        Update scores for a successful mutation and apply decay.
-        """
+        """Update scores for a successful mutation."""
         print(
             f"    -> Rewarding successful strategy '{strategy_name}' and transformers: {transformer_names}",
             file=sys.stderr,
@@ -84,10 +98,6 @@ class MutatorScoreTracker:
         self.scores[strategy_name] += self.REWARD_INCREMENT
         for t_name in transformer_names:
             self.scores[t_name] += self.REWARD_INCREMENT
-
-        # Apply decay to all scores to favor recent successes
-        for key in list(self.scores.keys()):
-            self.scores[key] *= self.decay_factor
 
     def get_weights(self, candidates: list[str], epsilon: float | None = None) -> list[float]:
         """

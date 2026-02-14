@@ -136,11 +136,12 @@ def check_reproduction(
     return code_match and grep_match
 
 
-def minimize_session(crash_dir: Path, target_python: str, force_overwrite: bool) -> None:
-    """Main logic to minimize a session crash."""
-    print(f"[*] Minimizing crash bundle: {crash_dir}")
+def _load_and_validate_metadata(crash_dir: Path) -> tuple[dict, str, list[Path]]:
+    """Load metadata, validate returncode, extract grep pattern, and find scripts.
 
-    # Step 0: Preparation
+    Returns (metadata, grep_pattern, script_files).
+    Exits with code 1 on validation errors.
+    """
     metadata_path = crash_dir / "metadata.json"
     if not metadata_path.exists():
         print("[!] Error: metadata.json not found. Cannot minimize.")
@@ -168,22 +169,19 @@ def minimize_session(crash_dir: Path, target_python: str, force_overwrite: bool)
         print("[!] No script files found in bundle.")
         sys.exit(1)
 
-    # Backup original scripts
-    for script in script_files:
-        shutil.copy(script, script.with_suffix(".py.backup"))
+    return metadata, grep_pattern, script_files
 
-    # Initial Reproduction Check
-    print("[*] Verifying initial crash reproduction...")
-    if not check_reproduction(script_files, metadata, grep_pattern, target_python):
-        print(f"[!] Error: Crash does NOT reproduce with the provided python ({target_python}).")
-        print("    Check that you are using the correct JIT-enabled build.")
-        sys.exit(1)
 
-    # Step 1: Script Minimization
+def _minimize_scripts(
+    script_files: list[Path], metadata: dict, grep_pattern: str, target_python: str
+) -> list[Path]:
+    """Stage 1: Identify which scripts are necessary for reproduction.
+
+    Returns the reduced list of necessary scripts.
+    """
     print(f"[*] Starting Script Minimization with {len(script_files)} scripts...")
     necessary_scripts = list(script_files)
 
-    # Iterate over a copy so we can modify necessary_scripts
     for script in list(necessary_scripts):
         candidate_list = [s for s in necessary_scripts if s != script]
 
@@ -199,23 +197,27 @@ def minimize_session(crash_dir: Path, target_python: str, force_overwrite: bool)
             print("KEPT (Required for crash)")
 
     print(f"[*] Reduced to {len(necessary_scripts)} necessary scripts.")
+    return necessary_scripts
 
-    # Measure execution time
-    print("[*] Measuring baseline execution time...")
-    baseline_time = measure_execution_time(
-        [target_python, "-m", "lafleur.driver"] + [str(s) for s in necessary_scripts],
-        timeout=30,
-    )
-    print(f"  -> Baseline: {baseline_time:.2f}s")
 
-    # Step 2: Concatenation Attempt
+def _concatenate_scripts(
+    necessary_scripts: list[Path],
+    crash_dir: Path,
+    metadata: dict,
+    grep_pattern: str,
+    target_python: str,
+    force_overwrite: bool,
+) -> tuple[Path, bool]:
+    """Stage 2: Concatenate scripts and verify reproduction.
+
+    Returns (target_file, use_concatenation).
+    """
     print("[*] Attempting to concatenate scripts...")
     combined_path = crash_dir / "combined_repro.py"
     combined_content = ""
 
     for i, script in enumerate(necessary_scripts):
         content = script.read_text()
-        # Rename harness to avoid collisions (e.g. uop_harness_f1_0)
         content = rename_harnesses(content, str(i))
         combined_content += f"\n# --- Source: {script.name} ---\n"
         combined_content += content + "\n"
@@ -229,19 +231,18 @@ def minimize_session(crash_dir: Path, target_python: str, force_overwrite: bool)
         existing_size = combined_path.stat().st_size
         if existing_size < current_size:
             print(
-                f"[!] Warning: Existing combined_repro.py is smaller ({existing_size} < {current_size})."
+                f"[!] Warning: Existing combined_repro.py is smaller "
+                f"({existing_size} < {current_size})."
             )
             print("    Use --force-overwrite to replace it.")
-            # We still need to set target_file for the next step, assuming user prefers existing
             target_file = combined_path
-            # Re-verify the *existing* file works
             if check_reproduction([combined_path], metadata, grep_pattern, target_python):
                 print("    Existing file reproduces crash. Using it.")
                 use_concatenation = True
             else:
                 print("    Existing file FAILED reproduction. Overwriting with new candidate.")
                 combined_path.write_text(combined_content)
-                target_file = None  # Force re-verification logic below
+                target_file = None
         else:
             combined_path.write_text(combined_content)
     else:
@@ -262,19 +263,22 @@ def minimize_session(crash_dir: Path, target_python: str, force_overwrite: bool)
             target_file = necessary_scripts[-1]
             use_concatenation = False
 
-    # Step 3: Code Minimization (ShrinkRay)
-    shrinkray_path = shutil.which("shrinkray")
-    if not shrinkray_path:
-        print("[!] 'shrinkray' not found in PATH. Skipping code minimization.")
-        print(f"[*] Final reproduction script(s): {[str(s.name) for s in necessary_scripts]}")
-        if use_concatenation:
-            print(f"[*] Combined reproduction: {target_file}")
-        return
+    return target_file, use_concatenation
 
-    print("[*] Starting ShrinkRay...")
-    dynamic_timeout = max(10, int(baseline_time * 2.5))
 
-    # Generate check_crash.sh
+def _generate_bash_scripts(
+    crash_dir: Path,
+    target_file: Path,
+    necessary_scripts: list[Path],
+    metadata: dict,
+    grep_pattern: str,
+    target_python: str,
+    use_concatenation: bool,
+) -> Path:
+    """Generate check_crash.sh and reproduce_minimized.sh scripts.
+
+    Returns the path to check_crash.sh.
+    """
     check_script_path = crash_dir / "check_crash.sh"
 
     driver_cmd = ""
@@ -283,13 +287,11 @@ def minimize_session(crash_dir: Path, target_python: str, force_overwrite: bool)
         driver_cmd = f"{target_python} -m lafleur.driver {target_file.name}"
         repro_cmd_display = driver_cmd
     else:
-        # If fallback, we run the full chain, but shrinkray only modifies the last one
         cmd_parts = [target_python, "-m", "lafleur.driver"]
         for s in necessary_scripts[:-1]:
             cmd_parts.append(str(s.resolve()))
         cmd_parts.append(target_file.name)
         driver_cmd = " ".join(cmd_parts)
-        # Create a cleaner version for the repro script
         repro_parts = [target_python, "-m", "lafleur.driver"]
         repro_parts.extend([s.name for s in necessary_scripts])
         repro_cmd_display = " ".join(repro_parts)
@@ -335,15 +337,19 @@ export ASAN_OPTIONS=detect_leaks=0
     repro_script_path.write_text(repro_script_content)
     repro_script_path.chmod(0o755)
 
-    # Run ShrinkRay
+    return check_script_path
+
+
+def _run_shrinkray(check_script: Path, target_file: Path, dynamic_timeout: int) -> None:
+    """Discover and run ShrinkRay for code minimization."""
     shrinkray_cmd = [
-        shrinkray_path,
+        "shrinkray",
         "--ui=basic",
         "--timeout",
         str(dynamic_timeout),
         "--parallelism",
         str((os.cpu_count() or 1) // 2),
-        str(check_script_path.resolve()),
+        str(check_script.resolve()),
         str(target_file.resolve()),
     ]
 
@@ -352,6 +358,64 @@ export ASAN_OPTIONS=detect_leaks=0
         print("[*] ShrinkRay finished.")
     except Exception as e:
         print(f"[!] ShrinkRay failed: {e}")
+
+
+def minimize_session(crash_dir: Path, target_python: str, force_overwrite: bool) -> None:
+    """Main logic to minimize a session crash."""
+    print(f"[*] Minimizing crash bundle: {crash_dir}")
+
+    metadata, grep_pattern, script_files = _load_and_validate_metadata(crash_dir)
+
+    # Backup original scripts
+    for script in script_files:
+        shutil.copy(script, script.with_suffix(".py.backup"))
+
+    # Initial Reproduction Check
+    print("[*] Verifying initial crash reproduction...")
+    if not check_reproduction(script_files, metadata, grep_pattern, target_python):
+        print(f"[!] Error: Crash does NOT reproduce with the provided python ({target_python}).")
+        print("    Check that you are using the correct JIT-enabled build.")
+        sys.exit(1)
+
+    # Stage 1: Script Minimization
+    necessary_scripts = _minimize_scripts(script_files, metadata, grep_pattern, target_python)
+
+    # Measure baseline
+    print("[*] Measuring baseline execution time...")
+    baseline_time = measure_execution_time(
+        [target_python, "-m", "lafleur.driver"] + [str(s) for s in necessary_scripts],
+        timeout=30,
+    )
+    print(f"  -> Baseline: {baseline_time:.2f}s")
+
+    # Stage 2: Concatenation
+    target_file, use_concatenation = _concatenate_scripts(
+        necessary_scripts, crash_dir, metadata, grep_pattern, target_python, force_overwrite
+    )
+
+    # Stage 3: ShrinkRay
+    shrinkray_path = shutil.which("shrinkray")
+    if not shrinkray_path:
+        print("[!] 'shrinkray' not found in PATH. Skipping code minimization.")
+        print(f"[*] Final reproduction script(s): {[str(s.name) for s in necessary_scripts]}")
+        if use_concatenation:
+            print(f"[*] Combined reproduction: {target_file}")
+        return
+
+    print("[*] Starting ShrinkRay...")
+    dynamic_timeout = max(10, int(baseline_time * 2.5))
+
+    check_script = _generate_bash_scripts(
+        crash_dir,
+        target_file,
+        necessary_scripts,
+        metadata,
+        grep_pattern,
+        target_python,
+        use_concatenation,
+    )
+
+    _run_shrinkray(check_script, target_file, dynamic_timeout)
 
     print("\n[=] Minimization Complete!")
     if use_concatenation:

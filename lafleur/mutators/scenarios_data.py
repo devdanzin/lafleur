@@ -1698,14 +1698,15 @@ class GlobalOptimizationInvalidator(ast.NodeTransformer):
             return node
 
         if random.random() < 0.2:  # 20% chance
+            p_prefix = f"goi_{random.randint(1000, 9999)}"
             print(
-                f"    -> Injecting global optimization invalidation into '{node.name}'",
+                f"    -> Injecting global optimization invalidation with prefix '{p_prefix}'",
                 file=sys.stderr,
             )
 
             # Step 1: Inject the _EvilGlobal class definition
-            evil_class_code = dedent("""
-                class _EvilGlobal:
+            evil_class_code = dedent(f"""
+                class _EvilGlobal_{p_prefix}:
                     def __init__(self, *args): pass
                     def __call__(self, *args): return 42
             """)
@@ -1713,23 +1714,23 @@ class GlobalOptimizationInvalidator(ast.NodeTransformer):
 
             # Step 2: Build the invalidation loop
             # This follows the pattern from test_promote_globals_to_constants
-            invalidation_code = dedent("""
-                global _jit_target
-                _jit_target = range
+            invalidation_code = dedent(f"""
+                global _jit_target_{p_prefix}
+                _jit_target_{p_prefix} = range
                 try:
-                    for _jit_i in range(2000):
+                    for _jit_i_{p_prefix} in range(2000):
                         # The Hot Operation: Call the global
-                        _jit_x = _jit_target(1)
+                        _jit_x_{p_prefix} = _jit_target_{p_prefix}(1)
 
                         # The Switch: Mid-loop invalidation
-                        if _jit_i == 1000:
-                            globals()['_jit_target'] = _EvilGlobal()
+                        if _jit_i_{p_prefix} == 1000:
+                            globals()['_jit_target_{p_prefix}'] = _EvilGlobal_{p_prefix}()
                 except (TypeError, ValueError, AttributeError):
                     # Catch Python-level errors (we only care about C-level crashes)
                     pass
                 finally:
                     # Cleanup: Restore it so we don't break the rest of the script
-                    globals()['_jit_target'] = range
+                    globals()['_jit_target_{p_prefix}'] = range
             """)
             invalidation_loop = ast.parse(invalidation_code).body
 
@@ -1829,34 +1830,35 @@ class TypeShadowingMutator(ast.NodeTransformer):
             return node
 
         if random.random() < 0.2:  # 20% chance
+            p_prefix = f"shadow_{random.randint(1000, 9999)}"
             print(
-                f"    -> Injecting type shadowing attack into '{node.name}'",
+                f"    -> Injecting type shadowing attack with prefix '{p_prefix}'",
                 file=sys.stderr,
             )
 
             # Build the type shadowing scenario
-            shadow_code = dedent("""
+            shadow_code = dedent(f"""
                 # Import sys locally to ensure availability
-                _shadow_sys = __import__('sys')
+                _shadow_sys_{p_prefix} = __import__('sys')
 
                 # Setup: Initialize as float for JIT specialization
-                _shadow_x = 3.14
+                _shadow_x_{p_prefix} = 3.14
 
-                for _shadow_i in range(2000):
+                for _shadow_i_{p_prefix} in range(2000):
                     # 1. Train the JIT: x is a float
-                    _shadow_tmp = _shadow_x + 1.0
+                    _shadow_tmp_{p_prefix} = _shadow_x_{p_prefix} + 1.0
 
                     # 2. The Attack: Swap type via f_locals (bypasses bytecodes)
-                    if _shadow_i == 1500:
-                        _shadow_sys._getframe().f_locals['_shadow_x'] = "EVIL_STRING"
+                    if _shadow_i_{p_prefix} == 1500:
+                        _shadow_sys_{p_prefix}._getframe().f_locals['_shadow_x_{p_prefix}'] = "EVIL_STRING"
 
                     # 3. The Trigger: Execute specialized operation again
                     # If JIT doesn't see the f_locals write, it might run float_add on string
                     try:
-                        _shadow_tmp = _shadow_x + 1.0
+                        _shadow_tmp_{p_prefix} = _shadow_x_{p_prefix} + 1.0
                     except TypeError:
                         # Catch successful deopt/error, restore for next iterations
-                        _shadow_x = 3.14
+                        _shadow_x_{p_prefix} = 3.14
             """)
             shadow_logic = ast.parse(shadow_code).body
 
@@ -1886,31 +1888,32 @@ class ZombieTraceMutator(ast.NodeTransformer):
             return node
 
         if random.random() < 0.2:  # 20% chance
+            p_prefix = f"zombie_{random.randint(1000, 9999)}"
             print(
-                f"    -> Injecting zombie trace churn into '{node.name}'",
+                f"    -> Injecting zombie trace churn with prefix '{p_prefix}'",
                 file=sys.stderr,
             )
 
             # Define the zombie churn helper function
-            churn_code = dedent("""
-                def _zombie_churn():
+            churn_code = dedent(f"""
+                def _zombie_churn_{p_prefix}():
                     # Loop to rapidly create and destroy JIT state
-                    for _zombie_iter in range(50):
+                    for _zombie_iter_{p_prefix} in range(50):
                         # Define a victim function with a hot loop
-                        def _zombie_victim():
-                            _zombie_x = 0
-                            for _zombie_i in range(1000):
-                                _zombie_x += 1
-                            return _zombie_x
+                        def _zombie_victim_{p_prefix}():
+                            _zombie_x_{p_prefix} = 0
+                            for _zombie_i_{p_prefix} in range(1000):
+                                _zombie_x_{p_prefix} += 1
+                            return _zombie_x_{p_prefix}
 
                         # Call it to trigger JIT compilation
-                        _zombie_victim()
+                        _zombie_victim_{p_prefix}()
                         # _zombie_victim goes out of scope; Executor marked pending_deletion
             """)
             churn_func = ast.parse(churn_code).body
 
             # Call the churn function
-            call_code = "_zombie_churn()"
+            call_code = f"_zombie_churn_{p_prefix}()"
             call_stmt = ast.parse(call_code).body
 
             # Inject: churn function definition + call at start of function body

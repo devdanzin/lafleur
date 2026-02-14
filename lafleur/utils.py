@@ -27,57 +27,47 @@ FUZZING_ENV.update(
 )
 
 
+def _default_run_stats() -> dict[str, Any]:
+    """Return the canonical default run statistics structure."""
+    return {
+        "start_time": datetime.now(timezone.utc).isoformat(),
+        "last_update_time": None,
+        "total_sessions": 0,
+        "total_mutations": 0,
+        "corpus_size": 0,
+        "crashes_found": 0,
+        "timeouts_found": 0,
+        "divergences_found": 0,
+        "new_coverage_finds": 0,
+        "sum_of_mutations_per_find": 0,
+        "average_mutations_per_find": 0.0,
+        "global_seed_counter": 0,
+        "corpus_file_counter": 0,
+    }
+
+
 def load_run_stats() -> dict[str, Any]:
     """
     Load the persistent run statistics from the JSON file.
     Returns a default structure if the file doesn't exist.
     """
     if not RUN_STATS_FILE.is_file():
-        return {
-            "start_time": datetime.now(timezone.utc).isoformat(),
-            "last_update_time": None,
-            "total_sessions": 0,
-            "total_mutations": 0,
-            "corpus_size": 0,
-            "crashes_found": 0,
-            "timeouts_found": 0,
-            "divergences_found": 0,
-            "new_coverage_finds": 0,
-            "sum_of_mutations_per_find": 0,
-            "average_mutations_per_find": 0.0,
-            "global_seed_counter": 0,
-            "corpus_file_counter": 0,
-        }
+        return _default_run_stats()
     try:
         with open(RUN_STATS_FILE, "r", encoding="utf-8") as f:
             stats: dict[str, Any] = json.load(f)
-            # Add new fields if loading an older stats file
-            stats.setdefault("sum_of_mutations_per_find", 0)
-            stats.setdefault("average_mutations_per_find", 0.0)
-            stats.setdefault("global_seed_counter", 0)
-            stats.setdefault("corpus_file_counter", 0)
-            stats.setdefault("divergences_found", 0)
+            # Fill in any fields missing from older stats files
+            defaults = _default_run_stats()
+            for key, value in defaults.items():
+                if key != "start_time":
+                    stats.setdefault(key, value)
             return stats
     except (json.JSONDecodeError, IOError) as e:
         print(
             f"Warning: Could not load run stats file. Starting fresh. Error: {e}",
             file=sys.stderr,
         )
-        return {
-            "start_time": datetime.now(timezone.utc).isoformat(),
-            "last_update_time": None,
-            "total_sessions": 0,
-            "total_mutations": 0,
-            "corpus_size": 0,
-            "crashes_found": 0,
-            "timeouts_found": 0,
-            "divergences_found": 0,
-            "new_coverage_finds": 0,
-            "sum_of_mutations_per_find": 0,
-            "average_mutations_per_find": 0.0,
-            "global_seed_counter": 0,
-            "corpus_file_counter": 0,
-        }
+        return _default_run_stats()
 
 
 def save_run_stats(stats: dict[str, Any]) -> None:

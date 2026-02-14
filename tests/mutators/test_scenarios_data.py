@@ -1989,7 +1989,7 @@ class TestGlobalOptimizationInvalidator(unittest.TestCase):
         random.seed(42)
 
     def test_injects_evil_global_class(self):
-        """Test that _EvilGlobal class is injected."""
+        """Test that _EvilGlobal class is injected with prefix."""
         code = dedent("""
             def uop_harness_test():
                 x = 1
@@ -1997,18 +1997,19 @@ class TestGlobalOptimizationInvalidator(unittest.TestCase):
         tree = ast.parse(code)
 
         with patch("random.random", return_value=0.1):  # Below 0.2 threshold
-            mutator = GlobalOptimizationInvalidator()
-            mutated = mutator.visit(tree)
+            with patch("random.randint", return_value=5000):
+                mutator = GlobalOptimizationInvalidator()
+                mutated = mutator.visit(tree)
 
         result = ast.unparse(mutated)
-        # Should have _EvilGlobal class definition
-        self.assertIn("class _EvilGlobal:", result)
+        # Should have _EvilGlobal class definition with prefix
+        self.assertIn("class _EvilGlobal_goi_5000:", result)
         self.assertIn("def __init__(self, *args):", result)
         self.assertIn("def __call__(self, *args):", result)
         self.assertIn("return 42", result)
 
     def test_injects_global_declaration(self):
-        """Test that global _jit_target is declared."""
+        """Test that global _jit_target is declared with prefix."""
         code = dedent("""
             def uop_harness_test():
                 x = 1
@@ -2016,15 +2017,16 @@ class TestGlobalOptimizationInvalidator(unittest.TestCase):
         tree = ast.parse(code)
 
         with patch("random.random", return_value=0.1):
-            mutator = GlobalOptimizationInvalidator()
-            mutated = mutator.visit(tree)
+            with patch("random.randint", return_value=5000):
+                mutator = GlobalOptimizationInvalidator()
+                mutated = mutator.visit(tree)
 
         result = ast.unparse(mutated)
-        # Should have global declaration
-        self.assertIn("global _jit_target", result)
+        # Should have global declaration with prefix
+        self.assertIn("global _jit_target_goi_5000", result)
 
     def test_injects_hot_loop(self):
-        """Test that the hot loop is injected."""
+        """Test that the hot loop is injected with prefix."""
         code = dedent("""
             def uop_harness_test():
                 x = 1
@@ -2032,16 +2034,17 @@ class TestGlobalOptimizationInvalidator(unittest.TestCase):
         tree = ast.parse(code)
 
         with patch("random.random", return_value=0.1):
-            mutator = GlobalOptimizationInvalidator()
-            mutated = mutator.visit(tree)
+            with patch("random.randint", return_value=5000):
+                mutator = GlobalOptimizationInvalidator()
+                mutated = mutator.visit(tree)
 
         result = ast.unparse(mutated)
-        # Should have the hot loop
-        self.assertIn("for _jit_i in range(2000):", result)
-        self.assertIn("_jit_x = _jit_target(1)", result)
+        # Should have the hot loop with prefix
+        self.assertIn("for _jit_i_goi_5000 in range(2000):", result)
+        self.assertIn("_jit_x_goi_5000 = _jit_target_goi_5000(1)", result)
 
     def test_injects_mid_loop_invalidation(self):
-        """Test that global is swapped mid-loop."""
+        """Test that global is swapped mid-loop with prefix."""
         code = dedent("""
             def uop_harness_test():
                 x = 1
@@ -2049,16 +2052,17 @@ class TestGlobalOptimizationInvalidator(unittest.TestCase):
         tree = ast.parse(code)
 
         with patch("random.random", return_value=0.1):
-            mutator = GlobalOptimizationInvalidator()
-            mutated = mutator.visit(tree)
+            with patch("random.randint", return_value=5000):
+                mutator = GlobalOptimizationInvalidator()
+                mutated = mutator.visit(tree)
 
         result = ast.unparse(mutated)
-        # Should swap at iteration 1000
-        self.assertIn("if _jit_i == 1000:", result)
-        self.assertIn("globals()['_jit_target'] = _EvilGlobal()", result)
+        # Should swap at iteration 1000 with prefixed names
+        self.assertIn("if _jit_i_goi_5000 == 1000:", result)
+        self.assertIn("globals()['_jit_target_goi_5000'] = _EvilGlobal_goi_5000()", result)
 
     def test_restores_global_after_loop(self):
-        """Test that global is restored after the loop."""
+        """Test that global is restored after the loop with prefix."""
         code = dedent("""
             def uop_harness_test():
                 x = 1
@@ -2066,13 +2070,14 @@ class TestGlobalOptimizationInvalidator(unittest.TestCase):
         tree = ast.parse(code)
 
         with patch("random.random", return_value=0.1):
-            mutator = GlobalOptimizationInvalidator()
-            mutated = mutator.visit(tree)
+            with patch("random.randint", return_value=5000):
+                mutator = GlobalOptimizationInvalidator()
+                mutated = mutator.visit(tree)
 
         result = ast.unparse(mutated)
-        # Should have finally block restoring range
+        # Should have finally block restoring range with prefix
         self.assertIn("finally:", result)
-        self.assertIn("globals()['_jit_target'] = range", result)
+        self.assertIn("globals()['_jit_target_goi_5000'] = range", result)
 
     def test_has_try_except_wrapper(self):
         """Test that loop is wrapped in try-except."""
@@ -2083,8 +2088,9 @@ class TestGlobalOptimizationInvalidator(unittest.TestCase):
         tree = ast.parse(code)
 
         with patch("random.random", return_value=0.1):
-            mutator = GlobalOptimizationInvalidator()
-            mutated = mutator.visit(tree)
+            with patch("random.randint", return_value=5000):
+                mutator = GlobalOptimizationInvalidator()
+                mutated = mutator.visit(tree)
 
         result = ast.unparse(mutated)
         # Should have try-except
@@ -2281,7 +2287,7 @@ class TestTypeShadowingMutator(unittest.TestCase):
         random.seed(42)
 
     def test_injects_sys_getframe_call(self):
-        """Test that sys._getframe().f_locals is injected."""
+        """Test that sys._getframe().f_locals is injected with prefix."""
         code = dedent("""
             def uop_harness_test():
                 x = 1
@@ -2289,16 +2295,17 @@ class TestTypeShadowingMutator(unittest.TestCase):
         tree = ast.parse(code)
 
         with patch("random.random", return_value=0.1):  # Below 0.2 threshold
-            mutator = TypeShadowingMutator()
-            mutated = mutator.visit(tree)
+            with patch("random.randint", return_value=7000):
+                mutator = TypeShadowingMutator()
+                mutated = mutator.visit(tree)
 
         result = ast.unparse(mutated)
-        # Should have sys._getframe().f_locals
+        # Should have sys._getframe().f_locals with prefix
         self.assertIn("_getframe", result)
         self.assertIn("f_locals", result)
 
     def test_injects_float_variable_setup(self):
-        """Test that float variable is set up for JIT training."""
+        """Test that float variable is set up for JIT training with prefix."""
         code = dedent("""
             def uop_harness_test():
                 x = 1
@@ -2306,16 +2313,17 @@ class TestTypeShadowingMutator(unittest.TestCase):
         tree = ast.parse(code)
 
         with patch("random.random", return_value=0.1):
-            mutator = TypeShadowingMutator()
-            mutated = mutator.visit(tree)
+            with patch("random.randint", return_value=7000):
+                mutator = TypeShadowingMutator()
+                mutated = mutator.visit(tree)
 
         result = ast.unparse(mutated)
-        # Should have float setup
-        self.assertIn("_shadow_x = 3.14", result)
-        self.assertIn("_shadow_x + 1.0", result)
+        # Should have float setup with prefix
+        self.assertIn("_shadow_x_shadow_7000 = 3.14", result)
+        self.assertIn("_shadow_x_shadow_7000 + 1.0", result)
 
     def test_injects_warmup_loop(self):
-        """Test that the warmup loop is injected."""
+        """Test that the warmup loop is injected with prefix."""
         code = dedent("""
             def uop_harness_test():
                 x = 1
@@ -2323,15 +2331,16 @@ class TestTypeShadowingMutator(unittest.TestCase):
         tree = ast.parse(code)
 
         with patch("random.random", return_value=0.1):
-            mutator = TypeShadowingMutator()
-            mutated = mutator.visit(tree)
+            with patch("random.randint", return_value=7000):
+                mutator = TypeShadowingMutator()
+                mutated = mutator.visit(tree)
 
         result = ast.unparse(mutated)
-        # Should have hot loop
-        self.assertIn("for _shadow_i in range(2000):", result)
+        # Should have hot loop with prefix
+        self.assertIn("for _shadow_i_shadow_7000 in range(2000):", result)
 
     def test_injects_type_swap_at_iteration_1500(self):
-        """Test that type is swapped at iteration 1500."""
+        """Test that type is swapped at iteration 1500 with prefix."""
         code = dedent("""
             def uop_harness_test():
                 x = 1
@@ -2339,16 +2348,17 @@ class TestTypeShadowingMutator(unittest.TestCase):
         tree = ast.parse(code)
 
         with patch("random.random", return_value=0.1):
-            mutator = TypeShadowingMutator()
-            mutated = mutator.visit(tree)
+            with patch("random.randint", return_value=7000):
+                mutator = TypeShadowingMutator()
+                mutated = mutator.visit(tree)
 
         result = ast.unparse(mutated)
-        # Should swap at iteration 1500
-        self.assertIn("if _shadow_i == 1500:", result)
+        # Should swap at iteration 1500 with prefix
+        self.assertIn("if _shadow_i_shadow_7000 == 1500:", result)
         self.assertIn("EVIL_STRING", result)
 
     def test_injects_sys_import(self):
-        """Test that sys is imported locally via __import__."""
+        """Test that sys is imported locally via __import__ with prefix."""
         code = dedent("""
             def uop_harness_test():
                 x = 1
@@ -2356,12 +2366,13 @@ class TestTypeShadowingMutator(unittest.TestCase):
         tree = ast.parse(code)
 
         with patch("random.random", return_value=0.1):
-            mutator = TypeShadowingMutator()
-            mutated = mutator.visit(tree)
+            with patch("random.randint", return_value=7000):
+                mutator = TypeShadowingMutator()
+                mutated = mutator.visit(tree)
 
         result = ast.unparse(mutated)
-        # Should import sys locally
-        self.assertIn("_shadow_sys = __import__('sys')", result)
+        # Should import sys locally with prefix
+        self.assertIn("_shadow_sys_shadow_7000 = __import__('sys')", result)
 
     def test_has_try_except_wrapper(self):
         """Test that type operation is wrapped in try-except."""
@@ -2372,8 +2383,9 @@ class TestTypeShadowingMutator(unittest.TestCase):
         tree = ast.parse(code)
 
         with patch("random.random", return_value=0.1):
-            mutator = TypeShadowingMutator()
-            mutated = mutator.visit(tree)
+            with patch("random.randint", return_value=7000):
+                mutator = TypeShadowingMutator()
+                mutated = mutator.visit(tree)
 
         result = ast.unparse(mutated)
         # Should have try-except for TypeError
@@ -2394,7 +2406,7 @@ class TestTypeShadowingMutator(unittest.TestCase):
 
         result = ast.unparse(mutated)
         # Should not have modified the code
-        self.assertNotIn("_shadow_x", result)
+        self.assertNotIn("_shadow_x_shadow_", result)
         self.assertNotIn("_getframe", result)
 
     def test_ignores_non_harness_functions(self):
@@ -2411,7 +2423,7 @@ class TestTypeShadowingMutator(unittest.TestCase):
 
         result = ast.unparse(mutated)
         # Should not have modified the code
-        self.assertNotIn("_shadow_x", result)
+        self.assertNotIn("_shadow_x_shadow_", result)
         self.assertNotIn("_getframe", result)
 
     def test_produces_valid_code(self):
@@ -2440,7 +2452,7 @@ class TestZombieTraceMutator(unittest.TestCase):
         random.seed(42)
 
     def test_injects_zombie_churn_function(self):
-        """Test that _zombie_churn function is injected."""
+        """Test that _zombie_churn function is injected with prefix."""
         code = dedent("""
             def uop_harness_test():
                 x = 1
@@ -2448,15 +2460,16 @@ class TestZombieTraceMutator(unittest.TestCase):
         tree = ast.parse(code)
 
         with patch("random.random", return_value=0.1):  # Below 0.2 threshold
-            mutator = ZombieTraceMutator()
-            mutated = mutator.visit(tree)
+            with patch("random.randint", return_value=6000):
+                mutator = ZombieTraceMutator()
+                mutated = mutator.visit(tree)
 
         result = ast.unparse(mutated)
-        # Should have the churn function definition
-        self.assertIn("def _zombie_churn():", result)
+        # Should have the churn function definition with prefix
+        self.assertIn("def _zombie_churn_zombie_6000():", result)
 
     def test_injects_zombie_churn_call(self):
-        """Test that _zombie_churn() is called."""
+        """Test that _zombie_churn() is called with prefix."""
         code = dedent("""
             def uop_harness_test():
                 x = 1
@@ -2464,15 +2477,16 @@ class TestZombieTraceMutator(unittest.TestCase):
         tree = ast.parse(code)
 
         with patch("random.random", return_value=0.1):
-            mutator = ZombieTraceMutator()
-            mutated = mutator.visit(tree)
+            with patch("random.randint", return_value=6000):
+                mutator = ZombieTraceMutator()
+                mutated = mutator.visit(tree)
 
         result = ast.unparse(mutated)
-        # Should call the churn function
-        self.assertIn("_zombie_churn()", result)
+        # Should call the churn function with prefix
+        self.assertIn("_zombie_churn_zombie_6000()", result)
 
     def test_injects_loop_creating_victims(self):
-        """Test that the loop creating victim functions is injected."""
+        """Test that the loop creating victim functions is injected with prefix."""
         code = dedent("""
             def uop_harness_test():
                 x = 1
@@ -2480,15 +2494,16 @@ class TestZombieTraceMutator(unittest.TestCase):
         tree = ast.parse(code)
 
         with patch("random.random", return_value=0.1):
-            mutator = ZombieTraceMutator()
-            mutated = mutator.visit(tree)
+            with patch("random.randint", return_value=6000):
+                mutator = ZombieTraceMutator()
+                mutated = mutator.visit(tree)
 
         result = ast.unparse(mutated)
-        # Should have the victim creation loop
-        self.assertIn("for _zombie_iter in range(50):", result)
+        # Should have the victim creation loop with prefix
+        self.assertIn("for _zombie_iter_zombie_6000 in range(50):", result)
 
     def test_injects_victim_function(self):
-        """Test that _zombie_victim function is injected."""
+        """Test that _zombie_victim function is injected with prefix."""
         code = dedent("""
             def uop_harness_test():
                 x = 1
@@ -2496,15 +2511,16 @@ class TestZombieTraceMutator(unittest.TestCase):
         tree = ast.parse(code)
 
         with patch("random.random", return_value=0.1):
-            mutator = ZombieTraceMutator()
-            mutated = mutator.visit(tree)
+            with patch("random.randint", return_value=6000):
+                mutator = ZombieTraceMutator()
+                mutated = mutator.visit(tree)
 
         result = ast.unparse(mutated)
-        # Should have the victim function definition
-        self.assertIn("def _zombie_victim():", result)
+        # Should have the victim function definition with prefix
+        self.assertIn("def _zombie_victim_zombie_6000():", result)
 
     def test_victim_has_hot_loop(self):
-        """Test that victim function has a hot loop to trigger JIT."""
+        """Test that victim function has a hot loop to trigger JIT with prefix."""
         code = dedent("""
             def uop_harness_test():
                 x = 1
@@ -2512,16 +2528,17 @@ class TestZombieTraceMutator(unittest.TestCase):
         tree = ast.parse(code)
 
         with patch("random.random", return_value=0.1):
-            mutator = ZombieTraceMutator()
-            mutated = mutator.visit(tree)
+            with patch("random.randint", return_value=6000):
+                mutator = ZombieTraceMutator()
+                mutated = mutator.visit(tree)
 
         result = ast.unparse(mutated)
-        # Should have hot loop in victim
-        self.assertIn("for _zombie_i in range(1000):", result)
-        self.assertIn("_zombie_x += 1", result)
+        # Should have hot loop in victim with prefix
+        self.assertIn("for _zombie_i_zombie_6000 in range(1000):", result)
+        self.assertIn("_zombie_x_zombie_6000 += 1", result)
 
     def test_victim_is_called(self):
-        """Test that victim function is called to trigger JIT compilation."""
+        """Test that victim function is called to trigger JIT compilation with prefix."""
         code = dedent("""
             def uop_harness_test():
                 x = 1
@@ -2529,12 +2546,13 @@ class TestZombieTraceMutator(unittest.TestCase):
         tree = ast.parse(code)
 
         with patch("random.random", return_value=0.1):
-            mutator = ZombieTraceMutator()
-            mutated = mutator.visit(tree)
+            with patch("random.randint", return_value=6000):
+                mutator = ZombieTraceMutator()
+                mutated = mutator.visit(tree)
 
         result = ast.unparse(mutated)
-        # Should call the victim function
-        self.assertIn("_zombie_victim()", result)
+        # Should call the victim function with prefix
+        self.assertIn("_zombie_victim_zombie_6000()", result)
 
     def test_no_mutation_when_random_check_fails(self):
         """Test that mutator doesn't modify when random check fails."""

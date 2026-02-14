@@ -60,10 +60,24 @@ def load_run_stats() -> dict[str, Any]:
             return stats
     except (json.JSONDecodeError, IOError) as e:
         print(
-            f"Warning: Could not load run stats file. Starting fresh. Error: {e}", file=sys.stderr
+            f"Warning: Could not load run stats file. Starting fresh. Error: {e}",
+            file=sys.stderr,
         )
-        # Return a default structure on error
-        return load_run_stats()
+        return {
+            "start_time": datetime.now(timezone.utc).isoformat(),
+            "last_update_time": None,
+            "total_sessions": 0,
+            "total_mutations": 0,
+            "corpus_size": 0,
+            "crashes_found": 0,
+            "timeouts_found": 0,
+            "divergences_found": 0,
+            "new_coverage_finds": 0,
+            "sum_of_mutations_per_find": 0,
+            "average_mutations_per_find": 0.0,
+            "global_seed_counter": 0,
+            "corpus_file_counter": 0,
+        }
 
 
 def save_run_stats(stats: dict[str, Any]) -> None:

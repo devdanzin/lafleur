@@ -108,6 +108,24 @@ class TeeLogger:
         """Close the log file."""
         self.log_file.close()
 
+    @property
+    def encoding(self) -> str:
+        """Return the encoding of the original stream."""
+        return getattr(self.original_stream, "encoding", "utf-8")
+
+    def isatty(self) -> bool:
+        """Return whether the original stream is a TTY."""
+        return hasattr(self.original_stream, "isatty") and self.original_stream.isatty()
+
+    def fileno(self) -> int:
+        """Return the file descriptor of the original stream.
+
+        Raises OSError if the original stream doesn't have a file descriptor.
+        """
+        if hasattr(self.original_stream, "fileno"):
+            return self.original_stream.fileno()
+        raise OSError("TeeLogger does not have a file descriptor")
+
 
 @dataclass
 class ExecutionResult:

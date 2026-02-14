@@ -2,7 +2,6 @@ from dataclasses import dataclass, asdict
 from enum import Enum
 import re
 import signal
-from typing import Optional
 
 
 class CrashType(str, Enum):
@@ -20,7 +19,7 @@ class CrashSignature:
     category: str  # High-level category (ASAN, ASSERT, etc)
     crash_type: CrashType  # Enum for programmatic handling
     returncode: int
-    signal_name: Optional[str]
+    signal_name: str | None
     fingerprint: str  # Unique string for minimization matching
 
     def to_dict(self) -> dict:
@@ -106,7 +105,7 @@ class CrashFingerprinter:
         }
     )
 
-    def _parse_asan_stack(self, log_content: str) -> Optional[str]:
+    def _parse_asan_stack(self, log_content: str) -> str | None:
         """
         Parse ASan stack trace to find the first meaningful CPython function.
 

@@ -848,8 +848,11 @@ class TestMagicMethodMutators(unittest.TestCase):
         self.assertTrue(has_stateful_len)
 
     def test_numeric_mutator_pow_args(self):
-        """Test NumericMutator mutating pow arguments."""
-        code = "result = pow(2, 3)"
+        """Test NumericMutator mutating pow arguments inside harness."""
+        code = dedent("""
+            def uop_harness_test():
+                result = pow(2, 3)
+        """)
         tree = ast.parse(code)
 
         with patch("random.random", return_value=0.05):
@@ -857,14 +860,15 @@ class TestMagicMethodMutators(unittest.TestCase):
                 mutator = NumericMutator()
                 mutated = mutator.visit(tree)
 
-        # Check pow arguments were changed
-        call = mutated.body[0].value
-        self.assertEqual(call.args[0].value, 10)
-        self.assertEqual(call.args[1].value, -2)
+        result = ast.unparse(mutated)
+        self.assertIn("pow(10, -2)", result)
 
     def test_numeric_mutator_chr_args(self):
-        """Test NumericMutator mutating chr arguments."""
-        code = "c = chr(65)"
+        """Test NumericMutator mutating chr arguments inside harness."""
+        code = dedent("""
+            def uop_harness_test():
+                c = chr(65)
+        """)
         tree = ast.parse(code)
 
         with patch("random.random", return_value=0.05):
@@ -872,9 +876,28 @@ class TestMagicMethodMutators(unittest.TestCase):
                 mutator = NumericMutator()
                 mutated = mutator.visit(tree)
 
-        # Check chr argument was changed
-        call = mutated.body[0].value
-        self.assertEqual(call.args[0].value, -1)
+        result = ast.unparse(mutated)
+        self.assertIn("chr(-1)", result)
+
+    def test_numeric_mutator_skips_non_harness_calls(self):
+        """Test NumericMutator doesn't mutate calls in non-harness functions."""
+        code = dedent("""
+            def helper():
+                return chr(65)
+
+            def uop_harness_test():
+                x = helper()
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.05):
+            with patch("random.choice", return_value=-1):
+                mutator = NumericMutator()
+                mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Helper's chr(65) should be untouched
+        self.assertIn("chr(65)", result)
 
     def test_iterable_mutator_tuple_attack(self):
         """Test IterableMutator with tuple attack."""

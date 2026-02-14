@@ -180,23 +180,6 @@ class NumericMutator(ast.NodeTransformer):
         node.keywords = []
         return node
 
-    def visit_Call(self, node: ast.Call) -> ast.AST:
-        self.generic_visit(node)
-        if not isinstance(node.func, ast.Name):
-            return node
-
-        mutator_map = {
-            "pow": self._mutate_pow_args,
-            "chr": self._mutate_chr_args,
-            "ord": self._mutate_ord_args,
-        }
-
-        mutator_func = mutator_map.get(node.func.id)
-        if mutator_func and random.random() < 0.1:
-            return mutator_func(node)
-
-        return node
-
     # --- Strategy 2: Self-Contained Scenario Injection ---
 
     def _create_abs_attack_scenario(self, prefix: str) -> list[ast.stmt]:
@@ -229,21 +212,34 @@ class NumericMutator(ast.NodeTransformer):
         if not node.name.startswith("uop_harness"):
             return node
 
-        # Low probability for this injection
+        # Strategy 1: Mutate arguments to numeric builtins within this harness
+        mutator_map = {
+            "pow": self._mutate_pow_args,
+            "chr": self._mutate_chr_args,
+            "ord": self._mutate_ord_args,
+        }
+        for child in ast.walk(node):
+            if (
+                isinstance(child, ast.Call)
+                and isinstance(child.func, ast.Name)
+                and child.func.id in mutator_map
+                and random.random() < 0.1
+            ):
+                mutator_map[child.func.id](child)
+
+        # Strategy 2: Inject abs() attack scenario
         if random.random() < 0.05:
             print(f"    -> Injecting numeric attack scenario into '{node.name}'", file=sys.stderr)
 
-            # For now, we only have one scenario, but this can be expanded.
             attack_generators = [self._create_abs_attack_scenario]
             chosen_generator = random.choice(attack_generators)
 
             prefix = f"{node.name}_{random.randint(1000, 9999)}"
             nodes_to_inject = chosen_generator(prefix)
 
-            # Prepend the scenario to the function's body
             node.body = nodes_to_inject + node.body
-            ast.fix_missing_locations(node)
 
+        ast.fix_missing_locations(node)
         return node
 
 

@@ -1841,6 +1841,36 @@ class TestBasicMutators(unittest.TestCase):
         self.assertEqual(len(constant.value), 5)
         self.assertNotEqual(constant.value, "hello")
 
+    def test_constant_perturbator_null_byte_string(self):
+        """Test ConstantPerturbator handles null byte at string boundary."""
+        code = "x = '\\x00abc'"
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.1):
+            with patch("random.randint", return_value=0):  # Select null byte
+                with patch("random.choice", return_value=-1):  # Would produce chr(-1)
+                    mutator = ConstantPerturbator()
+                    mutated = mutator.visit(tree)
+
+        # Should not crash — string should be unchanged
+        result = ast.unparse(mutated)
+        self.assertIn("\\x00abc", result)
+
+    def test_constant_perturbator_max_codepoint_string(self):
+        """Test ConstantPerturbator handles max Unicode codepoint."""
+        code = f"x = '{chr(0x10FFFF)}abc'"
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.1):
+            with patch("random.randint", return_value=0):  # Select max codepoint char
+                with patch("random.choice", return_value=1):  # Would produce chr(0x110000)
+                    mutator = ConstantPerturbator()
+                    mutated = mutator.visit(tree)
+
+        # Should not crash — string should be unchanged
+        result = ast.unparse(mutated)
+        self.assertIn("abc", result)
+
     def test_guard_injector(self):
         """Test GuardInjector mutator."""
         code = "x = 1"

@@ -129,7 +129,10 @@ class ConstantPerturbator(ast.NodeTransformer):
         elif isinstance(node.value, str) and node.value and random.random() < 0.3:
             pos = random.randint(0, len(node.value) - 1)
             char_val = ord(node.value[pos])
-            new_char = chr(char_val + random.choice([-1, 1]))
+            try:
+                new_char = chr(char_val + random.choice([-1, 1]))
+            except ValueError:
+                return node  # At Unicode boundary, leave unchanged
             node.value = node.value[:pos] + new_char + node.value[pos + 1 :]
         return node
 

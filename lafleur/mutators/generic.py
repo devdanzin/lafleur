@@ -349,21 +349,22 @@ class GuardInjector(ast.NodeTransformer):
         node = visited
 
         if isinstance(node, ast.stmt) and not isinstance(node, ast.FunctionDef):
-            # The test uses our fuzzer-provided, seeded RNG instance.
-            test = ast.Compare(
-                left=ast.Call(
-                    func=ast.Attribute(
-                        value=ast.Name(id="fuzzer_rng", ctx=ast.Load()),
-                        attr="random",
-                        ctx=ast.Load(),
+            if random.random() < 0.3:
+                # The test uses our fuzzer-provided, seeded RNG instance.
+                test = ast.Compare(
+                    left=ast.Call(
+                        func=ast.Attribute(
+                            value=ast.Name(id="fuzzer_rng", ctx=ast.Load()),
+                            attr="random",
+                            ctx=ast.Load(),
+                        ),
+                        args=[],
+                        keywords=[],
                     ),
-                    args=[],
-                    keywords=[],
-                ),
-                ops=[ast.Lt()],
-                comparators=[ast.Constant(value=0.1)],  # Low probability
-            )
-            return ast.If(test=test, body=[node], orelse=[])
+                    ops=[ast.Lt()],
+                    comparators=[ast.Constant(value=0.1)],  # Low probability
+                )
+                return ast.If(test=test, body=[node], orelse=[])
         return node
 
 

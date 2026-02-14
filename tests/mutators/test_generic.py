@@ -1876,8 +1876,9 @@ class TestBasicMutators(unittest.TestCase):
         code = "x = 1"
         tree = ast.parse(code)
 
-        mutator = GuardInjector()
-        mutated = mutator.visit(tree)
+        with patch("random.random", return_value=0.1):  # Below 0.3, will wrap
+            mutator = GuardInjector()
+            mutated = mutator.visit(tree)
 
         # Should wrap in an If statement
         self.assertIsInstance(mutated.body[0], ast.If)
@@ -2116,12 +2117,25 @@ class TestBasicMutators(unittest.TestCase):
         code = "x = 1"
         tree = ast.parse(code)
 
-        mutator = GuardInjector()
-        mutated = mutator.visit(tree)
+        with patch("random.random", return_value=0.1):  # Below 0.3, will wrap
+            mutator = GuardInjector()
+            mutated = mutator.visit(tree)
 
         output = ast.unparse(mutated)
         self.assertIn("if fuzzer_rng.random() < 0.1:", output)
         self.assertIn("x = 1", output)
+
+    def test_guard_injector_skips_with_low_probability(self):
+        """Test that GuardInjector skips wrapping when random > 0.3."""
+        code = "x = 1"
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.5):  # Above 0.3 threshold
+            mutator = GuardInjector()
+            mutated = mutator.visit(tree)
+
+        # Should NOT be wrapped in an if
+        self.assertIsInstance(mutated.body[0], ast.Assign)
 
 
 if __name__ == "__main__":

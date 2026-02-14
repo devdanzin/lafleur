@@ -777,12 +777,17 @@ class TestStressPatternMutators(unittest.TestCase):
         tree = ast.parse(code)
 
         with patch("random.random", return_value=0.05):
-            mutator = GuardExhaustionGenerator()
-            mutated = mutator.visit(tree)
+            with patch("random.randint", return_value=5555):
+                mutator = GuardExhaustionGenerator()
+                mutated = mutator.visit(tree)
 
-        # Should have injected isinstance chain
+        # Should have injected isinstance chain with prefixed names
         func = mutated.body[0]
-        # Should have poly_list setup and loop
+        result = ast.unparse(func)
+        self.assertIn("poly_list_ge_5555", result)
+        self.assertIn("x_ge_5555", result)
+        self.assertIn("y_ge_5555", result)
+        self.assertIn("i_ge_5555", result)
         self.assertGreater(len(func.body), 1)
 
     def test_exit_stresser(self):

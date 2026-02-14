@@ -129,26 +129,6 @@ class CrashFingerprinter:
 
         return None
 
-    def _sanitize_path(self, path: str) -> str:
-        """
-        Sanitize file path by removing user-specific prefixes.
-
-        Converts: /home/user/projects/cpython/Python/ceval.c
-        To:       Python/ceval.c
-        """
-        # Common path patterns to strip
-        patterns = [
-            r"/home/[^/]+/[^/]+/[^/]+/",  # /home/user/projects/cpython/
-            r"/home/[^/]+/[^/]+/",  # /home/user/cpython/
-            r"/Users/[^/]+/[^/]+/[^/]+/",  # macOS: /Users/user/projects/cpython/
-            r"/usr/local/src/[^/]+/",  # /usr/local/src/cpython/
-        ]
-
-        for pattern in patterns:
-            path = re.sub(pattern, "", path)
-
-        return path
-
     def analyze(self, returncode: int, log_content: str) -> CrashSignature:
         """
         Analyze a crash to determine its unique fingerprint.

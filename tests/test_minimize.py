@@ -267,6 +267,43 @@ class TestMinimizeEdgeCases(unittest.TestCase):
         renamed = rename_harnesses(source, "0")
         self.assertEqual(source, renamed)
 
+    def test_rename_harnesses_f2(self):
+        """Test renaming uop_harness_f2."""
+        source = "def uop_harness_f2():\n    pass\nuop_harness_f2()"
+        renamed = rename_harnesses(source, "0")
+        self.assertIn("def uop_harness_f2_0(", renamed)
+        self.assertIn("uop_harness_f2_0()", renamed)
+        self.assertNotIn("def uop_harness_f2()", renamed)
+
+    def test_rename_harnesses_with_params(self):
+        """Test renaming harnesses that have parameters."""
+        source = "def uop_harness_f1(x, y):\n    pass\nuop_harness_f1(1, 2)"
+        renamed = rename_harnesses(source, "0")
+        self.assertIn("def uop_harness_f1_0(x, y):", renamed)
+        self.assertIn("uop_harness_f1_0(1, 2)", renamed)
+
+    def test_rename_harnesses_multiple_variants(self):
+        """Test renaming multiple harness variants independently."""
+        source = (
+            "def uop_harness_f1():\n    pass\n"
+            "def uop_harness_f2():\n    pass\n"
+            "uop_harness_f1()\nuop_harness_f2()"
+        )
+        renamed = rename_harnesses(source, "5")
+        self.assertIn("def uop_harness_f1_5(", renamed)
+        self.assertIn("def uop_harness_f2_5(", renamed)
+        self.assertIn("uop_harness_f1_5()", renamed)
+        self.assertIn("uop_harness_f2_5()", renamed)
+
+    def test_rename_harnesses_no_false_positives(self):
+        """Test that similar names are not falsely renamed."""
+        source = "def uop_harness_factory():\n    pass\nmy_uop_harness_f1()"
+        renamed = rename_harnesses(source, "0")
+        # uop_harness_factory should NOT be renamed (doesn't match f\d+)
+        self.assertIn("def uop_harness_factory():", renamed)
+        # my_uop_harness_f1 should NOT be renamed (\b word boundary)
+        self.assertIn("my_uop_harness_f1()", renamed)
+
     @patch("lafleur.minimize.run_session")
     @patch("lafleur.minimize.shutil.which")
     def test_crash_does_not_reproduce_initially(self, mock_which, mock_run_session):

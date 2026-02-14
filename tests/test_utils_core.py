@@ -212,6 +212,24 @@ class TestSaveRunStats(unittest.TestCase):
             self.assertLess(a_pos, m_pos)
             self.assertLess(m_pos, z_pos)
 
+    def test_save_handles_write_error(self):
+        """Test that IOError during save is caught and warned."""
+        with patch("builtins.open", side_effect=IOError("disk full")):
+            with patch("sys.stderr", new_callable=StringIO) as mock_stderr:
+                save_run_stats({"total_sessions": 1})
+
+        self.assertIn("Warning", mock_stderr.getvalue())
+        self.assertIn("disk full", mock_stderr.getvalue())
+
+    def test_save_handles_permission_error(self):
+        """Test that PermissionError during save is caught and warned."""
+        with patch("builtins.open", side_effect=PermissionError("access denied")):
+            with patch("sys.stderr", new_callable=StringIO) as mock_stderr:
+                save_run_stats({"total_sessions": 1})
+
+        self.assertIn("Warning", mock_stderr.getvalue())
+        self.assertIn("access denied", mock_stderr.getvalue())
+
 
 class TestTeeLogger(unittest.TestCase):
     """Tests for TeeLogger class."""

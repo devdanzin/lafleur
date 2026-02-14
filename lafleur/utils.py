@@ -71,11 +71,15 @@ def load_run_stats() -> dict[str, Any]:
 
 
 def save_run_stats(stats: dict[str, Any]) -> None:
-    """
-    Save the updated run statistics to the JSON file.
-    """
-    with open(RUN_STATS_FILE, "w", encoding="utf-8") as f:
-        json.dump(stats, f, indent=2, sort_keys=True)
+    """Save the updated run statistics to the JSON file."""
+    try:
+        with open(RUN_STATS_FILE, "w", encoding="utf-8") as f:
+            json.dump(stats, f, indent=2, sort_keys=True)
+    except (IOError, OSError) as e:
+        print(
+            f"Warning: Could not save run stats: {e}",
+            file=sys.stderr,
+        )
 
 
 class TeeLogger:

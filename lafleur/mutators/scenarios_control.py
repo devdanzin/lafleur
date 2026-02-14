@@ -246,6 +246,9 @@ class RecursionWrappingMutator(ast.NodeTransformer):
             )
 
             # 3. Create the recursive call to the function itself.
+            # No depth guard by design — the try/except RecursionError in step 5
+            # catches the eventual stack overflow, which is the intended stress
+            # behavior for the JIT's stack unwinding path.
             recursive_call = ast.Expr(
                 value=ast.Call(
                     func=ast.Name(id=recursive_func_name, ctx=ast.Load()), args=[], keywords=[]

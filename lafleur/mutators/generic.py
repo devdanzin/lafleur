@@ -31,7 +31,10 @@ class OperatorSwapper(ast.NodeTransformer):
         ast.Div: [ast.Mult, ast.Add, ast.Sub, ast.FloorDiv],
         ast.FloorDiv: [ast.Div, ast.Mult, ast.Add, ast.Sub, ast.Mod],
         ast.Mod: [ast.FloorDiv, ast.Add, ast.Sub],
-        # Bitwise Operators, without LShift because it generates huge numbers
+        # Bitwise Operators
+        # Note: LShift can be replaced BY other operators (it's a key) but is never
+        # used AS a replacement (absent from all value lists) to avoid generating
+        # huge numbers. Same principle applied to Pow in arithmetic operators above.
         ast.LShift: [ast.RShift, ast.BitAnd, ast.BitOr, ast.BitXor],
         ast.RShift: [ast.BitAnd, ast.BitOr, ast.BitXor],
         ast.BitAnd: [ast.BitOr, ast.BitXor, ast.RShift],

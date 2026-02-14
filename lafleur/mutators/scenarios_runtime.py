@@ -152,6 +152,19 @@ class FrameManipulator(ast.NodeTransformer):
     It creates a scenario where the JIT's view of a variable's state might
     diverge from the state that other Python code sees, which is a potent
     source of potential bugs.
+
+    Note on Complementary Mutators:
+    This mutator is complementary to `SideEffectInjector`, which also
+    corrupts local variables via frame introspection. The key difference
+    is the corruption trigger:
+    - FrameManipulator: corruption via a synchronous function call in a
+      hot loop (tests JIT handling of frame manipulation during normal
+      call flow)
+    - SideEffectInjector: corruption via a __del__ finalizer triggered
+      by object deletion (tests JIT handling of asynchronous GC-driven
+      state changes)
+    Both may be applied in the same pipeline, testing different
+    deoptimization pathways.
     """
 
     def visit_FunctionDef(self, node: ast.FunctionDef) -> ast.FunctionDef:
@@ -428,6 +441,11 @@ class SideEffectInjector(ast.NodeTransformer):
     instantiates and deletes this class inside a hot loop to trigger the
     side effect at a predictable time, testing the JIT's deoptimization
     pathways.
+
+    Note: This mutator is complementary to `FrameManipulator`, which also
+    corrupts local variables via frame introspection but through synchronous
+    function calls rather than __del__ finalizers. See FrameManipulator's
+    docstring for details on the distinction.
     """
 
     def _get_frame_modifier_class_ast(self, prefix, target_path_str, payload_str):

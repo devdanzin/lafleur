@@ -13,6 +13,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from lafleur.utils import (
+    _default_run_stats,
     load_run_stats,
     save_run_stats,
     TeeLogger,
@@ -110,6 +111,61 @@ class TestLoadRunStats(unittest.TestCase):
         self.assertEqual(stats["global_seed_counter"], 0)
         self.assertEqual(stats["corpus_file_counter"], 0)
         self.assertEqual(stats["divergences_found"], 0)
+
+    def test_old_stats_preserve_existing_values(self):
+        """Test that existing values are NOT overwritten by defaults."""
+        old_stats = {
+            "start_time": "2025-01-01T00:00:00",
+            "total_sessions": 42,
+            "total_mutations": 999,
+        }
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            stats_file = Path(tmp_dir) / "fuzz_run_stats.json"
+            stats_file.write_text(json.dumps(old_stats))
+
+            with patch("lafleur.utils.RUN_STATS_FILE", stats_file):
+                stats = load_run_stats()
+
+        # Existing values preserved
+        self.assertEqual(stats["total_sessions"], 42)
+        self.assertEqual(stats["total_mutations"], 999)
+        self.assertEqual(stats["start_time"], "2025-01-01T00:00:00")
+        # Missing fields filled in
+        self.assertEqual(stats["crashes_found"], 0)
+
+
+class TestDefaultRunStats(unittest.TestCase):
+    """Tests for _default_run_stats helper."""
+
+    def test_has_all_expected_fields(self):
+        """Test that _default_run_stats contains all expected keys."""
+        defaults = _default_run_stats()
+        expected_keys = {
+            "start_time",
+            "last_update_time",
+            "total_sessions",
+            "total_mutations",
+            "corpus_size",
+            "crashes_found",
+            "timeouts_found",
+            "divergences_found",
+            "new_coverage_finds",
+            "sum_of_mutations_per_find",
+            "average_mutations_per_find",
+            "global_seed_counter",
+            "corpus_file_counter",
+        }
+        self.assertEqual(set(defaults.keys()), expected_keys)
+
+    def test_start_time_is_recent_iso_timestamp(self):
+        """Test that start_time is a valid, recent ISO timestamp."""
+        from datetime import datetime, timezone
+
+        defaults = _default_run_stats()
+        ts = datetime.fromisoformat(defaults["start_time"])
+        now = datetime.now(timezone.utc)
+        self.assertLess((now - ts).total_seconds(), 5)
 
 
 class TestSaveRunStats(unittest.TestCase):

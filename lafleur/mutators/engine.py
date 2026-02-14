@@ -306,4 +306,5 @@ class ASTMutator:
         try:
             return ast.unparse(mutated_tree)
         except AttributeError:
-            return f"# AST unparsing failed. Original code was:\n# {code_string}"
+            commented_lines = "\n# ".join(code_string.splitlines())
+            return f"# AST unparsing failed. Original code was:\n# {commented_lines}"

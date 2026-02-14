@@ -7,6 +7,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 from lafleur.minimize import (
     _make_repro_env,
+    measure_execution_time,
     rename_harnesses,
     extract_grep_pattern,
     minimize_session,
@@ -394,6 +395,21 @@ class TestMinimizeHelperFunctions(unittest.TestCase):
         meta = {}
         pattern = extract_grep_pattern(meta)
         self.assertEqual(pattern, "")
+
+    @patch("lafleur.minimize.subprocess.run")
+    def test_measure_execution_time_timeout_returns_timeout_value(self, mock_run):
+        """Test that timeout returns the timeout value and prints a warning."""
+        mock_run.side_effect = subprocess.TimeoutExpired(cmd=["python"], timeout=30)
+
+        from io import StringIO
+
+        captured_stdout = StringIO()
+        with patch("sys.stdout", captured_stdout):
+            result = measure_execution_time(["python", "test.py"], timeout=30)
+
+        self.assertEqual(result, 30.0)
+        self.assertIn("timed out", captured_stdout.getvalue())
+        self.assertIn("30s", captured_stdout.getvalue())
 
 
 class TestReturncodeValidation(unittest.TestCase):

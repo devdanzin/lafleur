@@ -84,6 +84,28 @@ def _create_pow_attack(prefix: str) -> list[ast.stmt]:
     return ast.parse(attack_code).body
 
 
+def _mutate_for_loop_iter(func_node: ast.FunctionDef) -> bool:
+    """Find the first for loop in a function and replace its iterable with a stateful one.
+
+    This is a shared helper used by MagicMethodMutator and IterableMutator.
+    Returns True if a mutation was performed, False otherwise.
+    """
+    for stmt in func_node.body:
+        if isinstance(stmt, ast.For):
+            print(f"    -> Mutating for loop iterator in '{func_node.name}'", file=sys.stderr)
+            prefix = f"iter_{random.randint(1000, 9999)}"
+            class_def_str = genStatefulIterObject(prefix)
+            class_def_node = cast(ast.ClassDef, ast.parse(class_def_str).body[0])
+            func_node.body.insert(0, class_def_node)
+            stmt.iter = ast.Call(
+                func=ast.Name(id=class_def_node.name, ctx=ast.Load()),
+                args=[],
+                keywords=[],
+            )
+            return True
+    return False
+
+
 class MagicMethodMutator(ast.NodeTransformer):
     """
     Attack JIT data model assumptions by stressing magic methods.
@@ -92,24 +114,6 @@ class MagicMethodMutator(ast.NodeTransformer):
     magic methods (e.g., `__len__`, `__hash__`) or replaces iterables in
     `for` loops with stateful, malicious ones.
     """
-
-    def _mutate_for_loop_iter(self, node: ast.FunctionDef) -> bool:
-        """Find a for loop and replaces its iterable with a stateful one."""
-        for i, stmt in enumerate(node.body):
-            if isinstance(stmt, ast.For):
-                print(f"    -> Mutating for loop iterator in '{node.name}'", file=sys.stderr)
-                p_prefix = f"iter_{random.randint(1000, 9999)}"
-                # 1. Get the evil class definition
-                class_def_str = genStatefulIterObject(p_prefix)
-                class_def_node = cast(ast.ClassDef, ast.parse(class_def_str).body[0])
-                # 2. Prepend the class definition to the function
-                node.body.insert(0, class_def_node)
-                # 3. Replace the loop's iterable
-                stmt.iter = ast.Call(
-                    func=ast.Name(id=class_def_node.name, ctx=ast.Load()), args=[], keywords=[]
-                )
-                return True  # Indicate that a mutation was performed
-        return False
 
     def visit_FunctionDef(self, node: ast.FunctionDef) -> ast.FunctionDef:
         self.generic_visit(node)
@@ -122,14 +126,14 @@ class MagicMethodMutator(ast.NodeTransformer):
                 _create_len_attack,
                 _create_hash_attack,
                 _create_pow_attack,
-                self._mutate_for_loop_iter,  # This one is different
+                _mutate_for_loop_iter,
             ]
             chosen_attack = random.choice(attack_functions)
 
-            nodes_to_inject = []
-            if chosen_attack == self._mutate_for_loop_iter:
+            nodes_to_inject: list[ast.stmt] = []
+            if chosen_attack == _mutate_for_loop_iter:
                 # This attack modifies the function in-place, so we call it differently
-                if self._mutate_for_loop_iter(node):
+                if _mutate_for_loop_iter(node):
                     ast.fix_missing_locations(node)
             else:
                 print(
@@ -343,29 +347,6 @@ except Exception:
         """)
         return ast.parse(attack_code).body
 
-    def _mutate_for_loop_iter(self, func_node: ast.FunctionDef) -> bool:
-        """Find a for loop and replaces its iterable with a stateful one."""
-        # Find the first for loop in the function body
-        for_node = None
-        for stmt in func_node.body:
-            if isinstance(stmt, ast.For):
-                for_node = stmt
-                break
-
-        if for_node:
-            print(f"    -> Mutating for loop iterator in '{func_node.name}'", file=sys.stderr)
-            prefix = f"iter_{random.randint(1000, 9999)}"
-            class_def_str = genStatefulIterObject(prefix)
-            class_def_node = cast(ast.ClassDef, ast.parse(class_def_str).body[0])
-            # Prepend the class definition to the function
-            func_node.body.insert(0, class_def_node)
-            # Replace the loop's iterable
-            for_node.iter = ast.Call(
-                func=ast.Name(id=class_def_node.name, ctx=ast.Load()), args=[], keywords=[]
-            )
-            return True  # Indicate that a mutation was performed
-        return False
-
     def visit_FunctionDef(self, node: ast.FunctionDef) -> ast.FunctionDef:
         self.generic_visit(node)
 
@@ -380,14 +361,14 @@ except Exception:
                 self._create_tuple_attack,
                 self._create_all_any_attack,
                 self._create_min_max_attack,
-                self._mutate_for_loop_iter,
+                _mutate_for_loop_iter,
             ]
             chosen_attack = random.choice(attack_functions)
 
-            nodes_to_inject = []
-            if chosen_attack == self._mutate_for_loop_iter:
+            nodes_to_inject: list[ast.stmt] = []
+            if chosen_attack == _mutate_for_loop_iter:
                 # This attack modifies the function in-place
-                if self._mutate_for_loop_iter(node):
+                if _mutate_for_loop_iter(node):
                     ast.fix_missing_locations(node)
             else:
                 # These attacks inject a new, self-contained scenario

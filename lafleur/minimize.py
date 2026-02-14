@@ -21,15 +21,18 @@ import sys
 import time
 from pathlib import Path
 
-# Environment variables for reproduction
-REPRO_ENV = os.environ.copy()
-REPRO_ENV.update(
-    {
-        "PYTHON_JIT": "1",
-        "PYTHON_LLTRACE": "0",  # Disable verbose logging for speed
-        "ASAN_OPTIONS": "detect_leaks=0",
-    }
-)
+from lafleur.utils import FUZZING_ENV
+
+
+def _make_repro_env() -> dict[str, str]:
+    """Create environment for crash reproduction.
+
+    Based on FUZZING_ENV but with verbose logging disabled for speed.
+    """
+    env = FUZZING_ENV.copy()
+    env["PYTHON_LLTRACE"] = "0"
+    env["PYTHON_OPT_DEBUG"] = "0"
+    return env
 
 
 def extract_grep_pattern(metadata: dict) -> str:
@@ -59,7 +62,7 @@ def measure_execution_time(cmd: list[str], timeout: int) -> float:
     """Run a command and return its execution time in seconds."""
     start_time = time.monotonic()
     try:
-        subprocess.run(cmd, capture_output=True, timeout=timeout, env=REPRO_ENV)
+        subprocess.run(cmd, capture_output=True, timeout=timeout, env=_make_repro_env())
     except subprocess.TimeoutExpired:
         pass
     return time.monotonic() - start_time
@@ -89,7 +92,9 @@ def run_session(scripts: list[Path], target_python: str, timeout: int = 10) -> t
     """Run a session using lafleur.driver and return (returncode, stdout, stderr)."""
     cmd = [target_python, "-m", "lafleur.driver"] + [str(s) for s in scripts]
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, env=REPRO_ENV)
+        result = subprocess.run(
+            cmd, capture_output=True, text=True, timeout=timeout, env=_make_repro_env()
+        )
         return result.returncode, result.stdout, result.stderr
     except subprocess.TimeoutExpired:
         return 124, "", "Timeout"
@@ -338,7 +343,7 @@ export ASAN_OPTIONS=detect_leaks=0
     ]
 
     try:
-        subprocess.run(shrinkray_cmd, check=False, env=REPRO_ENV)
+        subprocess.run(shrinkray_cmd, check=False, env=_make_repro_env())
         print("[*] ShrinkRay finished.")
     except Exception as e:
         print(f"[!] ShrinkRay failed: {e}")

@@ -134,6 +134,13 @@ def minimize_session(crash_dir: Path, target_python: str, force_overwrite: bool)
         print("[!] Error: Invalid metadata.json.")
         sys.exit(1)
 
+    # Validate that we have a non-zero crash return code
+    target_returncode = metadata.get("returncode")
+    if target_returncode is None or target_returncode == 0:
+        print("[!] Error: metadata.json has no crash return code (returncode is missing or 0).")
+        print("    Cannot determine crash reproduction without a non-zero exit code.")
+        sys.exit(1)
+
     grep_pattern = extract_grep_pattern(metadata)
     print(f"[*] Target Fingerprint: {metadata.get('fingerprint')}")
     print(f"[*] Grep Pattern: '{grep_pattern}'")

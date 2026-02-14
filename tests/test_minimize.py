@@ -346,6 +346,73 @@ class TestMinimizeHelperFunctions(unittest.TestCase):
         self.assertEqual(pattern, "")
 
 
+class TestReturncodeValidation(unittest.TestCase):
+    """Tests for returncode validation in minimize_session."""
+
+    def setUp(self):
+        self.temp_dir = Path(tempfile.mkdtemp())
+        self.crash_dir = self.temp_dir / "crash_retcode"
+        self.crash_dir.mkdir()
+
+    def tearDown(self):
+        shutil.rmtree(self.temp_dir)
+
+    def test_missing_returncode_exits(self):
+        """Test that missing returncode in metadata causes exit."""
+        (self.crash_dir / "metadata.json").write_text(json.dumps({"fingerprint": "SIGNAL:SIGSEGV"}))
+        (self.crash_dir / "script.py").write_text("x = 1")
+
+        from io import StringIO
+
+        captured_stdout = StringIO()
+        with patch("sys.stdout", captured_stdout):
+            with self.assertRaises(SystemExit) as ctx:
+                minimize_session(self.crash_dir, "python3", force_overwrite=True)
+
+        self.assertEqual(ctx.exception.code, 1)
+        self.assertIn("returncode", captured_stdout.getvalue().lower())
+
+    def test_zero_returncode_exits(self):
+        """Test that returncode 0 in metadata causes exit."""
+        (self.crash_dir / "metadata.json").write_text(
+            json.dumps({"returncode": 0, "fingerprint": "SIGNAL:SIGSEGV"})
+        )
+        (self.crash_dir / "script.py").write_text("x = 1")
+
+        from io import StringIO
+
+        captured_stdout = StringIO()
+        with patch("sys.stdout", captured_stdout):
+            with self.assertRaises(SystemExit) as ctx:
+                minimize_session(self.crash_dir, "python3", force_overwrite=True)
+
+        self.assertEqual(ctx.exception.code, 1)
+        self.assertIn("returncode", captured_stdout.getvalue().lower())
+
+    @patch("lafleur.minimize.run_session")
+    @patch("lafleur.minimize.shutil.which")
+    def test_valid_returncode_proceeds(self, mock_which, mock_run_session):
+        """Test that a valid non-zero returncode does not trigger validation error."""
+        (self.crash_dir / "metadata.json").write_text(
+            json.dumps({"returncode": -11, "fingerprint": "SIGNAL:SIGSEGV"})
+        )
+        (self.crash_dir / "script.py").write_text("x = 1")
+
+        mock_which.return_value = None
+        mock_run_session.return_value = (-11, "", "Segmentation fault")
+
+        # Should NOT exit due to returncode validation — will proceed to the main logic
+        from io import StringIO
+
+        captured_stdout = StringIO()
+        with patch("sys.stdout", captured_stdout):
+            minimize_session(self.crash_dir, "python3", force_overwrite=True)
+
+        output = captured_stdout.getvalue()
+        # Should have reached the minimization stage (not exited early)
+        self.assertNotIn("returncode is missing or 0", output)
+
+
 class TestCheckCrashShEscaping(unittest.TestCase):
     """Tests for shell escaping in generated check_crash.sh."""
 

@@ -296,6 +296,76 @@ class TestTeeLogger(unittest.TestCase):
 
             logger.close()
 
+    def test_encoding_delegates_to_stream(self):
+        """Test that encoding property delegates to the original stream."""
+        mock_stream = MagicMock()
+        mock_stream.encoding = "utf-8"
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            log_path = Path(tmp_dir) / "test.log"
+            logger = TeeLogger(log_path, mock_stream)
+
+            self.assertEqual(logger.encoding, "utf-8")
+            logger.close()
+
+    def test_encoding_defaults_to_utf8(self):
+        """Test that encoding defaults to utf-8 when stream has no encoding."""
+        mock_stream = MagicMock(spec=[])  # No attributes at all
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            log_path = Path(tmp_dir) / "test.log"
+            logger = TeeLogger(log_path, mock_stream)
+
+            self.assertEqual(logger.encoding, "utf-8")
+            logger.close()
+
+    def test_isatty_false_for_stringio(self):
+        """Test that isatty returns False for StringIO."""
+        original_stream = StringIO()
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            log_path = Path(tmp_dir) / "test.log"
+            logger = TeeLogger(log_path, original_stream)
+
+            self.assertFalse(logger.isatty())
+            logger.close()
+
+    def test_isatty_delegates_to_tty_stream(self):
+        """Test that isatty delegates True when stream is a TTY."""
+        mock_stream = MagicMock()
+        mock_stream.isatty.return_value = True
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            log_path = Path(tmp_dir) / "test.log"
+            logger = TeeLogger(log_path, mock_stream)
+
+            self.assertTrue(logger.isatty())
+            logger.close()
+
+    def test_fileno_raises_for_stringio(self):
+        """Test that fileno raises OSError for StringIO."""
+        original_stream = StringIO()
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            log_path = Path(tmp_dir) / "test.log"
+            logger = TeeLogger(log_path, original_stream)
+
+            with self.assertRaises(OSError):
+                logger.fileno()
+            logger.close()
+
+    def test_fileno_delegates_to_stream(self):
+        """Test that fileno delegates to the original stream."""
+        mock_stream = MagicMock()
+        mock_stream.fileno.return_value = 1
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            log_path = Path(tmp_dir) / "test.log"
+            logger = TeeLogger(log_path, mock_stream)
+
+            self.assertEqual(logger.fileno(), 1)
+            logger.close()
+
 
 class TestExecutionResult(unittest.TestCase):
     """Tests for ExecutionResult dataclass."""

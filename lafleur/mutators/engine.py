@@ -298,7 +298,8 @@ class ASTMutator:
         try:
             tree = ast.parse(dedent(code_string))
         except SyntaxError:
-            return f"# Original code failed to parse:\n# {'#'.join(code_string.splitlines())}"
+            commented_lines = "\n# ".join(code_string.splitlines())
+            return f"# Original code failed to parse:\n# {commented_lines}"
 
         mutated_tree, _ = self.mutate_ast(tree, seed=seed, mutations=mutations)
 

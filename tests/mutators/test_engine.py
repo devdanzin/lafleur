@@ -116,9 +116,27 @@ class TestASTMutator(unittest.TestCase):
         mutator = ASTMutator()
         result = mutator.mutate(code)
 
-        # Should return error comment
+        # Should return error comment with each line properly commented
         self.assertIn("# Original code failed to parse:", result)
         self.assertIn("def broken", result)
+        for line in result.splitlines():
+            self.assertTrue(line.startswith("#"), f"Uncommented line: {line!r}")
+
+    def test_mutate_syntax_error_comments_all_lines(self):
+        """Test that SyntaxError fallback comments every line of multi-line input."""
+        code = "line one\nline two\nline three"
+
+        mutator = ASTMutator()
+        result = mutator.mutate(code)
+
+        lines = result.splitlines()
+        # Header + 3 original lines = 4 lines
+        self.assertEqual(len(lines), 4)
+        for line in lines:
+            self.assertTrue(line.startswith("#"), f"Uncommented line: {line!r}")
+        self.assertIn("line one", lines[1])
+        self.assertIn("line two", lines[2])
+        self.assertIn("line three", lines[3])
 
     def test_mutate_handles_unparsing_errors(self):
         """Test handling of AST unparsing failures."""
@@ -311,8 +329,10 @@ class TestASTMutator(unittest.TestCase):
         mutator = ASTMutator()
         result = mutator.mutate(code)
 
-        # Should return error comment
+        # Should return error comment with all lines commented
         self.assertIn("# Original code failed to parse:", result)
+        for line in result.splitlines():
+            self.assertTrue(line.startswith("#"), f"Uncommented line: {line!r}")
 
     def test_mutate_list_as_tree(self):
         """Test mutating when tree is a list."""

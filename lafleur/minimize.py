@@ -67,13 +67,21 @@ def measure_execution_time(cmd: list[str], timeout: int) -> float:
 
 def rename_harnesses(source: str, suffix: str) -> str:
     """
-    Rename 'uop_harness_f1' to 'uop_harness_f1_{suffix}' to prevent collisions
+    Rename 'uop_harness_fN' to 'uop_harness_fN_{suffix}' to prevent collisions
     when concatenating multiple scripts.
     """
-    # Rename definitions
-    source = re.sub(r"def\s+uop_harness_f1\(\):", f"def uop_harness_f1_{suffix}():", source)
-    # Rename calls
-    source = re.sub(r"uop_harness_f1\(\)", f"uop_harness_f1_{suffix}()", source)
+    # Rename definitions (with or without parameters)
+    source = re.sub(
+        r"def\s+(uop_harness_f\d+)\s*\(",
+        rf"def \1_{suffix}(",
+        source,
+    )
+    # Rename calls (with or without arguments)
+    source = re.sub(
+        r"\b(uop_harness_f\d+)\s*\(",
+        rf"\1_{suffix}(",
+        source,
+    )
     return source
 
 

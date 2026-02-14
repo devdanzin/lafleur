@@ -33,6 +33,7 @@ from lafleur.mutators.scenarios_data import (
     _create_hash_attack,
     _create_len_attack,
     _create_pow_attack,
+    _mutate_for_loop_iter,
 )
 
 
@@ -793,6 +794,39 @@ class TestAttackFunctions(unittest.TestCase):
         code = ast.unparse(ast.Module(body=nodes))
         self.assertIn("pow(10, -2)", code)
         self.assertIn("pow(-10, 0.5)", code)
+
+
+class TestMutateForLoopIter(unittest.TestCase):
+    """Test the shared _mutate_for_loop_iter helper."""
+
+    def test_mutate_for_loop_iter_shared_function(self):
+        """Test the shared _mutate_for_loop_iter helper."""
+        code = dedent("""
+            def uop_harness_test():
+                for i in range(10):
+                    x = i + 1
+        """)
+        tree = ast.parse(code)
+        func_node = tree.body[0]
+
+        with patch("random.randint", return_value=4242):
+            result = _mutate_for_loop_iter(func_node)
+
+        self.assertTrue(result)
+        code_str = ast.unparse(func_node)
+        self.assertIn("StatefulIter_iter_4242", code_str)
+
+    def test_mutate_for_loop_iter_no_loop(self):
+        """Test that _mutate_for_loop_iter returns False with no for loop."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+        func_node = tree.body[0]
+
+        result = _mutate_for_loop_iter(func_node)
+        self.assertFalse(result)
 
 
 class TestAdvancedMutators(unittest.TestCase):

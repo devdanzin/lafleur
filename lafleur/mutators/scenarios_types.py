@@ -343,47 +343,44 @@ class TypeIntrospectionMutator(ast.NodeTransformer):
         if not node.name.startswith("uop_harness"):
             return node
 
-        # Low probability for this invasive set of mutations
-        if random.random() > 0.15:
-            return node
+        if random.random() < 0.15:
+            # Find all calls to our target builtins within this function
+            isinstance_calls = []
+            hasattr_calls = []
+            for sub_node in ast.walk(node):
+                if isinstance(sub_node, ast.Call) and isinstance(sub_node.func, ast.Name):
+                    if sub_node.func.id == "isinstance" and len(sub_node.args) == 2:
+                        isinstance_calls.append(sub_node)
+                    elif sub_node.func.id == "hasattr" and len(sub_node.args) == 2:
+                        hasattr_calls.append(sub_node)
 
-        # Find all calls to our target builtins within this function
-        isinstance_calls = []
-        hasattr_calls = []
-        for sub_node in ast.walk(node):
-            if isinstance(sub_node, ast.Call) and isinstance(sub_node.func, ast.Name):
-                if sub_node.func.id == "isinstance" and len(sub_node.args) == 2:
-                    isinstance_calls.append(sub_node)
-                elif sub_node.func.id == "hasattr" and len(sub_node.args) == 2:
-                    hasattr_calls.append(sub_node)
-
-        nodes_to_inject = []
-        # Choose one target type to inject, if any were found
-        if isinstance_calls and hasattr_calls:
-            target_type = random.choice(["isinstance", "hasattr"])
-        elif isinstance_calls:
-            target_type = "isinstance"
-        elif hasattr_calls:
-            target_type = "hasattr"
-        else:
-            return node  # No targets found
-
-        # Generate the attack scenario based on the chosen target type
-        if target_type == "isinstance":
-            target_call = random.choice(isinstance_calls)
-            # Randomly choose between the two different isinstance attacks
-            if random.random() < 0.5:
-                nodes_to_inject = self._create_isinstance_polymorphic_attack(target_call)
+            nodes_to_inject: list[ast.stmt] = []
+            # Choose one target type to inject, if any were found
+            if isinstance_calls and hasattr_calls:
+                target_type = random.choice(["isinstance", "hasattr"])
+            elif isinstance_calls:
+                target_type = "isinstance"
+            elif hasattr_calls:
+                target_type = "hasattr"
             else:
-                nodes_to_inject = self._create_isinstance_invalidation_attack(target_call)
-        elif target_type == "hasattr":
-            target_call = random.choice(hasattr_calls)
-            nodes_to_inject = self._create_hasattr_invalidation_attack(target_call)
+                return node  # No targets found
 
-        # Prepend the new scenario to the top of the function body
-        if nodes_to_inject:
-            node.body = nodes_to_inject + node.body
-            ast.fix_missing_locations(node)
+            # Generate the attack scenario based on the chosen target type
+            if target_type == "isinstance":
+                target_call = random.choice(isinstance_calls)
+                # Randomly choose between the two different isinstance attacks
+                if random.random() < 0.5:
+                    nodes_to_inject = self._create_isinstance_polymorphic_attack(target_call)
+                else:
+                    nodes_to_inject = self._create_isinstance_invalidation_attack(target_call)
+            elif target_type == "hasattr":
+                target_call = random.choice(hasattr_calls)
+                nodes_to_inject = self._create_hasattr_invalidation_attack(target_call)
+
+            # Prepend the new scenario to the top of the function body
+            if nodes_to_inject:
+                node.body = nodes_to_inject + node.body
+                ast.fix_missing_locations(node)
 
         return node
 

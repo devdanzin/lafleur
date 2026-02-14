@@ -7,11 +7,13 @@ lafleur/mutators/engine.py
 """
 
 import ast
+import inspect
 import random
 import unittest
 from textwrap import dedent
 from unittest.mock import patch
 
+import lafleur.mutators.engine as engine_module
 from lafleur.mutators.engine import ASTMutator, SlicingMutator
 from lafleur.mutators.generic import ConstantPerturbator, OperatorSwapper
 from lafleur.mutators.utils import (
@@ -377,6 +379,35 @@ class TestASTMutator(unittest.TestCase):
 
         # Should have many mutators
         self.assertGreater(len(mutator.transformers), 20)
+
+    def test_all_imported_transformers_in_pool(self):
+        """Validate every imported NodeTransformer subclass is in the pool.
+
+        This catches accidental omissions when adding new mutators to engine.py.
+        """
+        # Collect all ast.NodeTransformer subclasses defined in the engine module's namespace
+        # These come from the imports at the top of engine.py
+        imported_transformers = set()
+        for name, obj in inspect.getmembers(engine_module, inspect.isclass):
+            if issubclass(obj, ast.NodeTransformer) and obj is not ast.NodeTransformer:
+                imported_transformers.add(obj)
+
+        # Exclude classes that are intentionally NOT in the pool
+        excluded = {
+            SlicingMutator,  # Meta-mutator, not a pool member
+            ASTMutator,  # The engine itself (not a NodeTransformer, but just in case)
+        }
+        expected = imported_transformers - excluded
+
+        mutator = ASTMutator()
+        pool = set(mutator.transformers)
+
+        missing = expected - pool
+        self.assertFalse(
+            missing,
+            f"Imported transformers missing from ASTMutator pool: "
+            f"{sorted(c.__name__ for c in missing)}",
+        )
 
     def test_mutator_with_complex_ast(self):
         """Test mutator with complex nested AST."""

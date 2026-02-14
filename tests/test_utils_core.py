@@ -61,6 +61,33 @@ class TestLoadRunStats(unittest.TestCase):
         self.assertEqual(stats["total_sessions"], 5)
         self.assertEqual(stats["total_mutations"], 100)
 
+    def test_corrupted_json_returns_default(self):
+        """Test that corrupted JSON returns default stats without RecursionError."""
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            stats_file = Path(tmp_dir) / "fuzz_run_stats.json"
+            stats_file.write_text("{bad json}")
+
+            with patch("lafleur.utils.RUN_STATS_FILE", stats_file):
+                stats = load_run_stats()
+
+        self.assertIn("start_time", stats)
+        self.assertEqual(stats["total_sessions"], 0)
+        self.assertEqual(stats["total_mutations"], 0)
+        self.assertEqual(stats["crashes_found"], 0)
+
+    def test_corrupted_file_prints_warning(self):
+        """Test that a corrupted file prints a warning to stderr."""
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            stats_file = Path(tmp_dir) / "fuzz_run_stats.json"
+            stats_file.write_text("{bad json}")
+
+            with patch("lafleur.utils.RUN_STATS_FILE", stats_file):
+                with patch("sys.stderr", new_callable=StringIO) as mock_stderr:
+                    load_run_stats()
+
+            self.assertIn("Warning", mock_stderr.getvalue())
+            self.assertIn("Starting fresh", mock_stderr.getvalue())
+
     def test_adds_missing_fields_to_old_stats(self):
         """Test that missing fields are added to older stats files."""
         old_stats = {

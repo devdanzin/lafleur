@@ -416,19 +416,24 @@ class VariableSwapper(ast.NodeTransformer):
     def __init__(self):
         self.var_map = {}
 
-    def visit_Module(self, node: ast.AST) -> ast.AST:
-        # Scan for all names used in the module
-        all_names = {n.id for n in ast.walk(node) if isinstance(n, ast.Name)}
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> ast.FunctionDef:
+        if not node.name.startswith("uop_harness"):
+            self.generic_visit(node)
+            return node
 
-        # Filter out the protected names to get our list of swappable candidates
+        # Collect names only within this function's scope
+        all_names = {n.id for n in ast.walk(node) if isinstance(n, ast.Name)}
         swappable_names = sorted(list(all_names - self.PROTECTED_NAMES))
 
         if len(swappable_names) >= 2:
-            # Only choose from the safe, swappable names
             a, b = random.sample(swappable_names, 2)
             self.var_map = {a: b, b: a}
 
         self.generic_visit(node)
+
+        # Reset var_map after processing this function to avoid leaking
+        # swaps into sibling functions
+        self.var_map = {}
         return node
 
     def visit_Name(self, node: ast.Name) -> ast.Name:

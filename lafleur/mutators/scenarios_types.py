@@ -704,6 +704,11 @@ class CodeObjectSwapper(ast.NodeTransformer):
     """
     Injects two functions and code that swaps their __code__ objects
     mid-execution to attack JIT assumptions about function calls.
+
+    Note: This mutator focuses narrowly on __code__ swapping between two
+    functions with incompatible signatures. See also FunctionPatcher (simpler
+    __defaults__ patching) and ComprehensiveFunctionMutator (multi-attribute
+    attacks including __code__, __defaults__, __kwdefaults__, and __closure__).
     """
 
     def visit_FunctionDef(self, node: ast.FunctionDef) -> ast.FunctionDef:
@@ -763,6 +768,11 @@ class FunctionPatcher(ast.NodeTransformer):
     This mutator injects a scenario that defines a simple nested function,
     calls it in a hot loop to get it JIT-compiled, and then overwrites the
     function object with a new one to invalidate the JIT's assumptions.
+
+    Note: This mutator provides the simplest function modification attack:
+    redefine a function or patch its __defaults__. See also CodeObjectSwapper
+    (__code__ swapping with signature mismatch) and ComprehensiveFunctionMutator
+    (combined multi-attribute attacks).
     """
 
     def visit_FunctionDef(self, node: ast.FunctionDef) -> ast.FunctionDef:
@@ -868,6 +878,13 @@ class ComprehensiveFunctionMutator(ast.NodeTransformer):
 
     Each modification targets JIT assumptions about function stability and
     forces deoptimization when cached function metadata becomes invalid.
+
+    Note: This is the most thorough function modification mutator. It subsumes
+    the attack vectors of FunctionPatcher (__defaults__) and CodeObjectSwapper
+    (__code__) while adding __kwdefaults__, __closure__, and combined attacks.
+    All three mutators are registered in the engine pool — overlap is intentional
+    as they operate at different sophistication levels and the engine's random
+    selection means typically only one fires per pipeline.
     """
 
     ATTACK_SCENARIOS = [

@@ -151,8 +151,8 @@ class ASTMutator:
     then unparsed back into a string of Python code.
     """
 
-    def __init__(self):
-        self.transformers = [
+    def __init__(self) -> None:
+        self.transformers: list[type[ast.NodeTransformer]] = [
             HelperFunctionInjector,  # Injects helpers for Sniper to target
             OperatorSwapper,
             ComparisonSwapper,

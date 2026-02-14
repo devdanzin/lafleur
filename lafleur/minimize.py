@@ -64,7 +64,12 @@ def measure_execution_time(cmd: list[str], timeout: int) -> float:
     try:
         subprocess.run(cmd, capture_output=True, timeout=timeout, env=_make_repro_env())
     except subprocess.TimeoutExpired:
-        pass
+        elapsed = time.monotonic() - start_time
+        print(
+            f"  [!] Warning: Baseline measurement timed out after {elapsed:.1f}s. "
+            f"Using {timeout}s as baseline.",
+        )
+        return float(timeout)
     return time.monotonic() - start_time
 
 
@@ -131,7 +136,7 @@ def check_reproduction(
     return code_match and grep_match
 
 
-def minimize_session(crash_dir: Path, target_python: str, force_overwrite: bool):
+def minimize_session(crash_dir: Path, target_python: str, force_overwrite: bool) -> None:
     """Main logic to minimize a session crash."""
     print(f"[*] Minimizing crash bundle: {crash_dir}")
 

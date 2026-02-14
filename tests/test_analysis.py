@@ -1,5 +1,5 @@
 import unittest
-from lafleur.analysis import CrashFingerprinter, CrashType
+from lafleur.analysis import CrashFingerprinter, CrashSignature, CrashType
 
 
 class TestCrashFingerprinter(unittest.TestCase):
@@ -14,7 +14,7 @@ class TestCrashFingerprinter(unittest.TestCase):
         ...
         """
         sig = self.fingerprinter.analyze(-6, log)
-        self.assertEqual(sig.type, "ASAN")
+        self.assertEqual(sig.category, "ASAN")
         self.assertEqual(sig.crash_type, CrashType.ASAN_VIOLATION)
         self.assertEqual(sig.fingerprint, "ASAN:heap-use-after-free:unknown")
 
@@ -28,7 +28,7 @@ class TestCrashFingerprinter(unittest.TestCase):
 SUMMARY: AddressSanitizer: heap-use-after-free /home/danzin/projects/jit_cpython/Python/ceval.c:1483:33 in stop_tracing_and_jit
         """
         sig = self.fingerprinter.analyze(-6, log)
-        self.assertEqual(sig.type, "ASAN")
+        self.assertEqual(sig.category, "ASAN")
         # Ensure we stripped the path and found the function
         self.assertEqual(sig.fingerprint, "ASAN:heap-use-after-free:stop_tracing_and_jit")
 
@@ -53,7 +53,7 @@ SUMMARY: AddressSanitizer: heap-buffer-overflow
         Aborted (core dumped)
         """
         sig = self.fingerprinter.analyze(-6, log)
-        self.assertEqual(sig.type, "ASSERT")
+        self.assertEqual(sig.category, "ASSERT")
         self.assertEqual(sig.crash_type, CrashType.C_ASSERTION)
         # Should capture filename, line, and message
         self.assertEqual(sig.fingerprint, "ASSERT:pycore_optimizer.c:452:ctx->valid")
@@ -66,7 +66,7 @@ SUMMARY: AddressSanitizer: heap-buffer-overflow
     def test_python_panic(self):
         log = "Fatal Python error: This is a panic message\n..."
         sig = self.fingerprinter.analyze(-6, log)
-        self.assertEqual(sig.type, "PANIC")
+        self.assertEqual(sig.category, "PANIC")
         self.assertEqual(sig.crash_type, CrashType.PYTHON_PANIC)
         self.assertEqual(sig.fingerprint, "PANIC:This is a panic message")
 
@@ -74,13 +74,13 @@ SUMMARY: AddressSanitizer: heap-buffer-overflow
         log = "Just died silently"
         # SIGSEGV is usually 11, so returncode -11
         sig = self.fingerprinter.analyze(-11, log)
-        self.assertEqual(sig.type, "SEGV")
+        self.assertEqual(sig.category, "SEGV")
         self.assertEqual(sig.crash_type, CrashType.RAW_SEGFAULT)
         self.assertEqual(sig.fingerprint, "SIGNAL:SIGSEGV")
 
     def test_unknown_signal(self):
         sig = self.fingerprinter.analyze(-99, "die")
-        self.assertEqual(sig.type, "SIGNAL")
+        self.assertEqual(sig.category, "SIGNAL")
         self.assertEqual(sig.fingerprint, "SIGNAL:SIG_99")
 
     def test_uncaught_python_exception(self):
@@ -90,7 +90,7 @@ SUMMARY: AddressSanitizer: heap-buffer-overflow
         ValueError: bad value
         """
         sig = self.fingerprinter.analyze(1, log)
-        self.assertEqual(sig.type, "PYTHON")
+        self.assertEqual(sig.category, "PYTHON")
         self.assertEqual(sig.crash_type, CrashType.PYTHON_UNCAUGHT)
         self.assertEqual(sig.fingerprint, "PYTHON:ValueError")
 
@@ -98,8 +98,22 @@ SUMMARY: AddressSanitizer: heap-buffer-overflow
         # Exit code 1 but no traceback found -> UNKNOWN/EXIT:1
         log = "Some script output"
         sig = self.fingerprinter.analyze(1, log)
-        self.assertEqual(sig.type, "UNKNOWN")
+        self.assertEqual(sig.category, "UNKNOWN")
         self.assertEqual(sig.fingerprint, "EXIT:1")
+
+    def test_to_dict_has_type_key(self):
+        """Test that to_dict serializes 'category' as 'type' for backward compat."""
+        sig = CrashSignature(
+            category="ASAN",
+            crash_type=CrashType.ASAN_VIOLATION,
+            returncode=-6,
+            signal_name=None,
+            fingerprint="ASAN:heap-use-after-free:func",
+        )
+        d = sig.to_dict()
+        self.assertIn("type", d)
+        self.assertNotIn("category", d)
+        self.assertEqual(d["type"], "ASAN")
 
 
 if __name__ == "__main__":

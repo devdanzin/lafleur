@@ -452,84 +452,87 @@ class SideEffectInjector(ast.NodeTransformer):
         if not node.name.startswith("uop_harness"):
             return node
 
-        # Low probability of this complex and invasive mutation
-        if random.random() > 0.15:
-            return node
+        if random.random() < 0.15:  # 15% chance
+            # --- 1. Find potential targets in the function's AST ---
+            local_vars = {
+                n.id
+                for n in ast.walk(node)
+                if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Store)
+            }
+            # For simplicity, we'll just look for a local variable to target for now.
+            # A more advanced version could find instance and class attributes.
+            if not local_vars:
+                return node
 
-        # --- 1. Find potential targets in the function's AST ---
-        local_vars = {
-            n.id for n in ast.walk(node) if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Store)
-        }
-        # For simplicity, we'll just look for a local variable to target for now.
-        # A more advanced version could find instance and class attributes.
-        if not local_vars:
-            return node
+            print(
+                f"    -> Injecting __del__ side-effect pattern into '{node.name}'",
+                file=sys.stderr,
+            )
 
-        print(f"    -> Injecting __del__ side-effect pattern into '{node.name}'", file=sys.stderr)
+            # --- 2. Choose a target and a payload ---
+            prefix = f"{node.name}_{random.randint(1000, 9999)}"
+            target_var = random.choice(list(local_vars))
+            payload = random.choice(['"corrupted_by_del"', "None", "123.456"])
 
-        # --- 2. Choose a target and a payload ---
-        prefix = f"{node.name}_{random.randint(1000, 9999)}"
-        target_var = random.choice(list(local_vars))
-        payload = random.choice(['"corrupted_by_del"', "None", "123.456"])
+            # --- 3. Build the components of the scenario ---
 
-        # --- 3. Build the components of the scenario ---
+            # a) The FrameModifier class definition
+            fm_class_ast = self._get_frame_modifier_class_ast(prefix, target_var, payload)
 
-        # a) The FrameModifier class definition
-        fm_class_ast = self._get_frame_modifier_class_ast(prefix, target_var, payload)
+            # b) The instantiation of the FrameModifier
+            fm_instance_name = f"fm_{prefix}"
+            fm_instantiation_ast = ast.Assign(
+                targets=[ast.Name(id=fm_instance_name, ctx=ast.Store())],
+                value=ast.Call(
+                    func=ast.Name(id=fm_class_ast.name, ctx=ast.Load()), args=[], keywords=[]
+                ),
+            )
 
-        # b) The instantiation of the FrameModifier
-        fm_instance_name = f"fm_{prefix}"
-        fm_instantiation_ast = ast.Assign(
-            targets=[ast.Name(id=fm_instance_name, ctx=ast.Store())],
-            value=ast.Call(
-                func=ast.Name(id=fm_class_ast.name, ctx=ast.Load()), args=[], keywords=[]
-            ),
-        )
+            # c) The hot loop containing the attack
+            loop_var = f"i_{prefix}"
+            trigger_iteration = random.randint(300, 450)
 
-        # c) The hot loop containing the attack
-        loop_var = f"i_{prefix}"
-        trigger_iteration = random.randint(300, 450)
+            # Code to use the variable before corruption
+            use_before_str = f"_ = {target_var} * 2"
+            # Code to use the variable after corruption
+            use_after_str = f"_ = {target_var} * 2"
 
-        # Code to use the variable before corruption
-        use_before_str = f"_ = {target_var} * 2"
-        # Code to use the variable after corruption
-        use_after_str = f"_ = {target_var} * 2"
+            loop_body_template = dedent(f"""
+                # Use the variable to warm up the JIT
+                try:
+                    {use_before_str}
+                except Exception:
+                    pass
 
-        loop_body_template = dedent(f"""
-            # Use the variable to warm up the JIT
-            try:
-                {use_before_str}
-            except Exception:
-                pass
+                # The trigger
+                if {loop_var} == {trigger_iteration}:
+                    print('[{prefix}] Triggering __del__ side effect for {target_var}...', file=sys.stderr)
+                    del {fm_instance_name}
+                    # gc.collect() is not available here, but the del is often sufficient
 
-            # The trigger
-            if {loop_var} == {trigger_iteration}:
-                print('[{prefix}] Triggering __del__ side effect for {target_var}...', file=sys.stderr)
-                del {fm_instance_name}
-                # gc.collect() is not available here, but the del is often sufficient
+                # Use the variable again, potentially hitting a corrupted state
+                try:
+                    {use_after_str}
+                except TypeError:
+                    # If we get a TypeError, reset the variable so the loop can continue
+                    {target_var} = {loop_var}
+            """)
 
-            # Use the variable again, potentially hitting a corrupted state
-            try:
-                {use_after_str}
-            except TypeError:
-                # If we get a TypeError, reset the variable so the loop can continue
-                {target_var} = {loop_var}
-        """)
+            hot_loop_ast = ast.For(
+                target=ast.Name(id=loop_var, ctx=ast.Store()),
+                iter=ast.Call(
+                    func=ast.Name(id="range", ctx=ast.Load()),
+                    args=[ast.Constant(value=500)],
+                    keywords=[],
+                ),
+                body=ast.parse(loop_body_template).body,
+                orelse=[],
+            )
 
-        hot_loop_ast = ast.For(
-            target=ast.Name(id=loop_var, ctx=ast.Store()),
-            iter=ast.Call(
-                func=ast.Name(id="range", ctx=ast.Load()),
-                args=[ast.Constant(value=500)],
-                keywords=[],
-            ),
-            body=ast.parse(loop_body_template).body,
-            orelse=[],
-        )
+            # 4. Inject the entire scenario at the top of the function body
+            node.body = [fm_class_ast, fm_instantiation_ast, hot_loop_ast] + node.body
+            ast.fix_missing_locations(node)
 
-        # 4. Inject the entire scenario at the top of the function body
-        node.body = [fm_class_ast, fm_instantiation_ast, hot_loop_ast] + node.body
-        ast.fix_missing_locations(node)
         return node
 
 

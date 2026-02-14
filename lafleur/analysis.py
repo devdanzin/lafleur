@@ -17,14 +17,17 @@ class CrashType(str, Enum):
 
 @dataclass
 class CrashSignature:
-    type: str  # High-level category (ASAN, ASSERT, etc)
+    category: str  # High-level category (ASAN, ASSERT, etc)
     crash_type: CrashType  # Enum for programmatic handling
     returncode: int
     signal_name: Optional[str]
     fingerprint: str  # Unique string for minimization matching
 
     def to_dict(self) -> dict:
-        return asdict(self)
+        d = asdict(self)
+        # Backward compat: serialized metadata.json uses "type" key
+        d["type"] = d.pop("category")
+        return d
 
 
 class CrashFingerprinter:
@@ -146,7 +149,7 @@ class CrashFingerprinter:
             # Filter out uninteresting ASan errors (OOM, allocation failures)
             if error_type in self.ASAN_IGNORE_TYPES:
                 return CrashSignature(
-                    type="ASAN_IGNORED",
+                    category="ASAN_IGNORED",
                     crash_type=CrashType.IGNORE,
                     returncode=returncode,
                     signal_name=None,
@@ -165,7 +168,7 @@ class CrashFingerprinter:
                 fingerprint = f"ASAN:{error_type}:unknown"
 
             return CrashSignature(
-                type="ASAN",
+                category="ASAN",
                 crash_type=CrashType.ASAN_VIOLATION,
                 returncode=returncode,
                 signal_name=None,
@@ -186,7 +189,7 @@ class CrashFingerprinter:
                 fingerprint = f"ASSERT:{assert_text}"
 
             return CrashSignature(
-                type="ASSERT",
+                category="ASSERT",
                 crash_type=CrashType.C_ASSERTION,
                 returncode=returncode,
                 signal_name="SIGABRT" if returncode == -6 else None,
@@ -198,7 +201,7 @@ class CrashFingerprinter:
         if panic_match:
             panic_msg = panic_match.group(1).strip()
             return CrashSignature(
-                type="PANIC",
+                category="PANIC",
                 crash_type=CrashType.PYTHON_PANIC,
                 returncode=returncode,
                 signal_name=None,
@@ -212,7 +215,7 @@ class CrashFingerprinter:
             if exc_match:
                 exc_type = exc_match.group(1)
                 return CrashSignature(
-                    type="PYTHON",
+                    category="PYTHON",
                     crash_type=CrashType.PYTHON_UNCAUGHT,
                     returncode=1,
                     signal_name=None,
@@ -228,7 +231,7 @@ class CrashFingerprinter:
                 sig_name = f"SIG_{sig_val}"
 
             return CrashSignature(
-                type="SEGV" if sig_name == "SIGSEGV" else "SIGNAL",
+                category="SEGV" if sig_name == "SIGSEGV" else "SIGNAL",
                 crash_type=CrashType.RAW_SEGFAULT if sig_name == "SIGSEGV" else CrashType.UNKNOWN,
                 returncode=returncode,
                 signal_name=sig_name,
@@ -237,7 +240,7 @@ class CrashFingerprinter:
 
         # Fallback
         return CrashSignature(
-            type="UNKNOWN",
+            category="UNKNOWN",
             crash_type=CrashType.UNKNOWN,
             returncode=returncode,
             signal_name=None,

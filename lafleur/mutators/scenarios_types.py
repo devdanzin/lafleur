@@ -27,23 +27,34 @@ class TypeInstabilityInjector(ast.NodeTransformer):
     the resulting `TypeError` and allow the fuzzer to continue.
     """
 
-    def visit_For(self, node: ast.For) -> ast.For:
-        # First, visit children to process any nested loops.
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> ast.FunctionDef:
         self.generic_visit(node)
 
-        if random.random() > 0.1:
+        if not node.name.startswith("uop_harness"):
             return node
 
+        if random.random() < 0.1:
+            # Find for loops within this harness function's body
+            for_nodes = [stmt for stmt in ast.walk(node) if isinstance(stmt, ast.For)]
+            if for_nodes:
+                target_for = random.choice(for_nodes)
+                self._inject_type_instability(target_for)
+                ast.fix_missing_locations(node)
+
+        return node
+
+    def _inject_type_instability(self, node: ast.For) -> None:
+        """Inject type instability into a for loop's body."""
         # We need a loop variable to key the corruption off of.
         if not isinstance(node.target, ast.Name):
-            return node
+            return
 
         # Find a variable assigned to within the loop to be our target.
         assigned_vars = {
             n.id for n in ast.walk(node) if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Store)
         }
         if not assigned_vars:
-            return node  # No variables to corrupt.
+            return  # No variables to corrupt.
 
         target_var_name = random.choice(list(assigned_vars))
         loop_var_name = node.target.id
@@ -91,7 +102,6 @@ class TypeInstabilityInjector(ast.NodeTransformer):
         )
 
         node.body = [try_block]
-        return node
 
 
 class InlineCachePolluter(ast.NodeTransformer):

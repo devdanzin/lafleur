@@ -54,9 +54,9 @@ class TestTypeInstabilityInjector(unittest.TestCase):
                 mutated = mutator.visit(tree)
 
         # Should have wrapped loop body in try/except
-        func = mutated.body[0]
-        loop = func.body[0]
-        self.assertIsInstance(loop.body[0], ast.Try)
+        result = ast.unparse(mutated)
+        self.assertIn("try:", result)
+        self.assertIn("TypeError", result)
 
     def test_type_instability_with_no_loop_var(self):
         """Test TypeInstabilityInjector with tuple target."""
@@ -68,11 +68,46 @@ class TestTypeInstabilityInjector(unittest.TestCase):
         tree = ast.parse(code)
 
         with patch("random.random", return_value=0.05):
+            with patch("random.choice", side_effect=lambda x: x[0] if isinstance(x, list) else x):
+                mutator = TypeInstabilityInjector()
+                mutated = mutator.visit(tree)
+
+        # Tuple target should not be mutated
+        self.assertIsInstance(mutated, ast.Module)
+
+    def test_type_instability_skips_non_harness(self):
+        """Test TypeInstabilityInjector skips non-harness functions."""
+        code = dedent("""
+            def helper_function():
+                for i in range(10):
+                    x = i + 1
+        """)
+        tree = ast.parse(code)
+        original = ast.unparse(tree)
+
+        with patch("random.random", return_value=0.05):
             mutator = TypeInstabilityInjector()
             mutated = mutator.visit(tree)
 
-        # Should not crash, should return unchanged
-        self.assertIsInstance(mutated, ast.Module)
+        self.assertEqual(ast.unparse(mutated), original)
+
+    def test_type_instability_skips_warmup_loops(self):
+        """Test TypeInstabilityInjector selects from harness loops only."""
+        code = dedent("""
+            def uop_harness_test():
+                for i in range(10):
+                    x = i + 1
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.05):
+            with patch("random.choice", side_effect=lambda x: x[0] if isinstance(x, list) else x):
+                mutator = TypeInstabilityInjector()
+                mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        self.assertIn("try:", result)
+        self.assertIn("corrupted by type instability", result)
 
 
 class TestInlineCachePolluter(unittest.TestCase):

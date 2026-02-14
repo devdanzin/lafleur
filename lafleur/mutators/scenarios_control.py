@@ -570,10 +570,9 @@ class ContextManagerInjector(ast.NodeTransformer):
                     file=sys.stderr,
                 )
                 # Strategy A: contextlib.nullcontext()
-                # Ensure import
+                # Always insert import (AST nodes use identity comparison, not equality)
                 import_node = ast.Import(names=[ast.alias(name="contextlib")])
-                if import_node not in node.body:
-                    node.body.insert(0, import_node)
+                node.body.insert(0, import_node)
 
                 # Create with statement
                 context_expr = ast.Call(
@@ -596,10 +595,9 @@ class ContextManagerInjector(ast.NodeTransformer):
                     file=sys.stderr,
                 )
                 # Strategy B: open(os.devnull, 'w')
-                # Ensure import
+                # Always insert import (AST nodes use identity comparison, not equality)
                 import_node = ast.Import(names=[ast.alias(name="os")])
-                if import_node not in node.body:
-                    node.body.insert(0, import_node)
+                node.body.insert(0, import_node)
 
                 # Create with statement
                 context_expr = ast.Call(
@@ -685,15 +683,14 @@ class ContextManagerInjector(ast.NodeTransformer):
                 )
 
             # Replace the slice with the wrapped version
-            # Adjust start_idx if we inserted imports/class
+            # Adjust start_idx because we inserted exactly one node before the slice
             actual_start_idx = start_idx
             if strategy == "simple" or strategy == "resource":
-                actual_start_idx += 1  # Account for import
+                actual_start_idx += 1  # Account for import inserted at index 0
             elif strategy == "evil":
-                # Account for class definition
-                for i, stmt in enumerate(node.body[: start_idx + 1]):
-                    if isinstance(stmt, ast.ClassDef):
-                        actual_start_idx += 1
+                # Account for class inserted at insert_idx
+                if insert_idx <= start_idx:
+                    actual_start_idx += 1
 
             node.body[actual_start_idx : actual_start_idx + slice_size] = [with_node]
             ast.fix_missing_locations(node)

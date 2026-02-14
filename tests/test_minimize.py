@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 from lafleur.minimize import (
+    _make_repro_env,
     rename_harnesses,
     extract_grep_pattern,
     minimize_session,
@@ -369,6 +370,18 @@ class TestMinimizeEdgeCases(unittest.TestCase):
 
 class TestMinimizeHelperFunctions(unittest.TestCase):
     """Additional tests for helper functions."""
+
+    def test_repro_env_inherits_fuzzing_env(self):
+        """Test that _make_repro_env() includes FUZZING_ENV keys."""
+        env = _make_repro_env()
+        self.assertEqual(env["PYTHON_JIT"], "1")
+        self.assertEqual(env["ASAN_OPTIONS"], "detect_leaks=0")
+
+    def test_repro_env_disables_logging(self):
+        """Test that _make_repro_env() disables verbose logging."""
+        env = _make_repro_env()
+        self.assertEqual(env["PYTHON_LLTRACE"], "0")
+        self.assertEqual(env["PYTHON_OPT_DEBUG"], "0")
 
     def test_extract_grep_pattern_empty_fingerprint(self):
         """Test grep pattern extraction with empty fingerprint."""

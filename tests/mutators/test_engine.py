@@ -149,6 +149,21 @@ class TestASTMutator(unittest.TestCase):
         self.assertIsInstance(result, str)
         self.assertNotIn("# AST unparsing failed", result)
 
+    def test_mutate_unparse_error_comments_all_lines(self):
+        """Test that AttributeError fallback comments every line of multi-line input."""
+        code = "x = 1\ny = 2\nz = 3"
+        mutator = ASTMutator()
+
+        with patch("ast.unparse", side_effect=AttributeError("bad node")):
+            result = mutator.mutate(code, seed=42)
+
+        self.assertIn("# AST unparsing failed", result)
+        lines = result.splitlines()
+        for line in lines:
+            self.assertTrue(line.startswith("#"), f"Uncommented line: {line!r}")
+        # Should have header + 3 original lines
+        self.assertEqual(len(lines), 4)
+
     def test_mutate_complex_code_structure(self):
         """Test mutating complex code with multiple constructs."""
         code = dedent("""

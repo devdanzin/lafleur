@@ -1943,20 +1943,24 @@ class TestBasicMutators(unittest.TestCase):
             self.assertLess(count, 400, f"{kind} too frequent: {count}/1000")
 
     def test_variable_swapper(self):
-        """Test VariableSwapper mutator."""
+        """Test VariableSwapper mutator swaps inside harness function."""
         code = dedent("""
-            x = 1
-            y = 2
-            z = x + y
+            def uop_harness_test():
+                x = 1
+                y = 2
+                z = x + y
         """)
         tree = ast.parse(code)
 
-        mutator = VariableSwapper()
-        mutated = mutator.visit(tree)
+        with patch("random.sample", return_value=["x", "y"]):
+            mutator = VariableSwapper()
+            mutated = mutator.visit(tree)
 
-        # Check that some swapping occurred
-        # Due to randomness, we can't predict exact swaps
+        result = ast.unparse(mutated)
         self.assertIsInstance(mutated, ast.Module)
+        # x and y should be swapped in usage
+        self.assertIn("y = 1", result)
+        self.assertIn("x = 2", result)
 
     def test_variable_swapper_swaps_two_vars(self):
         """Test that VariableSwapper actually swaps two variables."""
@@ -1989,7 +1993,7 @@ class TestBasicMutators(unittest.TestCase):
         self.assertIsInstance(mutated, ast.Module)
 
     def test_variable_swapper_protected_names(self):
-        """Test VariableSwapper doesn't swap protected names."""
+        """Test VariableSwapper doesn't swap module-level code outside harness."""
         code = dedent("""
             print(len([1, 2, 3]))
             x = 1
@@ -2000,10 +2004,12 @@ class TestBasicMutators(unittest.TestCase):
         mutator = VariableSwapper()
         mutated = mutator.visit(tree)
 
-        # print and len should not be swapped
+        # Module-level code should be completely untouched (no harness function)
         call = mutated.body[0].value
         self.assertEqual(call.func.id, "print")
         self.assertEqual(call.args[0].func.id, "len")
+        self.assertEqual(mutated.body[1].targets[0].id, "x")
+        self.assertEqual(mutated.body[2].targets[0].id, "y")
 
     def test_statement_duplicator(self):
         """Test StatementDuplicator mutator."""
@@ -2089,16 +2095,46 @@ class TestBasicMutators(unittest.TestCase):
         self.assertIsInstance(result, ast.Module)
 
     def test_variable_swapper_single_var(self):
-        """Test VariableSwapper with only one variable."""
-        code = "x = 1"
+        """Test VariableSwapper with only one variable in harness."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
         tree = ast.parse(code)
 
         mutator = VariableSwapper()
         mutated = mutator.visit(tree)
 
-        # Should handle gracefully without swapping
+        # Only one variable — no swap possible
         self.assertIsInstance(mutated, ast.Module)
-        self.assertEqual(mutated.body[0].targets[0].id, "x")
+        func = mutated.body[0]
+        self.assertEqual(func.body[0].targets[0].id, "x")
+
+    def test_variable_swapper_no_cross_scope_swap(self):
+        """Test VariableSwapper doesn't swap names across function scopes."""
+        code = dedent("""
+            def helper():
+                b = 99
+
+            def uop_harness_test():
+                a = 1
+                c = a + 1
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.sample", return_value=["a", "c"]):
+            mutator = VariableSwapper()
+            mutated = mutator.visit(tree)
+
+        # helper() should be completely untouched
+        helper_func = mutated.body[0]
+        self.assertEqual(helper_func.body[0].targets[0].id, "b")
+
+        # harness should have a<->c swap applied
+        harness_func = mutated.body[1]
+        result = ast.unparse(harness_func)
+        self.assertIn("c = 1", result)
+        self.assertIn("a = c + 1", result)
 
     def test_for_loop_injector_with_del(self):
         """Test ForLoopInjector doesn't wrap del statements."""

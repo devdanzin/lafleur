@@ -14,6 +14,7 @@ import argparse
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -268,6 +269,8 @@ def minimize_session(crash_dir: Path, target_python: str, force_overwrite: bool)
         repro_parts.extend([s.name for s in necessary_scripts])
         repro_cmd_display = " ".join(repro_parts)
 
+    safe_pattern = shlex.quote(grep_pattern) if grep_pattern else "''"
+
     check_script_content = f"""#!/bin/bash
 export PYTHON_JIT=1
 export PYTHON_LLTRACE=0
@@ -283,8 +286,9 @@ if [ {metadata.get("returncode")} -ne 0 ] && [ $EXIT_CODE -eq 0 ]; then
     exit 1
 fi
 
-# Verify Grep Pattern
-if [[ "$OUTPUT" != *"{grep_pattern}"* ]]; then
+# Verify Grep Pattern (fixed-string match, safely quoted)
+GREP_PATTERN={safe_pattern}
+if [ -n "$GREP_PATTERN" ] && ! echo "$OUTPUT" | grep -qF "$GREP_PATTERN"; then
     exit 1
 fi
 

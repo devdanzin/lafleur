@@ -1,3 +1,4 @@
+import subprocess
 import unittest
 import shutil
 import tempfile
@@ -343,6 +344,96 @@ class TestMinimizeHelperFunctions(unittest.TestCase):
         meta = {}
         pattern = extract_grep_pattern(meta)
         self.assertEqual(pattern, "")
+
+
+class TestCheckCrashShEscaping(unittest.TestCase):
+    """Tests for shell escaping in generated check_crash.sh."""
+
+    def setUp(self):
+        self.temp_dir = Path(tempfile.mkdtemp())
+        self.crash_dir = self.temp_dir / "crash_escape"
+        self.crash_dir.mkdir()
+
+    def tearDown(self):
+        shutil.rmtree(self.temp_dir)
+
+    @patch("lafleur.minimize.run_session")
+    @patch("lafleur.minimize.shutil.which")
+    @patch("lafleur.minimize.subprocess.run")
+    def test_check_crash_sh_escapes_special_chars(
+        self, mock_subprocess_run, mock_which, mock_run_session
+    ):
+        """Test that shell metacharacters in grep pattern are safely escaped."""
+        # Fingerprint with shell metacharacters in assertion text
+        (self.crash_dir / "metadata.json").write_text(
+            json.dumps(
+                {
+                    "returncode": -6,
+                    "fingerprint": "ASSERT:file.c:100:ctx->val$(id)`rm -rf`",
+                    "type": "ASSERT",
+                }
+            )
+        )
+        (self.crash_dir / "script.py").write_text("print('test')")
+
+        mock_which.return_value = "/usr/bin/shrinkray"
+        mock_run_session.return_value = (-6, "", "ctx->val$(id)`rm -rf`")
+        mock_subprocess_run.return_value = MagicMock(returncode=0)
+
+        from io import StringIO
+
+        with patch("sys.stdout", StringIO()):
+            minimize_session(self.crash_dir, target_python="python3", force_overwrite=True)
+
+        check_script = self.crash_dir / "check_crash.sh"
+        self.assertTrue(check_script.exists())
+        content = check_script.read_text()
+
+        # Should use grep -qF (fixed-string match)
+        self.assertIn("grep -qF", content)
+        # Should NOT have unescaped [[ ]] glob matching
+        self.assertNotIn('[[ "$OUTPUT"', content)
+        # The pattern should be quoted by shlex.quote
+        self.assertIn("GREP_PATTERN=", content)
+
+        # Verify the script is valid bash syntax
+        result = subprocess.run(["bash", "-n", str(check_script)], capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, f"Bash syntax error: {result.stderr}")
+
+    @patch("lafleur.minimize.run_session")
+    @patch("lafleur.minimize.shutil.which")
+    @patch("lafleur.minimize.subprocess.run")
+    def test_check_crash_sh_empty_pattern(self, mock_subprocess_run, mock_which, mock_run_session):
+        """Test that empty grep pattern generates valid script with guard."""
+        (self.crash_dir / "metadata.json").write_text(
+            json.dumps(
+                {
+                    "returncode": -11,
+                    "fingerprint": "UNKNOWN:something",
+                    "type": "UNKNOWN",
+                }
+            )
+        )
+        (self.crash_dir / "script.py").write_text("print('test')")
+
+        mock_which.return_value = "/usr/bin/shrinkray"
+        mock_run_session.return_value = (-11, "", "")
+        mock_subprocess_run.return_value = MagicMock(returncode=0)
+
+        from io import StringIO
+
+        with patch("sys.stdout", StringIO()):
+            minimize_session(self.crash_dir, target_python="python3", force_overwrite=True)
+
+        check_script = self.crash_dir / "check_crash.sh"
+        content = check_script.read_text()
+
+        # Empty pattern should be safely handled
+        self.assertIn('[ -n "$GREP_PATTERN" ]', content)
+
+        # Script should be valid bash
+        result = subprocess.run(["bash", "-n", str(check_script)], capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, f"Bash syntax error: {result.stderr}")
 
 
 if __name__ == "__main__":

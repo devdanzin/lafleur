@@ -968,6 +968,7 @@ class PatternMatchingChaosMutator(ast.NodeTransformer):
     def __init__(self) -> None:
         super().__init__()
         self.helper_injected = False
+        self._inside_harness = False
 
     def _create_chaos_match_class(self) -> list[ast.stmt]:
         """Create the _JitMatchChaos helper class with dynamic __match_args__."""
@@ -1198,6 +1199,9 @@ class PatternMatchingChaosMutator(ast.NodeTransformer):
         """Convert isinstance checks to match statements."""
         self.generic_visit(node)
 
+        if not self._inside_harness:
+            return node
+
         # Check if this is an isinstance check we can convert
         if random.random() < 0.15 and self._is_isinstance_check(node.test):
             converted = self._convert_isinstance_to_match(node)
@@ -1286,6 +1290,9 @@ class PatternMatchingChaosMutator(ast.NodeTransformer):
         """Convert simple for loops with tuple unpacking to match-based iteration."""
         self.generic_visit(node)
 
+        if not self._inside_harness:
+            return node
+
         # Only convert tuple unpacking: for x, y in items
         if random.random() < 0.1 and isinstance(node.target, ast.Tuple):
             converted = self._convert_for_to_match(node)
@@ -1344,9 +1351,14 @@ class PatternMatchingChaosMutator(ast.NodeTransformer):
 
     def visit_FunctionDef(self, node: ast.FunctionDef) -> ast.FunctionDef:
         """Inject chaotic match scenarios into harness functions."""
+        is_harness = node.name.startswith("uop_harness")
+        if is_harness:
+            self._inside_harness = True
         self.generic_visit(node)
+        if is_harness:
+            self._inside_harness = False
 
-        if not node.name.startswith("uop_harness"):
+        if not is_harness:
             return node
 
         if random.random() < 0.15:  # 15% chance

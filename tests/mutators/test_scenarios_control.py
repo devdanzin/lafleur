@@ -1554,7 +1554,7 @@ class TestPatternMatchingChaosMutator(unittest.TestCase):
     def test_converts_isinstance_check_to_match(self):
         """Test that isinstance checks are converted to match statements."""
         code = dedent("""
-            def test_func():
+            def uop_harness_test():
                 if isinstance(x, int):
                     y = 1
                 else:
@@ -1563,7 +1563,8 @@ class TestPatternMatchingChaosMutator(unittest.TestCase):
         tree = ast.parse(code)
 
         # Force isinstance conversion
-        with patch("random.random", side_effect=[0.9, 0.1]):  # Skip module, convert if
+        # Skip module, convert if, skip harness injection
+        with patch("random.random", side_effect=[0.9, 0.1, 0.9]):
             mutator = PatternMatchingChaosMutator()
             mutated = mutator.visit(tree)
 
@@ -1575,14 +1576,15 @@ class TestPatternMatchingChaosMutator(unittest.TestCase):
     def test_converts_isinstance_tuple_to_match_or(self):
         """Test that isinstance(x, (int, str)) converts to case int() | str()."""
         code = dedent("""
-            def test_func():
+            def uop_harness_test():
                 if isinstance(x, (int, str)):
                     y = 1
         """)
         tree = ast.parse(code)
 
         # Force isinstance conversion
-        with patch("random.random", side_effect=[0.9, 0.1]):
+        # Skip module, convert if, skip harness injection
+        with patch("random.random", side_effect=[0.9, 0.1, 0.9]):
             mutator = PatternMatchingChaosMutator()
             mutated = mutator.visit(tree)
 
@@ -1595,14 +1597,15 @@ class TestPatternMatchingChaosMutator(unittest.TestCase):
     def test_converts_for_loop_unpacking_to_match(self):
         """Test that for loops with tuple unpacking are converted to match."""
         code = dedent("""
-            def test_func():
+            def uop_harness_test():
                 for x, y in items:
                     z = x + y
         """)
         tree = ast.parse(code)
 
         # Force for loop conversion
-        with patch("random.random", side_effect=[0.9, 0.05]):  # Skip module, convert for
+        # Skip module, convert for, skip harness injection
+        with patch("random.random", side_effect=[0.9, 0.05, 0.9]):
             mutator = PatternMatchingChaosMutator()
             mutated = mutator.visit(tree)
 
@@ -1834,6 +1837,65 @@ class TestPatternMatchingChaosMutator(unittest.TestCase):
         self.assertIn("def __iter__(self):", result)
         self.assertIn("raise TypeError", result)
         self.assertIn("extra_chaos", result)
+
+    def test_visit_if_skips_non_harness_isinstance(self):
+        """Test that visit_If does not convert isinstance outside harness functions."""
+        code = dedent("""
+            def helper_func():
+                if isinstance(x, int):
+                    y = 1
+                else:
+                    y = 2
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", side_effect=[0.9, 0.1]):  # Skip module, would convert if
+            mutator = PatternMatchingChaosMutator()
+            mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should NOT have match statement — not inside harness
+        self.assertNotIn("match x:", result)
+        self.assertIn("isinstance(x, int)", result)
+
+    def test_visit_for_skips_non_harness_unpacking(self):
+        """Test that visit_For does not convert for loops outside harness functions."""
+        code = dedent("""
+            def helper_func():
+                for x, y in items:
+                    z = x + y
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", side_effect=[0.9, 0.05]):  # Skip module, would convert for
+            mutator = PatternMatchingChaosMutator()
+            mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should NOT have match-based iteration — not inside harness
+        self.assertNotIn("_match_item", result)
+        self.assertIn("for x, y in items:", result)
+
+    def test_visit_if_converts_inside_harness(self):
+        """Test that visit_If converts isinstance checks inside harness functions."""
+        code = dedent("""
+            def uop_harness_test():
+                if isinstance(x, int):
+                    y = 1
+                else:
+                    y = 2
+        """)
+        tree = ast.parse(code)
+
+        # Skip module injection, force isinstance conversion, skip harness injection
+        with patch("random.random", side_effect=[0.9, 0.1, 0.9]):
+            mutator = PatternMatchingChaosMutator()
+            mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should have match statement — inside harness
+        self.assertIn("match x:", result)
+        self.assertIn("case int():", result)
 
 
 if __name__ == "__main__":

@@ -368,9 +368,10 @@ class ContainerChanger(ast.NodeTransformer):
     """Change container types, e.g., from a list to a tuple or set."""
 
     def visit_List(self, node: ast.List) -> ast.expr:
-        if random.random() < 0.5:
+        roll = random.random()
+        if roll < 0.33:
             return ast.Set(elts=node.elts)
-        elif random.random() < 0.5:
+        elif roll < 0.66:
             return ast.Tuple(elts=node.elts, ctx=node.ctx)
         return node
 

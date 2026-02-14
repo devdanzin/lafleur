@@ -1911,6 +1911,36 @@ class TestBasicMutators(unittest.TestCase):
         comp = mutated.body[0].value
         self.assertIsInstance(comp, ast.SetComp)
 
+    def test_container_changer_list_to_tuple(self):
+        """Test ContainerChanger converting list to tuple."""
+        code = "x = [1, 2, 3]"
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.5):  # Between 0.33 and 0.66
+            mutator = ContainerChanger()
+            mutated = mutator.visit(tree)
+
+        container = mutated.body[0].value
+        self.assertIsInstance(container, ast.Tuple)
+
+    def test_container_changer_equal_distribution(self):
+        """Test that list/set/tuple outcomes are roughly equally distributed."""
+        code = "x = [1, 2, 3]"
+        counts = {"Set": 0, "Tuple": 0, "List": 0}
+
+        for seed in range(1000):
+            tree = ast.parse(code)
+            random.seed(seed)
+            mutator = ContainerChanger()
+            mutated = mutator.visit(tree)
+            node_type = type(mutated.body[0].value).__name__
+            counts[node_type] += 1
+
+        # Each should be roughly 33% (allow 25-40% range)
+        for kind, count in counts.items():
+            self.assertGreater(count, 250, f"{kind} too rare: {count}/1000")
+            self.assertLess(count, 400, f"{kind} too frequent: {count}/1000")
+
     def test_variable_swapper(self):
         """Test VariableSwapper mutator."""
         code = dedent("""

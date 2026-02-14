@@ -1467,6 +1467,72 @@ class TestRareEventStressTester(unittest.TestCase):
                 reparsed = ast.parse(result)
                 self.assertIsInstance(reparsed, ast.Module)
 
+    def test_combination_attack_cleans_up_trace(self):
+        """Test that combination attacks with set_eval_frame include trace cleanup."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", side_effect=[0.05, 0.5]):
+            with patch("random.choice", return_value=["set_eval_frame", "func_modification"]):
+                with patch("random.randint", return_value=3333):
+                    mutator = RareEventStressTester()
+                    mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should have trace cleanup
+        self.assertIn("sys.settrace(None)", result)
+        # The settrace(None) for cleanup should appear AFTER the event triggers
+        trigger_idx = result.index("Triggering set_eval_frame")
+        cleanup_idx = result.rindex("settrace(None)")
+        self.assertGreater(cleanup_idx, trigger_idx)
+
+    def test_combination_attack_cleans_up_builtins(self):
+        """Test that combination attacks with builtin_dict include builtins cleanup."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", side_effect=[0.05, 0.5]):
+            with patch("random.choice", return_value=["set_class", "builtin_dict"]):
+                with patch("random.randint", return_value=4444):
+                    mutator = RareEventStressTester()
+                    mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should have builtins cleanup
+        self.assertIn("RARE_TEST_rarestress_4444", result)
+        # Should have cleanup loop that removes injected keys
+        self.assertIn("_cleanup_key_rarestress_4444", result)
+        # Verify code is valid
+        ast.parse(result)
+
+    def test_combination_no_unnecessary_cleanup(self):
+        """Test that combinations without persistent events skip cleanup."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", side_effect=[0.05, 0.5]):
+            with patch("random.choice", return_value=["set_class", "set_bases"]):
+                with patch("random.randint", return_value=5555):
+                    mutator = RareEventStressTester()
+                    mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should NOT have trace or builtins cleanup
+        self.assertNotIn("_cleanup_key_", result)
+        # settrace(None) should not appear as a cleanup step
+        # (it may appear inside event code, but not as a standalone cleanup)
+        # Verify code is valid
+        ast.parse(result)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

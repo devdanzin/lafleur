@@ -1021,6 +1021,27 @@ class RareEventStressTester(ast.NodeTransformer):
                 pass
                 """)
 
+        # Phase 3.5: Cleanup persistent state
+        if "set_eval_frame" in events:
+            attack_code += dedent("""
+            # Cleanup: Remove any installed trace functions
+            try:
+                sys.settrace(None)
+            except Exception:
+                pass
+            """)
+
+        if "builtin_dict" in events:
+            attack_code += dedent(f"""
+            # Cleanup: Remove any injected builtin keys
+            try:
+                for _cleanup_key_{prefix} in list(builtins.__dict__.keys()):
+                    if _cleanup_key_{prefix}.startswith('RARE_TEST_{prefix}'):
+                        del builtins.__dict__[_cleanup_key_{prefix}]
+            except Exception:
+                pass
+            """)
+
         # Add final verification
         attack_code += dedent(f"""
             # Phase 4: Verification - use objects after rare events

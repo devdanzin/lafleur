@@ -61,7 +61,13 @@ for i_hash in range(100):
 
 
 def _create_pow_attack(prefix: str) -> list[ast.stmt]:
-    """Generate calls to pow() with tricky arguments."""
+    """Generate calls to pow() with tricky arguments.
+
+    Note: The prefix parameter is accepted but unused because this attack
+    generates only bare pow() calls with no variables or classes that need
+    namespacing. The parameter is kept to maintain a uniform Callable[[str],
+    list[ast.stmt]] interface with _create_len_attack and _create_hash_attack.
+    """
     attack_code = dedent("""
         # pow() attack injected by fuzzer
         try:

@@ -312,37 +312,38 @@ class GuardExhaustionGenerator(ast.NodeTransformer):
             return node
 
         if random.random() < 0.1:  # Low probability of injecting
+            prefix = f"ge_{random.randint(1000, 9999)}"
             print(f"    -> Injecting guard exhaustion pattern into '{node.name}'", file=sys.stderr)
 
             # 1. Create the setup code as an AST
-            setup_code = dedent("""
-                poly_list = [1, "a", 3.0, [], (), {}, True, b'bytes']
+            setup_code = dedent(f"""
+                poly_list_{prefix} = [1, "a", 3.0, [], (), {{}}, True, b'bytes']
             """)
             setup_ast = ast.parse(setup_code).body
 
             # 2. Create the loop with the isinstance chain
-            isinstance_chain = dedent("""
-                x = poly_list[i % len(poly_list)]
-                if isinstance(x, int):
-                    y = 1
-                elif isinstance(x, str):
-                    y = 2
-                elif isinstance(x, float):
-                    y = 3
-                elif isinstance(x, list):
-                    y = 4
-                elif isinstance(x, tuple):
-                    y = 5
-                elif isinstance(x, dict):
-                    y = 6
-                elif isinstance(x, bool):
-                    y = 7
+            isinstance_chain = dedent(f"""
+                x_{prefix} = poly_list_{prefix}[i_{prefix} % len(poly_list_{prefix})]
+                if isinstance(x_{prefix}, int):
+                    y_{prefix} = 1
+                elif isinstance(x_{prefix}, str):
+                    y_{prefix} = 2
+                elif isinstance(x_{prefix}, float):
+                    y_{prefix} = 3
+                elif isinstance(x_{prefix}, list):
+                    y_{prefix} = 4
+                elif isinstance(x_{prefix}, tuple):
+                    y_{prefix} = 5
+                elif isinstance(x_{prefix}, dict):
+                    y_{prefix} = 6
+                elif isinstance(x_{prefix}, bool):
+                    y_{prefix} = 7
                 else:
-                    y = 8
+                    y_{prefix} = 8
             """)
 
             loop_node = ast.For(
-                target=ast.Name(id="i", ctx=ast.Store()),
+                target=ast.Name(id=f"i_{prefix}", ctx=ast.Store()),
                 iter=ast.Call(
                     func=ast.Name(id="range", ctx=ast.Load()),
                     args=[ast.Constant(value=500)],
@@ -354,6 +355,7 @@ class GuardExhaustionGenerator(ast.NodeTransformer):
 
             # 3. Prepend the setup and the loop to the function's body
             node.body = setup_ast + [loop_node] + node.body
+            ast.fix_missing_locations(node)
 
         return node
 

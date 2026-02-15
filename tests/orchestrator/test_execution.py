@@ -400,56 +400,57 @@ class TestHandleTimeout(unittest.TestCase):
         child_log = Path("/tmp/child.log")
         parent = Path("/tmp/parent.py")
 
-        mock_log = MagicMock()
-        mock_log.exists.return_value = True
+        processed_log = Path("/tmp/child_processed.log")
 
-        with patch.object(self.artifact_manager, "process_log_file", return_value=mock_log):
-            with patch("shutil.copy") as mock_copy:
-                with patch("sys.stderr", new_callable=io.StringIO):
-                    self.artifact_manager.handle_timeout(child_source, child_log, parent)
+        with patch.object(self.artifact_manager, "process_log_file", return_value=processed_log):
+            with patch("pathlib.Path.exists", return_value=True):
+                with patch("pathlib.Path.unlink"):
+                    with patch("shutil.copy") as mock_copy:
+                        with patch("sys.stderr", new_callable=io.StringIO):
+                            self.artifact_manager.handle_timeout(child_source, child_log, parent)
 
-            # Should copy both source and log
-            self.assertEqual(mock_copy.call_count, 2)
+                    # Should copy both source and log
+                    self.assertEqual(mock_copy.call_count, 2)
 
     def test_handles_truncated_log_extension(self):
         """Test that truncated log extension is preserved."""
         child_source = Path("/tmp/child_12345.py")
         child_log = Path("/tmp/child.log")
 
-        mock_log = MagicMock()
-        mock_log.name = "child_truncated.log"
-        mock_log.exists.return_value = True
+        truncated_log = Path("/tmp/child_truncated.log")
 
         parent = Path("/tmp/parent.py")
 
-        with patch.object(self.artifact_manager, "process_log_file", return_value=mock_log):
-            with patch("shutil.copy") as mock_copy:
-                with patch("sys.stderr", new_callable=io.StringIO):
-                    self.artifact_manager.handle_timeout(child_source, child_log, parent)
+        with patch.object(self.artifact_manager, "process_log_file", return_value=truncated_log):
+            with patch("pathlib.Path.exists", return_value=True):
+                with patch("pathlib.Path.unlink"):
+                    with patch("shutil.copy") as mock_copy:
+                        with patch("sys.stderr", new_callable=io.StringIO):
+                            self.artifact_manager.handle_timeout(child_source, child_log, parent)
 
-            # Check that the destination log path has _truncated
-            log_dest = mock_copy.call_args_list[1][0][1]
-            self.assertIn("_truncated", str(log_dest))
+                    # Check that the destination log path has _truncated
+                    log_dest = mock_copy.call_args_list[1][0][1]
+                    self.assertIn("_truncated", str(log_dest))
 
     def test_handles_compressed_log_extension(self):
         """Test that compressed log extension is preserved."""
         child_source = Path("/tmp/child_12345.py")
         child_log = Path("/tmp/child.log")
 
-        mock_log = MagicMock()
-        mock_log.name = "child.log.zst"
-        mock_log.exists.return_value = True
+        compressed_log = Path("/tmp/child.log.zst")
 
         parent = Path("/tmp/parent.py")
 
-        with patch.object(self.artifact_manager, "process_log_file", return_value=mock_log):
-            with patch("shutil.copy") as mock_copy:
-                with patch("sys.stderr", new_callable=io.StringIO):
-                    self.artifact_manager.handle_timeout(child_source, child_log, parent)
+        with patch.object(self.artifact_manager, "process_log_file", return_value=compressed_log):
+            with patch("pathlib.Path.exists", return_value=True):
+                with patch("pathlib.Path.unlink"):
+                    with patch("shutil.copy") as mock_copy:
+                        with patch("sys.stderr", new_callable=io.StringIO):
+                            self.artifact_manager.handle_timeout(child_source, child_log, parent)
 
-            # Check that the destination log path has .log.zst
-            log_dest = mock_copy.call_args_list[1][0][1]
-            self.assertTrue(str(log_dest).endswith(".log.zst"))
+                    # Check that the destination log path has .log.zst
+                    log_dest = mock_copy.call_args_list[1][0][1]
+                    self.assertTrue(str(log_dest).endswith(".log.zst"))
 
     def test_logs_timeout_detection(self):
         """Test that timeout detection is logged."""
@@ -1013,22 +1014,27 @@ class TestSoloSessionProbability(unittest.TestCase):
         solo_session_files = [self.source_path]
 
         with patch.object(artifact_mgr, "process_log_file", return_value=self.log_path):
-            with patch.object(artifact_mgr, "save_session_crash") as mock_save:
-                with patch("sys.stderr", new_callable=io.StringIO):
-                    # Simulate a SIGSEGV crash with session_files=[child_only]
-                    artifact_mgr.check_for_crash(
-                        return_code=-11,
-                        log_content="Fatal Python error: Segmentation fault",
-                        source_path=self.source_path,
-                        log_path=self.log_path,
-                        parent_path=self.parent_path,
-                        session_files=solo_session_files,
-                    )
+            with patch.object(
+                artifact_mgr,
+                "save_session_crash",
+                return_value=Path("/tmp/crashes/session_crash_123"),
+            ) as mock_save:
+                with patch("shutil.copy"):
+                    with patch("sys.stderr", new_callable=io.StringIO):
+                        # Simulate a SIGSEGV crash with session_files=[child_only]
+                        artifact_mgr.check_for_crash(
+                            return_code=-11,
+                            log_content="Fatal Python error: Segmentation fault",
+                            source_path=self.source_path,
+                            log_path=self.log_path,
+                            parent_path=self.parent_path,
+                            session_files=solo_session_files,
+                        )
 
-                # save_session_crash should be called with only the child script
-                mock_save.assert_called_once()
-                scripts_arg = mock_save.call_args[0][0]
-                self.assertEqual(scripts_arg, [self.source_path])
+                    # save_session_crash should be called with only the child script
+                    mock_save.assert_called_once()
+                    scripts_arg = mock_save.call_args[0][0]
+                    self.assertEqual(scripts_arg, [self.source_path])
 
     def test_solo_session_with_session_fuzz_disabled(self):
         """SOLO_SESSION_PROBABILITY has no effect when session_fuzz=False."""

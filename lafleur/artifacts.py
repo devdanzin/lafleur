@@ -113,7 +113,7 @@ class ArtifactManager:
     def _safe_copy(
         self, src: Path, dst: Path, label: str, *, preserve_metadata: bool = False
     ) -> bool:
-        """Copy a file, logging on IOError instead of crashing.
+        """Copy a file, logging on OSError instead of crashing.
 
         Args:
             src: Source path.
@@ -124,13 +124,30 @@ class ArtifactManager:
         Returns:
             True if the copy succeeded, False otherwise.
         """
+        # Validate arguments — a MagicMock or other non-path reaching here
+        # can cause catastrophic fd corruption (see: MagicMock.__index__ == 1).
+        if not isinstance(src, (str, Path)):
+            print(  # type: ignore[unreachable]
+                f"  [!] BUG: _safe_copy called with invalid src type "
+                f"{type(src).__name__} for {label}. Skipping.",
+                file=sys.stderr,
+            )
+            return False
+        if not isinstance(dst, (str, Path)):
+            print(  # type: ignore[unreachable]
+                f"  [!] BUG: _safe_copy called with invalid dst type "
+                f"{type(dst).__name__} for {label}. Skipping.",
+                file=sys.stderr,
+            )
+            return False
+
         try:
             if preserve_metadata:
                 shutil.copy2(src, dst)
             else:
                 shutil.copy(src, dst)
             return True
-        except IOError as e:
+        except OSError as e:
             print(f"  [!] CRITICAL: Could not save {label}: {e}", file=sys.stderr)
             return False
 

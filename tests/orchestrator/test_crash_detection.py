@@ -736,6 +736,32 @@ class TestSafeCopy(unittest.TestCase):
             )
             mock_copy2.assert_called_once()
 
+    def test_returns_false_for_non_path_src(self):
+        """Non-path src (e.g. MagicMock) is rejected before reaching shutil."""
+        from unittest.mock import MagicMock
+
+        with patch("shutil.copy") as mock_copy:
+            with patch("sys.stderr", new_callable=io.StringIO) as mock_stderr:
+                result = self.artifact_manager._safe_copy(
+                    MagicMock(), Path("/tmp/dst.py"), "test file"
+                )
+                self.assertFalse(result)
+                self.assertIn("invalid src type", mock_stderr.getvalue())
+                mock_copy.assert_not_called()
+
+    def test_returns_false_for_non_path_dst(self):
+        """Non-path dst (e.g. MagicMock) is rejected before reaching shutil."""
+        from unittest.mock import MagicMock
+
+        with patch("shutil.copy") as mock_copy:
+            with patch("sys.stderr", new_callable=io.StringIO) as mock_stderr:
+                result = self.artifact_manager._safe_copy(
+                    Path("/tmp/src.py"), MagicMock(), "test file"
+                )
+                self.assertFalse(result)
+                self.assertIn("invalid dst type", mock_stderr.getvalue())
+                mock_copy.assert_not_called()
+
 
 class TestGetLogSuffix(unittest.TestCase):
     """Test ArtifactManager._get_log_suffix helper."""

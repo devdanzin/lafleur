@@ -4,6 +4,8 @@
 
 This document provides a practical, hands-on guide for a new developer to set up a complete `lafleur` fuzzing environment, from building the CPython target to running a fuzzing session and interpreting the results.
 
+For the high-level architecture and module breakdown, see [01. Architecture Overview](./01_architecture_overview.md). For the contribution workflow and code quality guidelines, see [CONTRIBUTING.md](../../CONTRIBUTING.md).
+
 -----
 
 ### Prerequisites
@@ -14,38 +16,40 @@ To make fuzzing easier and more effective, `lafleur` includes a script for adjus
 
 #### 1. CPython Build (1st time)
 
-1.  **Clone the CPython Repository:** First, clone the CPython source code from the official repository. It is recommended to check out the specific commit or branch that `lafleur` is currently targeting to ensure compatibility.
+1.  **Clone the CPython Repository:** Clone the CPython source code from the official repository. It is recommended to check out the specific commit or branch that `lafleur` is currently targeting to ensure compatibility.
 
     ```bash
-    git clone [https://github.com/python/cpython.git](https://github.com/python/cpython.git)
+    git clone https://github.com/python/cpython.git
     cd cpython
     ```
 
-2.  **Configure the Build:** Configure the build to be a debug build (`--with-pydebug`) and enable the experimental JIT compiler.
+2.  **Configure the Build:** Configure as a debug build (`--with-pydebug`) and enable the experimental JIT compiler.
 
     ```bash
-    # From the root of the cpython directory
     ./configure --with-pydebug --enable-experimental-jit
     ```
 
-3.  **Compile CPython:** Compile the source code. This may take a significant amount of time.
+    **Optional — ASAN build:** To find memory safety bugs (use-after-free, buffer overflows), add the AddressSanitizer flag:
+
+    ```bash
+    ./configure --with-pydebug --enable-experimental-jit --with-address-sanitizer
+    ```
+
+3.  **Compile CPython:**
 
     ```bash
     make -j$(nproc)
     ```
 
-4.  **Create a Virtual Environment:** After the build is complete, create a dedicated Python virtual environment using your newly-built interpreter. This ensures all dependencies are isolated.
+4.  **Create a Virtual Environment:** Create a dedicated virtual environment using your newly-built interpreter.
 
     ```bash
-    # From the cpython directory
     ./python -m venv ~/venvs/lafleur_venv
     ```
 
 -----
 
-### Installation and JIT tuning
-
-Once the prerequisites are met, installing `lafleur` is straightforward.
+### Installation and JIT Tuning
 
 1.  **Activate Your Virtual Environment:**
 
@@ -53,81 +57,82 @@ Once the prerequisites are met, installing `lafleur` is straightforward.
     source ~/venvs/lafleur_venv/bin/activate
     ```
 
-2.  **Clone the `lafleur` Repository:**
+2.  **Clone and Install `lafleur`:** Install in editable mode so code changes take effect immediately without reinstalling.
 
     ```bash
-    git clone [https://github.com/devdanzin/lafleur.git](https://github.com/devdanzin/lafleur.git)
+    git clone https://github.com/devdanzin/lafleur.git
     cd lafleur
-    ```
-
-3.  **Perform an Editable Install:** Use `pip` to install `lafleur` in "editable" mode (`-e`). This allows you to edit the source code and have the changes immediately reflected without needing to reinstall.
-
-    ```bash
     pip install -e .
     ```
 
-4.  **Tune the JIT**: Configure JIT parameters, changing thresholds to make fuzzing more effective:
+3.  **Tune the JIT:** Configure JIT parameters (`JIT_THRESHOLD`, `trace_stack_size`) to make fuzzing more effective:
 
     ```bash
     lafleur-jit-tweak /path/to/cpython
     ```
 
-5.  **CPython Build (2nd time)**: Rebuild CPython to get a properly tuned CPython JIT:
+4.  **CPython Build (2nd time):** Rebuild CPython to apply the tuned settings:
 
     ```bash
     cd /path/to/cpython
     make -j$(nproc)
     ```
 
+#### fusil Seeder (Optional)
+
+`lafleur` can use the classic `fusil` fuzzer to generate an initial set of interesting seed files. This step is recommended but optional.
+
+```bash
+git clone https://github.com/devdanzin/fusil.git
+cd fusil
+pip install .
+```
+
+If you prefer not to install `fusil`, you can create a directory named `corpus/jit_interesting_tests/` in your working directory and place your own hand-crafted Python seed files inside it.
+
 -----
 
 ### Running the Fuzzer
 
-With the project installed, you can run the fuzzer from any directory on your system, and subdirectories containing the corpus, coverage file, crashes etc. will be created in this directory. The `lafleur` command-line entry point is now available in your path.
+With the project installed, you can run the fuzzer from any directory. Output subdirectories (`corpus/`, `crashes/`, `coverage/`, etc.) will be created in the current working directory.
 
 #### Example Commands
 
   * **Starting a new run from scratch:**
-    This command starts the fuzzer, tells it where to find the classic `fusil` seeder, and instructs it to generate at least 20 initial seed files before beginning the main evolutionary loop.
 
     ```bash
     lafleur --fusil-path /path/to/fusil/fuzzers/fusil-python-threaded --min-corpus-files 20
     ```
 
   * **Resuming an existing run:**
-    If a corpus and state file already exist in your current directory, you can simply run `lafleur` without the `--min-corpus-files` argument. The fuzzer will automatically load the existing state and resume fuzzing.
 
     ```bash
     lafleur --fusil-path /path/to/fusil/fuzzers/fusil-python-threaded
     ```
 
-  * **Running in Session Mode (JIT State Fuzzing):**
-    To enable stateful fuzzing, use the `--session-fuzz` flag. This executes scripts in a shared process (Parent -> Child) and injects random "polluter" scripts to stress the JIT's cache and memory management. This is highly effective for finding "Zombie Traces" (Use-After-Free) and optimization invalidation bugs.
+  * **Session fuzzing (JIT state fuzzing):** Executes scripts in a shared process with random "polluter" scripts to stress the JIT's cache and memory management. Highly effective for finding optimization invalidation bugs and Use-After-Free in executor lifecycles.
 
     ```bash
     lafleur --fusil-path /path/to/fusil/fuzzers/fusil-python-threaded --session-fuzz
     ```
 
-  * **Running in Differential Testing Mode:**
-    To enable the "Paired Harness" mode for finding correctness bugs, add the `--differential-testing` flag.
+  * **Using a different CPython build:** If you have multiple CPython builds (e.g., one with ASAN, one without), point lafleur at a specific interpreter:
 
     ```bash
-    lafleur --fusil-path /path/to/fusil/fuzzers/fusil-python-threaded --differential-testing
+    lafleur --fusil-path /path/to/fusil/fuzzers/fusil-python-threaded --target-python /path/to/cpython/python
     ```
 
-  * **Running with Multiple Executions (for non-deterministic bugs):**
-    To increase the chances of finding flaky, non-deterministic bugs, you can run each mutated test case multiple times.
+  * **Multiple executions (for non-deterministic bugs):**
 
     ```bash
-    # Run each mutation 5 times with different internal random seeds
+    # Run each mutation 5 times
     lafleur --fusil-path /path/to/fusil/fuzzers/fusil-python-threaded --runs 5
 
-    # Use dynamic run counts, where more promising parents are run more times
+    # Use dynamic run counts based on parent score
     lafleur --fusil-path /path/to/fusil/fuzzers/fusil-python-threaded --dynamic-runs
     ```
 
-  * **Retaining Logs for Analysis:**
-    To keep temporary log files for offline analysis and debugging, use the `--keep-tmp-logs` flag.
+  * **Retaining logs for analysis:**
 
     ```bash
     lafleur --fusil-path /path/to/fusil/fuzzers/fusil-python-threaded --keep-tmp-logs
@@ -135,17 +140,46 @@ With the project installed, you can run the fuzzer from any directory on your sy
 
 -----
 
+### Development Workflow
+
+When working on `lafleur` itself, use these quality checks before committing:
+
+```bash
+ruff format .                        # Format code
+ruff check .                         # Lint for errors
+mypy lafleur/                        # Type-check (optional but encouraged)
+python -m unittest discover tests    # Run the test suite
+```
+
+For the full contribution workflow, commit message conventions, and PR process, see [CONTRIBUTING.md](../../CONTRIBUTING.md). For details on the test architecture and writing new tests, see [08. Testing](./08_testing_lafleur.md).
+
+-----
+
+### Interpreting the Results
+
+The most important findings from a fuzzing run will be saved in two directories:
+
+  * **`crashes/`**: Contains scripts that caused a hard crash (e.g., SegFault) or raised a critical error. Each `.py` file is accompanied by a `.log` file containing the output from the crash. Since many crashes are of low value (syntax errors from mutations), use this command to filter for potentially high-value crashes:
+
+    ```bash
+    grep -L -E "(statically|indentation|unsupported|formatting|invalid syntax)" crashes/*.log | sed 's/\.log$/.py/'
+    ```
+
+  * **`timeouts/`**: Contains scripts and their logs that caused a timeout (default: 10 seconds) while executing, which might indicate interesting JIT behavior. Most common causes are infinite loops (e.g., from unpacking an object with a `__getitem__` that unconditionally returns a value) and too deeply nested `for` loops.
+
+-----
+
 ### Corpus Maintenance
 
 Over a long fuzzing campaign, the corpus can grow large with many redundant test cases. `lafleur` includes a tool to prune the corpus by finding and removing files whose coverage is a subset of other, more efficient files.
 
-* **To perform a safe "dry run"** that reports which files would be deleted without actually touching them:
+* **Dry run** (reports which files would be deleted without touching them):
 
     ```bash
     lafleur --prune-corpus
     ```
 
-* **To permanently delete the redundant files**, use the `--force` flag. **Warning**: This action is irreversible and will delete files from your `corpus/` directory.
+* **Permanently delete** redundant files (**irreversible**):
 
     ```bash
     lafleur --prune-corpus --force
@@ -153,28 +187,26 @@ Over a long fuzzing campaign, the corpus can grow large with many redundant test
 
 -----
 
-### Using the `state_tool.py`
+### Using the State Tool
 
-The fuzzer's main state file, `coverage/coverage_state.pkl`, is a binary file that is not human-readable. The `state_tool.py` script is provided to inspect, convert, and migrate this file.
+The fuzzer's main state file, `coverage/coverage_state.pkl`, is a binary file that is not human-readable. The `state_tool` module is provided to inspect, convert, and migrate this file.
 
-* **To view the state file as JSON:**
-    This command will automatically handle both old (string-based) and new (integer-based) formats, printing a human-readable JSON representation to your console.
+* **View the state file as JSON:**
 
     ```bash
-    python lafleur/state_tool.py coverage/coverage_state.pkl
+    python -m lafleur.state_tool coverage/coverage_state.pkl
     ```
 
-* **To convert the state file to a JSON file:**
+* **Convert to a JSON file:**
 
     ```bash
-    python lafleur/state_tool.py coverage/coverage_state.pkl coverage/pretty_state.json
+    python -m lafleur.state_tool coverage/coverage_state.pkl coverage/pretty_state.json
     ```
 
-* **To manually migrate an old state file:**
-    If you need to manually convert an old, string-based state file to the new integer-based format, you can specify a `.pkl` output file.
+* **Migrate an old state file** (string-based to integer-based format):
 
     ```bash
-    python lafleur/state_tool.py /path/to/old_state.pkl /path/to/new_state.pkl
+    python -m lafleur.state_tool /path/to/old_state.pkl /path/to/new_state.pkl
     ```
 
 -----
@@ -186,69 +218,56 @@ When `lafleur` finds a crash in **Session Mode**, it saves a bundle of scripts (
 `lafleur` provides a specialized minimization tool to automate this process. It uses **Crash Fingerprinting** (matching the exact assertion or ASan error) to ensure the bug is preserved, and leverages [**ShrinkRay**](https://github.com/DRMacIver/shrinkray) to reduce the code.
 
 **Prerequisites:**
-You must have `shrinkray` installed and available in your PATH:
+
 ```bash
 pip install shrinkray
-
 ```
 
 **Usage:**
-Run the minimizer on a crash directory:
 
 ```bash
 python -m lafleur.minimize crashes/session_crash_20250106_120000_1234
-
 ```
 
 **What it does:**
 
-1. **Script Reduction:** It determines which scripts in the session are strictly necessary. For example, if the polluter script isn't needed to trigger the crash, it is removed.
-2. **Consolidation:** It attempts to merge all necessary scripts into a single file (`combined_repro.py`), renaming harness functions to avoid collisions.
-3. **Code Reduction:** It runs `ShrinkRay` to delete unused lines and simplify the code.
+1. **Script Reduction:** Determines which scripts in the session are strictly necessary. If the polluter script isn't needed to trigger the crash, it is removed.
+2. **Consolidation:** Attempts to merge all necessary scripts into a single file (`combined_repro.py`), renaming harness functions to avoid collisions.
+3. **Code Reduction:** Runs ShrinkRay to delete unused lines and simplify the code.
 
 **Output:**
 
 * `reproduce_minimized.sh`: A shell script that runs the minimal set of files needed to reproduce the crash.
 * `combined_repro.py` (if successful): A single-file Minimal Reproducible Example (MRE).
 
----
-
-### Interpreting the results
-
-The main fuzzing results will be stored in four directories: `crashes/`, `timeouts/`, `divergences/`, and `regressions/`.
-
-  * `crashes/` will contain scripts that terminated with an exit code other than 0, or which generated logs containing one of the interesting keywords such as `JITCorrectnessError` or `panic`. This is where we expect the valuable cases of abnormal termination due to JIT behavior will be recorded. The logs from executing such scripts are also stored here, allowing easy diagnostics of the cause of the crash. Since many crashes are of low value, the following command may be used to list logs that do not contain common strings for low value crashes and hence potentially contain high value crashes:
-    ```bash
-    grep -L -E "(statically|indentation|unsupported|formatting|invalid syntax)" crashes/*.log
-    ```
-
-  * `timeouts/` will contain scripts and their respective logs that caused a timeout (default: 10 seconds) while executing, which might indicate interesting JIT behavior. Most common causes are infinite loops (e.g. from unpacking an object with a `__getitem__` that unconditionally returns a value) and too deeply nested `for` loops.
-  * `divergences/` will contain scripts where the JITted and non-JITted versions of the same code resulted in different `locals()` at the end of execution. It's only populated when the `--differential-testing` flag is passed, and will also contain the logs from executing such scripts. This is where we expect the valuable cases of incorrectness due to JIT behavior to be recorded.
-  * `regressions/` will contain scripts where the JIT-enabled execution was significantly slower than the standard interpreter. This directory is only populated when the `--timing-fuzz` flag is passed.
-
 -----
 
 ### Tooling for Analysis
 
-After running fuzzing sessions, you can use `lafleur`'s analysis tools to verify results and track findings.
+After running fuzzing sessions, use `lafleur`'s analysis tools to verify results and track findings.
 
 #### Verifying Local Test Runs
 
 Use `lafleur-report` to quickly check the health of your local fuzzing instance:
 
 ```bash
-# Check your current fuzzing directory
 lafleur-report
-
-# Check a specific instance
 lafleur-report /path/to/instance
 ```
 
-This shows you execution speed, coverage progress, and a summary of unique crashes found. It's useful for verifying that your local setup is working correctly before starting longer fuzzing campaigns.
+This shows execution speed, coverage progress, and a summary of unique crashes found.
 
 #### Campaign Analysis and Triage
 
-For multi-instance campaigns and crash management, see the full [Analysis & Triage Workflow](../../docs/TOOLING.md) documentation, which covers:
+For multi-instance campaigns and crash management, see the full [Analysis & Triage Workflow](../../docs/TOOLING.md) documentation, which covers `lafleur-campaign` for aggregating metrics across instances and `lafleur-triage` for tracking crashes and linking them to GitHub issues.
 
-- **`lafleur-campaign`**: Aggregate metrics from multiple instances
-- **`lafleur-triage`**: Track crashes and link them to GitHub issues
+-----
+
+### Next Steps
+
+With your environment set up and the fuzzer running, here are the most useful next documents:
+
+* [01. Architecture Overview](./01_architecture_overview.md) — understand the system design
+* [04. The Mutation Engine](./04_mutation_engine.md) — understand how test cases are generated
+* [07. Extending Lafleur](./07_extending_lafleur.md) — add your own mutators
+* [08. Testing](./08_testing_lafleur.md) — run and write tests

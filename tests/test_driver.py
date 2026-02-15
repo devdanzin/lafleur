@@ -7,6 +7,7 @@ lafleur/driver.py
 """
 
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -37,11 +38,13 @@ class TestSessionFuzzingDriver(unittest.TestCase):
     def _run_driver(self, *script_paths: Path, expect_success: bool = True) -> tuple[str, str, int]:
         """Run the driver on the given scripts."""
         cmd = [sys.executable, "-m", "lafleur.driver"] + [str(p) for p in script_paths]
+        env = {**os.environ, "ASAN_OPTIONS": "detect_leaks=0"}
         result = subprocess.run(
             cmd,
             capture_output=True,
             text=True,
             timeout=30,
+            env=env,
         )
         if expect_success and result.returncode != 0:
             print(f"stdout: {result.stdout}")

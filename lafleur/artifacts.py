@@ -464,7 +464,7 @@ class ArtifactManager:
                     crash_reason = f"keyword_{safe_kw}"
                     # Retroactively create a signature
                     crash_signature = CrashSignature(
-                        type="KEYWORD",
+                        category="KEYWORD",
                         crash_type=CrashType.UNKNOWN,
                         returncode=return_code,
                         signal_name=None,

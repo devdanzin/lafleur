@@ -159,14 +159,20 @@ class InterestingnessScorer:
 
         if child_delta_density > 0 or child_delta_exits > 0:
             # Delta metrics available — use child-isolated measurement.
+            # Exits threshold is parent-relative to prevent coasting.
+            parent_delta_exits = self.parent_jit_stats.get("child_delta_total_exits", 0)
+            exits_threshold = max(
+                self.TACHYCARDIA_DELTA_EXITS_THRESHOLD,
+                parent_delta_exits * self.TACHYCARDIA_PARENT_MULTIPLIER,
+            )
             tachycardia_triggered = (
                 child_delta_density > self.TACHYCARDIA_DELTA_DENSITY_THRESHOLD
-                or child_delta_exits > self.TACHYCARDIA_DELTA_EXITS_THRESHOLD
+                or child_delta_exits > exits_threshold
             )
             if tachycardia_triggered:
                 print(
                     f"  [+] JIT Tachycardia (delta): density={child_delta_density:.2f}, "
-                    f"exits={child_delta_exits}",
+                    f"exits={child_delta_exits} (threshold={exits_threshold:.0f})",
                     file=sys.stderr,
                 )
                 score += self.TACHYCARDIA_DELTA_BONUS
@@ -680,9 +686,21 @@ class ScoringManager:
         else:
             clamped_delta_density = child_delta_density
 
+        # Also clamp delta exits if present
+        child_delta_exits = jit_stats.get("child_delta_total_exits", 0)
+        parent_delta_exits = parent_jit_stats.get("child_delta_total_exits", 0)
+
+        if parent_delta_exits > 0:
+            clamped_delta_exits = min(
+                parent_delta_exits * MAX_DENSITY_GROWTH_FACTOR, child_delta_exits
+            )
+        else:
+            clamped_delta_exits = child_delta_exits
+
         # --- Tachycardia Decay ---
         saved_density = clamped_density * TACHYCARDIA_DECAY_FACTOR
         saved_delta_density = clamped_delta_density * TACHYCARDIA_DECAY_FACTOR
+        saved_delta_exits = clamped_delta_exits * TACHYCARDIA_DECAY_FACTOR
 
         if clamped_density > 0:
             print(
@@ -695,11 +713,18 @@ class ScoringManager:
                 f"{saved_delta_density:.4f}",
                 file=sys.stderr,
             )
+        if clamped_delta_exits > 0:
+            print(
+                f"  [~] Tachycardia delta exits decay: {clamped_delta_exits:.0f} -> "
+                f"{saved_delta_exits:.0f}",
+                file=sys.stderr,
+            )
 
-        # Create a copy of stats for persistence, with the decayed densities.
+        # Create a copy of stats for persistence, with the decayed values.
         jit_stats_for_save = jit_stats.copy()
         jit_stats_for_save["max_exit_density"] = saved_density
         jit_stats_for_save["child_delta_max_exit_density"] = saved_delta_density
+        jit_stats_for_save["child_delta_total_exits"] = saved_delta_exits
 
         # Create a copy so we don't mutate the caller's dict
         saved_mutation_info = {**mutation_info, "jit_stats": jit_stats_for_save}

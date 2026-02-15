@@ -244,9 +244,11 @@ The mutators are organized into several submodules under `lafleur/mutators/`:
 **scenarios_control.py** - Control flow stress testing
 - Deep call chains, recursion wrapping
 - Exception handler mazes, trace breaking
-- Guard exhaustion, side exit stress
+- Guard exhaustion, side exit stress, context manager injection
+- Coroutine state corruption, yield-from delegation
 - Pattern matching chaos (dynamic `__match_args__`, type-switching subjects)
-- Examples: `DeepCallMutator`, `ExceptionHandlerMaze`, `GuardExhaustionGenerator`, `TraceBreaker`, `PatternMatchingChaosMutator`
+- Max operand saturation (extended args, jump stretching)
+- Examples: `DeepCallMutator`, `ExceptionHandlerMaze`, `GuardExhaustionGenerator`, `TraceBreaker`, `PatternMatchingChaosMutator`, `ContextManagerInjector`, `RecursionWrappingMutator`, `CoroutineStateCorruptor`, `YieldFromInjector`, `MaxOperandMutator`, `ExitStresser`
 
 **scenarios_data.py** - Data structure manipulation
 - Dictionary pollution, comprehension bombs
@@ -258,9 +260,10 @@ The mutators are organized into several submodules under `lafleur/mutators/`:
 
 **scenarios_runtime.py** - Runtime state corruption
 - Frame manipulation, garbage collection stress
-- Global invalidation, side effect injection
-- Weak reference chaos
-- Examples: `FrameManipulator`, `GCInjector`, `SideEffectInjector`, `WeakRefCallbackChaos`
+- Global invalidation, side effect injection via `__del__` finalizers
+- Weak reference chaos, closure cell stomping
+- Eval frame hook attacks, rare event combination stress testing
+- Examples: `FrameManipulator`, `GCInjector`, `SideEffectInjector`, `WeakRefCallbackChaos`, `ClosureStompMutator`, `EvalFrameHookMutator`, `RareEventStressTester`, `StressPatternInjector`
 
 **utils.py** - Utility transformers
 - `FuzzerSetupNormalizer`: Removes fuzzer-injected setup code from previous generations

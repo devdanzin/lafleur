@@ -37,7 +37,3 @@ Each mutator should have tests that verify:
 3. **Valid output** - Produces parseable Python code
 4. **Edge cases** - Empty bodies, missing variables, nested structures
 5. **Output quality** - Generated code matches expected patterns
-
-## Implementation Status
-
-See `MUTATOR_TEST_PLAN.md` in the repository root for detailed implementation status and plan.

@@ -4,94 +4,159 @@
 
 The `lafleur/mutators/` package is the heart of the fuzzer's creative process. Unlike fuzzers that work on raw text or bytes, `lafleur` operates on the structural representation of Python code, the **Abstract Syntax Tree (AST)**. This allows for intelligent, syntactically correct, and highly complex transformations.
 
-The engine is orchestrated by the `ASTMutator` class, which manages a library of `ast.NodeTransformer` subclasses. When a parent test case is selected for mutation, the orchestrator passes its AST to the `ASTMutator`, which applies a randomized pipeline of these transformers to generate a new and unique child.
+The engine is orchestrated by the `ASTMutator` class in `lafleur/mutators/engine.py`, which manages a pool of `ast.NodeTransformer` subclasses. When a parent test case is selected for mutation, the `MutationController` (in `lafleur/mutation_controller.py`) selects a strategy, passes the parent's AST through a randomized pipeline of these transformers, and produces a new child.
+
+For a step-by-step guide on adding your own mutator, see [07. Extending Lafleur](./07_extending_lafleur.md).
+
+-----
+
+### Mutation Strategies
+
+The `MutationController` selects one of five mutation strategies for each session. Strategy selection is itself adaptive — the learning engine tracks which strategies produce discoveries and weights future selection accordingly.
+
+* **Deterministic**: Applies a small, seed-controlled pipeline of 1–3 randomly chosen transformers. Provides reproducible mutations for a given seed.
+
+* **Havoc**: Applies a large stack of 15–50 transformers, each chosen independently by weighted random selection from the full pool. This is the primary exploration strategy, producing highly diverse mutations.
+
+* **Spam**: Selects a single transformer and applies it 20–50 times repeatedly. This deeply exercises one attack pattern, useful for saturating a specific JIT subsystem.
+
+* **Sniper**: A targeted strategy that uses JIT introspection data. When the Bloom filter probing system (see [03. Coverage and Feedback](./03_coverage_and_feedback.md)) detects which globals and builtins the JIT is watching, the `SniperMutator` surgically invalidates those specific watched variables during execution.
+
+* **Helper+Sniper**: A combined strategy that first injects `_jit_helper_*` functions using the `HelperFunctionInjector`, then attacks those helpers with the `SniperMutator`. This solves a bootstrapping problem: the combined strategy gets credit for discoveries, allowing both the injection and attack mutators to co-evolve.
+
+When a test case's function body exceeds 100 statements, the controller automatically applies the **slicing** optimization (described below) instead of traversing the full AST.
+
+-----
 
 ### Adaptive Mutation Strategy
 
-The selection of mutation strategies is not static. `lafleur` uses an adaptive, learning-based approach to focus its efforts on the mutators that are proving most effective. This entire system is managed by the `MutatorScoreTracker` in `lafleur/learning.py`.
+The selection of mutation strategies and individual transformers is guided by an adaptive, learning-based approach managed by the `MutatorScoreTracker` in `lafleur/learning.py`.
 
-* **`MutatorScoreTracker`**: This class is the core of the learning engine. It tracks the historical success of every mutator and high-level strategy (like "havoc" or "spam").
+* **Reward on Success**: When a mutation leads to a new discovery (new coverage or a crash), the scores of the responsible strategy and transformers are incremented by a fixed reward.
 
-* **Decaying Scores**: When a mutation leads to a new discovery (new coverage or a crash), the scores of the mutators involved are increased. After every success, all scores in the system are multiplied by a **decay factor** (e.g., 0.995). This algorithm ensures that the system rewards mutators that have been successful *recently*, allowing the fuzzer's strategy to adapt as it explores different areas of the JIT's state space.
+* **Decay on Attempts**: Every 50 attempts (the `DECAY_INTERVAL`), all scores in the system are multiplied by a decay factor (default 0.995). Because decay is driven by attempts rather than successes, the system naturally favors mutators that succeed *relative to how often they are tried* — a mutator that succeeds once every 10 attempts will maintain a higher score than one that succeeds once every 100 attempts, even if the latter has more total successes.
 
-* **Epsilon-Greedy Selection**: To balance exploration and exploitation, the fuzzer uses an epsilon-greedy selection strategy. Most of the time, it **exploits** its knowledge by choosing a mutator from the top performers, weighted by their current score. However, with a small probability (epsilon), it **explores** by choosing a mutator completely at random from the entire pool. This guarantees that new or currently "cold" mutators still get a chance to run and prove their effectiveness.
+* **Epsilon-Greedy Selection**: To balance exploration and exploitation, the fuzzer uses an epsilon-greedy strategy at both the strategy level and the individual transformer level. With probability epsilon (default 0.1), it **explores** by returning uniform weights across all candidates. Otherwise, it **exploits** by weighting selection toward high-scoring candidates.
+
+* **Grace Period**: Candidates with fewer than `min_attempts` (default 10) receive a neutral weight of 1.0 regardless of their score. This prevents premature penalization of new or rarely-used mutators before enough data has been collected.
+
+* **Weight Floor**: Even the lowest-scoring candidates maintain a minimum weight (0.05), ensuring that no mutator is ever completely starved of selection opportunities.
+
+-----
 
 ### Code Normalization and Sanitization
 
-Before mutations are applied, the parent's AST is first run through a series of pre-processing transformers to ensure consistency and prevent the accumulation of fuzzer-injected code.
+Before mutations are applied, the parent's AST is run through pre-processing transformers to ensure consistency and prevent accumulation of fuzzer-injected code.
 
-* **`FuzzerSetupNormalizer`**: This transformer scans the AST and removes any fuzzer-injected setup code from previous generations, such as `import gc`, `gc.set_threshold(...)`, and the `fuzzer_rng` initialization. This keeps the corpus clean and prevents redundant setup code from bloating test cases.
-* **`EmptyBodySanitizer`**: After all mutations are complete, this final pass is run on the AST. It finds any control flow statements (like `if` or `for`) that may have had their contents removed by other mutators and inserts a `pass` statement into their body. This is a critical step that guarantees the final generated code is always syntactically valid and prevents `IndentationError` crashes.
+* **`FuzzerSetupNormalizer`** (in `lafleur/mutators/utils.py`): Scans the AST and removes any fuzzer-injected setup code from previous generations, such as `import gc`, `gc.set_threshold(...)`, and the `fuzzer_rng` initialization. This keeps the corpus clean and prevents redundant setup code from bloating test cases.
+
+* **`EmptyBodySanitizer`** (in `lafleur/mutators/utils.py`): After all mutations are complete, this final pass finds any control flow statements (like `if` or `for`) that may have had their contents removed by other mutators and inserts a `pass` statement into their body. This guarantees the final generated code is always syntactically valid.
+
+-----
 
 ### Slicing Strategy for Large Files
 
-To improve performance when mutating very large test cases, `lafleur` employs a meta-mutation strategy called slicing. When the orchestrator detects that a function's body has grown beyond a certain threshold (e.g., >100 statements), it can opt to apply a mutation pipeline to only a small, random slice of the AST instead of visiting the entire tree.
+When a function's body grows beyond 100 statements, `lafleur` applies mutations to only a small, random slice of the AST instead of the entire tree. The `SlicingMutator` (in `lafleur/mutators/engine.py`) handles this:
 
-This process works as follows:
-1. A random slice of the function's body is selected (e.g., 25 statements).
-2. A temporary, minimal AST is created containing only this slice.
-3. The normal mutation pipeline (e.g., "havoc" or "spam") is applied to this small, temporary AST.
-4. The full function body is then reconstructed with the mutated slice placed back in its original position.
+1. A random slice of 25 statements is selected from the function's body.
+2. A temporary, minimal AST module is created containing only this slice.
+3. The normal mutation pipeline is applied to this small, temporary AST.
+4. The full function body is reconstructed with the mutated slice placed back in its original position.
 
-This strategy significantly speeds up the mutation of large files by avoiding a full, slow traversal of a huge AST, while still ensuring that different parts of the large test case are mutated over time.
+This significantly speeds up mutation of large files while ensuring that different parts of the test case are mutated over time.
 
-### Generic Mutators
+-----
 
-This is a suite of simple, general-purpose mutators that provide basic structural changes to the code.
+### The Mutator Pool
 
-* **`OperatorSwapper`**: Swaps binary arithmetic and bitwise operators (e.g., `+` becomes `-`, `&` becomes `|`).
-* **`ComparisonSwapper`**: Swaps comparison operators (e.g., `<` becomes `>=`, `==` becomes `!=`).
-* **`ConstantPerturbator`**: Slightly modifies numeric and string constants (e.g., `100` becomes `101`, `"abc"` becomes `"abd"`).
-* **`ContainerChanger`**: Changes container literal types (e.g., a `list` `[...]` becomes a `tuple` `(...)` or a `set` `{...}`).
-* **`VariableSwapper`**: Swaps all occurrences of two variable names within a scope.
-* **`ForLoopInjector`**: Finds a simple statement and wraps it in a `for` loop to make the operation "hot" for the JIT.
-* **`GuardRemover`**: The opposite of `GuardInjector`, this mutator finds `if fuzzer_rng.random() < ...:` blocks and replaces them with their body, simplifying the control flow.
+The `ASTMutator` maintains a pool of 76 transformer classes, organized across several source modules. Rather than listing every mutator individually (the pool grows with every release), this section describes each category, its attack philosophy, and representative examples.
 
-### JIT-Specific Mutators
+> **Note**: The `SniperMutator` and `HelperFunctionInjector` are not in the main pool — they are applied through dedicated strategy stages by the `MutationController`.
 
-This is a library of advanced mutators specifically designed to generate patterns that attack common JIT compiler optimizations and assumptions.
+#### Generic Mutators (`lafleur/mutators/generic.py`)
 
-* **`StressPatternInjector`**: Injects a hand-crafted "evil snippet" into a function's body, such as one that corrupts a variable's type or deletes an attribute.
-* **`GCInjector`**: Injects a call to `gc.set_threshold()` with a randomized, low value to increase garbage collection pressure on the JIT's memory management.
-* **`DictPolluter`**: Attacks JIT dictionary caches (`dk_version`) by injecting loops that repeatedly add and delete keys from `globals()` or a local dictionary.
-* **`FunctionPatcher`**: Attacks JIT function versioning. It injects a scenario that defines a simple nested function, calls it in a hot loop, and then redefines the function object or its `__defaults__` to invalidate the JIT's assumptions.
-* **`TraceBreaker`**: Attacks the JIT's ability to form long, linear "superblocks" by injecting code known to be "trace-unfriendly," such as dynamic calls or complex exception handling.
-* **`ExitStresser`**: Attacks the JIT's side-exit mechanism by injecting a loop with many frequently-taken `if/elif` branches, forcing the JIT to manage multiple deoptimization points for a single trace.
-* **`DeepCallMutator`**: Attacks the JIT's trace stack limit by injecting a chain of deeply nested function calls with a precisely targeted depth based on the `TRACE_STACK_SIZE` constant found in CPython's source code.
-* **`TypeInstabilityInjector`**: Attacks **type speculation**. It finds a variable in a hot loop and injects a trigger that changes the variable's type mid-loop (e.g., from `int` to `str`), forcing a deoptimization.
-* **`SideEffectInjector`**: Attacks **state stability assumptions**. It injects a `FrameModifier` class whose `__del__` method can maliciously alter a function's local state to test deoptimization pathways.
-* **`GuardExhaustionGenerator`**: Attacks **JIT guard tables**. It injects a loop over a polymorphic list and a long `if/elif` chain of `isinstance` checks to force the JIT to emit numerous guards.
-* **`InlineCachePolluter`**: Attacks **inline caches (ICs)** for method calls by creating "megamorphic" call sites.
-* **`LoadAttrPolluter`**: Attacks **`LOAD_ATTR` caches** by creating polymorphic access sites for attributes with the same name but different kinds (data, property, slot).
-* **`ManyVarsInjector`**: Attacks **`EXTENDED_ARG` handling** by injecting a large number (>256) of local variables into a function.
-* **`TypeIntrospectionMutator`**: Attacks optimizations for `isinstance` and `hasattr` by injecting scenarios that violate the JIT's assumptions about type stability.
-* **`MagicMethodMutator`**: Attacks the JIT's data model assumptions by using "evil objects" with misbehaving magic methods (e.g., `__len__`, `__hash__`).
-* **`NumericMutator`**: Attacks JIT optimizations for numeric built-ins (`pow`, `chr`, etc.) by providing them with tricky arguments that test edge cases and error handling paths.
-* **`IterableMutator`**: Attacks the JIT's understanding of the iterator protocol by injecting scenarios with misbehaving iterators.
-* **`BuiltinNamespaceCorruptor`**: Attacks assumptions about built-in functions by replacing them (e.g., `len`, `isinstance`) with malicious proxies in the `builtins` namespace.
-* **`ComprehensionBomb`**: Attacks nested iterator handling by running a list comprehension over a stateful iterator that changes behavior during iteration.
-* **`CoroutineStateCorruptor`**: Attacks `async`/`await` state management by creating a coroutine that corrupts a local variable while suspended.
-* **`ExceptionHandlerMaze`**: Attacks exception handling and trace generation by injecting deeply nested `try/except` blocks with a stateful metaclass that influences `isinstance` checks.
-* **`FrameManipulator`**: Attacks stack frame integrity by injecting a function that uses `sys._getframe()` to modify a local variable in its caller's frame.
-* **`WeakRefCallbackChaos`**: Attacks garbage collection reentrancy by registering a weakref callback that violates a variable's type assumption when triggered.
-* **`DescriptorChaosGenerator`**: Attacks attribute access optimizations by injecting a class with a stateful descriptor that changes the type of the returned value on subsequent accesses.
-* **`MROShuffler`**: Attacks method resolution order caches by injecting a scenario that changes a class's `__bases__` at runtime.
-* **`SuperResolutionAttacker`**: Attacks `super()` call caching by mutating the class hierarchy during a hot loop of `super()` calls.
-* **`CodeObjectSwapper`**: Attacks function execution by hot-swapping the `__code__` object of a function with that of another, incompatible function.
-* **`SysMonitoringMutator`**: Attacks the `sys.monitoring` interactions by registering and unregistering tool IDs during execution.
-* **`AsyncConstructMutator`**: Attacks async-specific UOPs by generating complex `async for` and `async with` patterns.
-* **`GlobalOptimizationInvalidator`**: Attacks **"Global-to-Constant Promotion"**. It targets the JIT's optimization that treats globals (like `range`) as constants. It injects a hot loop that uses a global, then swaps that global for an incompatible object (e.g., a dummy callable) mid-execution, forcing a complex deoptimization or a crash if the guard fails.
-* **`CodeObjectHotSwapper`**: Attacks the **`_RETURN_GENERATOR`** opcode. It compiles a generator function, then hot-swaps the function's `__code__` object with one from a different generator, and calls it again. This tests if the JIT holds onto stale `CodeObject` pointers or cached creation paths.
-* **`TypeShadowingMutator`**: Attacks **`_GUARD_TYPE_VERSION`**. It tricks the JIT into optimizing a variable as one type (e.g., `float`), then uses `sys._getframe().f_locals` to overwrite that variable with an incompatible type (e.g., `str`) behind the JIT's back, immediately followed by an operation that requires the original type.
-* **`ZombieTraceMutator`**: Attacks the **Executor Lifecycle** and memory management (`pending_deletion`). It rapidly creates and destroys closures (and their associated JIT traces) in a loop to stress the garbage collector and the JIT's linked list of executors, aiming to trigger Use-After-Free bugs or race conditions.
+**~25 transformers** providing general-purpose AST transformations. These mutators don't target specific JIT subsystems but create structural diversity that can expose optimization bugs indirectly.
 
----
+Attack patterns include:
+
+* **Operator and comparison mutations**: `OperatorSwapper`, `ComparisonSwapper`, `ComparisonChainerMutator` — swap or extend arithmetic, bitwise, and comparison operators.
+* **Constant and literal mutations**: `ConstantPerturbator`, `BoundaryValuesMutator`, `LiteralTypeSwapMutator` — perturb numeric constants, inject boundary values (MAX_INT, NaN, etc.), or swap literal types to stress type specialization guards.
+* **Control flow restructuring**: `ForLoopInjector`, `BlockTransposerMutator`, `GuardInjector`, `GuardRemover` — wrap statements in loops, move code blocks, or inject/remove conditional guards.
+* **Container and variable mutations**: `ContainerChanger`, `VariableSwapper`, `UnpackingMutator`, `NewUnpackingMutator` — change container types, swap variable names, or transform assignments into unpacking operations.
+* **Code pattern generators**: `PatternMatchingMutator`, `SliceMutator`, `DecoratorMutator`, `RecursionWrappingMutator`, `StringInterpolationMutator`, `ArithmeticSpamMutator` — inject specific code patterns that target particular UOP families.
+* **Specialized UOP targeting**: `AsyncConstructMutator`, `ExceptionGroupMutator`, `SysMonitoringMutator`, `ImportChaosMutator` — generate patterns that exercise specific, less commonly tested UOP categories.
+* **Corpus hygiene**: `RedundantStatementSanitizer` — probabilistically removes consecutive identical statements to control bloat from mutators like `StatementDuplicator`.
+
+#### Type System Attacks (`lafleur/mutators/scenarios_types.py`)
+
+**~14 transformers** targeting the JIT's type speculation, inline caches, and class hierarchy assumptions.
+
+Representative mutators:
+
+* **`TypeInstabilityInjector`**: Finds a variable in a hot loop and injects a trigger that changes its type mid-loop (e.g., from `int` to `str`), forcing deoptimization.
+* **`InlineCachePolluter`**: Creates megamorphic call sites to overwhelm the JIT's inline caches for method calls.
+* **`MROShuffler`** / **`BasesRewriteMutator`**: Modify class `__bases__` at runtime to invalidate method resolution order caches, targeting the `set_bases` rare event.
+* **`DynamicClassSwapper`**: Swaps objects between incompatible classes (different `__slots__`, MRO depths, etc.) to stress `_GUARD_TYPE_VERSION` guards, targeting the `set_class` rare event.
+* **`TypeVersionInvalidator`**: Modifies class attributes at runtime (method injection, replacement, dict modification) to invalidate JIT type version caches.
+* **`ComprehensiveFunctionMutator`**: Systematically attacks all function modification rare events (code swapping, defaults modification, closure manipulation).
+
+Also includes: `LoadAttrPolluter`, `ManyVarsInjector`, `TypeIntrospectionMutator`, `FunctionPatcher`, `SuperResolutionAttacker`, `DescriptorChaosGenerator`, `CodeObjectSwapper`.
+
+#### Data Model and Cache Attacks (`lafleur/mutators/scenarios_data.py`)
+
+**~17 transformers** targeting the JIT's data structures, memory management, and internal caches.
+
+Representative mutators:
+
+* **`BloomFilterSaturator`**: Exploits the JIT's global variable tracking by saturating its Bloom filter (~4096 mutations) and then modifying watched globals to trigger stale-cache bugs.
+* **`LatticeSurfingMutator`**: Injects objects that dynamically flip their `__class__` to stress the JIT's Abstract Interpretation Lattice and `_GUARD_TYPE_VERSION` guards.
+* **`StackCacheThrasher`**: Creates deeply nested right-associative expressions that force stack depth beyond the JIT's 3-item cache limit, triggering `_SPILL` and `_RELOAD` instructions.
+* **`AbstractInterpreterConfusionMutator`**: Wraps subscript indices with a `_ChameleonInt` (an `int` subclass that can raise exceptions during `__index__()`) to stress specialized micro-ops like `_BINARY_OP_SUBSCR_LIST_INT`.
+* **`ZombieTraceMutator`**: Rapidly creates and destroys closures to stress the JIT's executor lifecycle and `pending_deletion` linked list.
+* **`MagicMethodMutator`**: Uses "evil objects" with misbehaving magic methods (`__len__`, `__hash__`, `__iter__`) that violate the data model contracts the JIT relies on.
+
+Also includes: `DictPolluter`, `GlobalOptimizationInvalidator`, `CodeObjectHotSwapper`, `TypeShadowingMutator`, `NumericMutator`, `IterableMutator`, `BuiltinNamespaceCorruptor`, `ComprehensionBomb`, `ReentrantSideEffectMutator`, `BoundaryComparisonMutator`, `UnpackingChaosMutator`.
+
+#### Control Flow and Execution Path Attacks (`lafleur/mutators/scenarios_control.py`)
+
+**~11 transformers** targeting the JIT's trace formation, side-exit handling, and exception processing.
+
+Representative mutators:
+
+* **`DeepCallMutator`**: Injects deeply nested function call chains targeting the JIT's trace stack limit (`TRACE_STACK_SIZE`).
+* **`ExitStresser`**: Injects loops with many frequently-taken branches to force the JIT to manage numerous deoptimization points per trace.
+* **`TraceBreaker`**: Injects "trace-unfriendly" code (dynamic calls, complex exception handling) that prevents the JIT from forming long superblocks.
+* **`PatternMatchingChaosMutator`**: Converts `isinstance` checks and for-loop unpacking into structural pattern matching to stress `MATCH_MAPPING`, `MATCH_SEQUENCE`, and `MATCH_CLASS` opcodes.
+* **`ExceptionHandlerMaze`**: Injects deeply nested `try/except` blocks with a stateful metaclass to stress exception handling and trace generation.
+
+Also includes: `GuardExhaustionGenerator`, `MaxOperandMutator`, `RecursionWrappingMutator`, `ContextManagerInjector`, `YieldFromInjector`, `CoroutineStateCorruptor`.
+
+#### Runtime State and Environment Attacks (`lafleur/mutators/scenarios_runtime.py`)
+
+**~9 transformers** targeting the JIT's assumptions about the execution environment, frame state, and global runtime.
+
+Representative mutators:
+
+* **`EvalFrameHookMutator`**: Installs and removes custom eval frame hooks mid-execution, targeting the `set_eval_frame_func` rare event.
+* **`RareEventStressTester`**: A meta-mutator that chains multiple JIT rare events (`set_class`, `set_bases`, `set_eval_frame_func`, `builtin_dict`, `func_modification`) in sequence to stress the JIT's ability to handle multiple simultaneous invalidations.
+* **`FrameManipulator`**: Uses `sys._getframe()` to maliciously modify local variables in the caller's frame, attacking JIT assumptions about local state stability.
+* **`SideEffectInjector`**: Injects a class whose `__del__` method alters a function's local state, testing deoptimization pathways through side effects.
+* **`WeakRefCallbackChaos`**: Registers weakref callbacks that violate type assumptions when triggered by garbage collection.
+
+Also includes: `StressPatternInjector`, `GCInjector`, `GlobalInvalidator`, `ClosureStompMutator`.
+
+-----
 
 ### The Library of "Evil Objects"
 
-To support the advanced JIT-specific mutators, `mutator.py` also contains a suite of functions that generate the source code for "evil" classes. The core concept is that these classes have stateful "magic" methods that intentionally violate Python's data model contracts to trick the JIT.
+To support the advanced JIT-specific mutators, `lafleur/mutators/utils.py` contains a suite of helper functions that generate source code for "evil" classes. The core concept is that these classes have stateful magic methods that intentionally violate Python's data model contracts to trick the JIT.
 
-Key examples include:
+Key generators include:
+
 * **`genStatefulLenObject`**: Generates a class whose `__len__` method returns different values on subsequent calls.
 * **`genUnstableHashObject`**: Generates a class whose `__hash__` method is not constant, violating a core requirement for dictionary keys.
-* **`genStatefulIterObject`**: Generates a class whose `__iter__` method can return different kinds of iterators, for example, one that changes the type of the items it yields mid-iteration.
+* **`genStatefulIterObject`**: Generates a class whose `__iter__` method returns iterators that change the type of yielded items mid-iteration.
+* **`genStatefulBoolObject`**: Generates a class whose `__bool__` method alternates between `True` and `False`.
+* **`genStatefulIndexObject`**: Generates a class whose `__index__` method returns different integers on each call.
+
+These generators are used by mutators like `MagicMethodMutator` and `IterableMutator` to create objects that appear normal during the JIT's tracing phase but misbehave once optimized code runs.

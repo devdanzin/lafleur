@@ -14,9 +14,9 @@ If you've found a bug in `lafleur` itself or have an idea for a new feature, ple
 
 When filing a bug report, please include:
 
-1.  The full log file (`.log`) from the `logs/` directory that shows the error, if it's available.
-2.  The `pyproject.toml` file to help us understand your configuration.
-3.  The commit hash of the CPython version you are fuzzing (you can get this by running `python -VV`).
+1.  The full log file (`.log`) from the `logs/` directory that shows the error, if available.
+2.  Your environment details: Python version (`python -VV`), operating system, and `lafleur` version or git commit hash.
+3.  The commit hash of the CPython version you are fuzzing.
 
 ### Working on Existing Issues
 
@@ -27,30 +27,45 @@ A great way to contribute is by helping with issues that have already been filed
 
 ### Improving Documentation
 
-Our documentation is an essential part of the project. We welcome any improvements, including:
+Our documentation is an essential part of the project. We welcome any improvements, including fixing typos or grammatical errors, clarifying confusing sections, adding new examples or tutorials, and translating documents into other languages.
 
-  * Fixing typos or grammatical errors.
-  * Clarifying sections that are confusing.
-  * Adding new examples or tutorials.
-  * Translating documents into other languages.
+The developer documentation lives in [`doc/dev/`](doc/dev/00_index.md), and the analysis tooling guide is at [`docs/TOOLING.md`](docs/TOOLING.md).
 
-### Submitting Code Changes
+### Adding a New Mutator
 
-If you are ready to contribute code, please see the **"Submitting a Contribution"** section below for details on our workflow.
+One of the most impactful ways to contribute is to create a new mutation strategy. The dedicated tutorial in [Extending Lafleur](doc/dev/07_extending_lafleur.md) walks through the process step by step — from creating the transformer class to registering it with the engine.
 
 ## Submitting a Contribution (The Workflow)
 
-We welcome code contributions, from small bug fixes to new mutation strategies. To ensure a smooth process, please follow this general workflow.
+We welcome code contributions, from small bug fixes to new mutation strategies. For an understanding of `lafleur`'s internals before diving into code, see the [Developer Documentation](doc/dev/00_index.md).
 
 ### Pull Request Process
 
 1.  **Fork the repository** to your own GitHub account.
 2.  **Create a new branch** for your changes (e.g., `git checkout -b feature/my-new-mutator`).
 3.  **Make your changes.** Try to keep your changes focused on a single feature or bug fix.
-4.  **Format your code.** Before committing, please run the project's code formatter from the root directory: `ruff format .`
+4.  **Run the quality checks** (see "Before You Submit" below).
 5.  **Commit your changes** with a clear and descriptive commit message.
 6.  **Push your branch** to your fork.
 7.  **Open a Pull Request** from your branch to the `lafleur` `main` branch.
+
+### Before You Submit
+
+Before committing, please run the project's quality checks from the root directory:
+
+```bash
+ruff format .                        # Format code
+ruff check .                         # Lint for errors
+mypy lafleur/                        # Type-check (optional but encouraged)
+python -m unittest discover tests    # Run the test suite
+```
+
+All formatting and lint checks must pass. Tests should pass for any code you've modified. Please also review your changes to ensure:
+
+* The change is focused on a single issue or feature.
+* There are no unnecessary whitespace or style changes.
+* New code includes docstrings and type hints.
+* The project's developer documentation is updated if you've added or changed a major feature.
 
 ### Writing Good Commit Messages
 
@@ -60,14 +75,6 @@ A good commit message summary line looks like this:
 * `feat: Add new SideEffectInjector mutator`
 * `fix: Prevent crash when unparsing deeply nested ASTs`
 * `docs: Add getting started guide for developers`
-
-### Pull Request Quality
-
-Before you submit a pull request, please review your changes to ensure:
-* The change is focused on a single issue or feature.
-* There are no unnecessary whitespace or style changes.
-* New code includes docstrings and type hints.
-* The project's developer documentation is updated if you've added or changed a major feature.
 
 ## Updating Project Records
 
@@ -86,9 +93,7 @@ Please add a single line describing your change to the `## [Unreleased]` section
 
 ### Adding Yourself to `CREDITS.md`
 
-We encourage all contributors to add themselves to the `CREDITS.md` file.
-
-Please add your **name, your GitHub username, or both** (whichever you prefer) to the `Contributors` section. Please try to keep the list in alphabetical order.
+We encourage all contributors to add themselves to the `CREDITS.md` file. Please add your name, your GitHub username, or both (whichever you prefer) to the `Contributors` section along with a brief description of your contribution. Please try to keep the list in alphabetical order.
 
 ## Working with AI-Assisted Code
 
@@ -123,17 +128,17 @@ Finding a bug in CPython is the ultimate goal of `lafleur`. If your fuzzing run 
 
 Creating a high-quality bug report is essential for getting bugs fixed. Before submitting an issue, please follow these steps.
 
-#### 1. Triage the Finding
+### 1. Triage the Finding
 
-First, confirm that the bug is reproducible and not a false positive. Run the test case that `lafleur` saved in the `crashes/`, `timeouts/`, or `divergences/` directory several times to ensure the behavior is consistent.
+First, confirm that the bug is reproducible and not a false positive. Run the test case that `lafleur` saved in the `crashes/` or `timeouts/` directory several times to ensure the behavior is consistent.
 
 Feel free to ask for help triaging your suspected bug in the `lafleur` **[GitHub Discussions](https://github.com/devdanzin/lafleur/discussions)** or on **[Python's Discourse](https://discuss.python.org/)**.
 
-#### 2. Minimize the Test Case
+### 2. Minimize the Test Case
 
 This is the most important step. Fuzzer-generated code is often large and contains a lot of irrelevant logic. Please try to manually reduce the test case to the **smallest possible snippet of code** that still reproduces the bug. A minimal, 5-line reproducer is much more likely to be fixed than a 500-line fuzzer output.
 
-#### 3. Create a Reproducible Report
+### 3. Create a Reproducible Report
 
 When you are ready to file the issue, please gather the following information:
 
@@ -143,10 +148,10 @@ When you are ready to file the issue, please gather the following information:
   * The exact CPython version and commit hash (the output of `python -VV`).
   * Your operating system and architecture (e.g., Ubuntu 22.04 on x86-64).
 
-#### 4. File the Issue
+### 4. File the Issue
 
 Once you have all the information, please file the issue on the official **[CPython GitHub Issues](https://github.com/python/cpython/issues)** page. Please carefully read their contribution guidelines and fill out their issue template completely.
 
-**Optional:** Mentioning that the bug was found using the `lafleur` fuzzer can be helpful context for the CPython developers.
+Mentioning that the bug was found using the `lafleur` fuzzer can be helpful context for the CPython developers.
 
 Thank you for reading this far! :)

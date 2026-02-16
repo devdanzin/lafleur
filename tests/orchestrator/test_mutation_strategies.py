@@ -666,6 +666,8 @@ class TestRunSlicing(unittest.TestCase):
         """Set up minimal MutationController instance."""
         self.controller = MutationController.__new__(MutationController)
         self.controller.ast_mutator = MagicMock()
+        self.controller.score_tracker = MagicMock()
+        self.controller.score_tracker.get_weights.return_value = [1.0]
 
         # Create mock transformers
         self.mock_transformer = MagicMock()
@@ -783,8 +785,9 @@ class TestRunSlicing(unittest.TestCase):
                     with patch("sys.stderr", new_callable=io.StringIO):
                         result_ast, mutation_info = self.controller._run_slicing(tree, "havoc", 101)
 
-                    self.assertEqual(mutation_info["strategy"], "slicing_havoc")
-                    self.assertEqual(mutation_info["transformers"], ["SlicingMutator"])
+                    self.assertEqual(mutation_info["strategy"], "havoc")
+                    self.assertNotIn("SlicingMutator", mutation_info["transformers"])
+                    self.assertTrue(mutation_info["sliced"])
 
     def test_logs_large_ast_detection(self):
         """Test that slicing logs large AST detection."""
@@ -807,6 +810,105 @@ class TestRunSlicing(unittest.TestCase):
                         output = mock_stderr.getvalue()
                         self.assertIn("Large AST detected", output)
                         self.assertIn("150 statements", output)
+
+    def test_slicing_records_actual_transformers(self):
+        """Slicing records real transformer names, not SlicingMutator."""
+        tree = ast.parse("def uop_harness_test():\n    x = 1")
+
+        # Use real classes so type(cls()).__name__ works correctly
+        OperatorSwapper = type("OperatorSwapper", (), {"visit": lambda self, n: n})
+        GuardInjector = type("GuardInjector", (), {"visit": lambda self, n: n})
+        self.controller.ast_mutator.transformers = [OperatorSwapper, GuardInjector]
+        self.controller.score_tracker = MagicMock()
+        self.controller.score_tracker.get_weights.return_value = [1.0, 1.0]
+
+        with patch("lafleur.mutation_controller.RANDOM.randint", return_value=2):
+            with patch(
+                "lafleur.mutation_controller.RANDOM.choices",
+                return_value=[OperatorSwapper, GuardInjector],
+            ):
+                with patch("lafleur.mutation_controller.SlicingMutator") as mock_slicer:
+                    mock_slicer.return_value.visit.return_value = tree
+                    with patch("sys.stderr", new_callable=io.StringIO):
+                        _, info = self.controller._run_slicing(tree, "havoc", 101)
+
+        self.assertEqual(info["strategy"], "havoc")
+        self.assertEqual(info["transformers"], ["OperatorSwapper", "GuardInjector"])
+        self.assertNotIn("SlicingMutator", info["transformers"])
+        self.assertTrue(info["sliced"])
+
+    def test_slicing_records_attempts_for_transformers(self):
+        """Slicing records attempts for each pipeline transformer."""
+        tree = ast.parse("def uop_harness_test():\n    x = 1")
+
+        OperatorSwapper = type("OperatorSwapper", (), {"visit": lambda self, n: n})
+        self.controller.ast_mutator.transformers = [OperatorSwapper]
+        self.controller.score_tracker = MagicMock()
+        self.controller.score_tracker.get_weights.return_value = [1.0]
+
+        with patch("lafleur.mutation_controller.RANDOM.randint", return_value=3):
+            with patch(
+                "lafleur.mutation_controller.RANDOM.choices",
+                return_value=[OperatorSwapper, OperatorSwapper, OperatorSwapper],
+            ):
+                with patch("lafleur.mutation_controller.SlicingMutator") as mock_slicer:
+                    mock_slicer.return_value.visit.return_value = tree
+                    with patch("sys.stderr", new_callable=io.StringIO):
+                        self.controller._run_slicing(tree, "havoc", 101)
+
+        # Should have called record_attempt 3 times for OperatorSwapper
+        attempt_calls = [
+            c[0][0] for c in self.controller.score_tracker.record_attempt.call_args_list
+        ]
+        self.assertEqual(attempt_calls, ["OperatorSwapper"] * 3)
+
+    def test_slicing_strategy_matches_parent_strategy(self):
+        """Strategy name is the original (havoc/spam/deterministic), not slicing_*."""
+        tree = ast.parse("def uop_harness_test():\n    x = 1")
+        self.controller.score_tracker = MagicMock()
+        self.controller.score_tracker.get_weights.return_value = [1.0]
+
+        with patch("lafleur.mutation_controller.RANDOM.randint", return_value=2):
+            with patch(
+                "lafleur.mutation_controller.RANDOM.choices",
+                return_value=[self.mock_transformer],
+            ):
+                with patch("lafleur.mutation_controller.SlicingMutator") as mock_slicer:
+                    mock_slicer.return_value.visit.return_value = tree
+                    with patch("sys.stderr", new_callable=io.StringIO):
+                        for stage in ("deterministic", "havoc", "spam"):
+                            _, info = self.controller._run_slicing(tree, stage, 101, seed=42)
+                            self.assertEqual(
+                                info["strategy"],
+                                stage,
+                                f"Strategy should be '{stage}', not 'slicing_{stage}'",
+                            )
+                            self.assertTrue(info["sliced"])
+
+    def test_slicing_uses_dynamic_weights(self):
+        """Slicing uses learned weights for transformer selection."""
+        tree = ast.parse("def uop_harness_test():\n    x = 1")
+        self.controller.score_tracker = MagicMock()
+        custom_weights = [0.8, 0.2]
+        self.controller.score_tracker.get_weights.return_value = custom_weights
+
+        mock_t1 = MagicMock()
+        mock_t1.__name__ = "T1"
+        mock_t2 = MagicMock()
+        mock_t2.__name__ = "T2"
+        self.controller.ast_mutator.transformers = [mock_t1, mock_t2]
+
+        with patch("lafleur.mutation_controller.RANDOM.randint", return_value=2):
+            with patch(
+                "lafleur.mutation_controller.RANDOM.choices", return_value=[mock_t1]
+            ) as mock_choices:
+                with patch("lafleur.mutation_controller.SlicingMutator") as mock_slicer:
+                    mock_slicer.return_value.visit.return_value = tree
+                    with patch("sys.stderr", new_callable=io.StringIO):
+                        self.controller._run_slicing(tree, "havoc", 101)
+
+            # Verify weights were passed to choices
+            mock_choices.assert_called_with([mock_t1, mock_t2], weights=custom_weights, k=2)
 
 
 if __name__ == "__main__":

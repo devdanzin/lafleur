@@ -166,17 +166,23 @@ class MutationController:
             file=sys.stderr,
         )
 
+        transformer_names = [t.__name__ for t in self.ast_mutator.transformers]
+        dynamic_weights = self.score_tracker.get_weights(transformer_names)
+
         if stage_name == "deterministic":
             # For deterministic, we must re-seed the RNG to get the same choices
             RANDOM.seed(seed)
             num_mutations = RANDOM.randint(1, 3)
-            chosen_classes = RANDOM.choices(self.ast_mutator.transformers, k=num_mutations)
+            chosen_classes = RANDOM.choices(
+                self.ast_mutator.transformers, weights=dynamic_weights, k=num_mutations
+            )
             pipeline = [cls() for cls in chosen_classes]
 
         elif stage_name == "spam":
             num_mutations = RANDOM.randint(20, 50)
-            # Choose ONE transformer and create many instances of it
-            chosen_class = RANDOM.choices(self.ast_mutator.transformers, k=1)[0]
+            chosen_class = RANDOM.choices(
+                self.ast_mutator.transformers, weights=dynamic_weights, k=1
+            )[0]
             pipeline = [chosen_class() for _ in range(num_mutations)]
             print(
                 f"    -> Slicing and Spamming with: {chosen_class.__name__}",
@@ -185,12 +191,25 @@ class MutationController:
 
         else:  # Havoc
             num_mutations = RANDOM.randint(15, 50)
-            chosen_classes = RANDOM.choices(self.ast_mutator.transformers, k=num_mutations)
+            chosen_classes = RANDOM.choices(
+                self.ast_mutator.transformers, weights=dynamic_weights, k=num_mutations
+            )
             pipeline = [cls() for cls in chosen_classes]
+
+        # Record attempts for the actual transformers, not SlicingMutator
+        for transformer in pipeline:
+            self.score_tracker.record_attempt(type(transformer).__name__)
 
         slicer = SlicingMutator(pipeline)
         tree = slicer.visit(base_ast)
-        mutation_info = {"strategy": f"slicing_{stage_name}", "transformers": ["SlicingMutator"]}
+
+        # Credit the real transformers, not SlicingMutator
+        transformers_applied = [type(t).__name__ for t in pipeline]
+        mutation_info = {
+            "strategy": stage_name,
+            "transformers": transformers_applied,
+            "sliced": True,
+        }
         return tree, mutation_info
 
     def _run_deterministic_stage(

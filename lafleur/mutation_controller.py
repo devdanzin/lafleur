@@ -483,3 +483,63 @@ class MutationController:
                 file=sys.stderr,
             )
             return None
+
+        except (AttributeError, TypeError, ValueError) as e:
+            # JIT corruption or malformed AST nodes can cause bizarre errors
+            # during ast.unparse() (e.g., type objects with corrupted descriptors).
+            # Capture the failing AST for CPython bug reporting and skip the mutation.
+            print(
+                f"  [!] Warning: Skipping mutation due to {type(e).__name__} during "
+                f"ast.unparse(): {e}",
+                file=sys.stderr,
+            )
+            try:
+                self._dump_failing_ast(child_core_tree, e)
+            except UnboundLocalError:
+                pass
+            return None
+
+    def _dump_failing_ast(self, tree: ast.AST, error: Exception) -> None:
+        """Dump an AST that failed to unparse, for CPython bug reporting.
+
+        Saves both the human-readable ast.dump() and the raw error details
+        to a timestamped file in crashes/unparse_errors/.
+        """
+        try:
+            from datetime import datetime, timezone
+
+            dump_dir = Path("crashes/unparse_errors")
+            dump_dir.mkdir(parents=True, exist_ok=True)
+
+            timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+            dump_path = dump_dir / f"unparse_error_{timestamp}.txt"
+
+            with open(dump_path, "w", encoding="utf-8") as f:
+                f.write(f"Error: {type(error).__name__}: {error}\n")
+                f.write(f"Timestamp: {timestamp}\n")
+                f.write("=" * 60 + "\n\n")
+                f.write("AST Dump:\n")
+                try:
+                    f.write(ast.dump(tree, indent=2))
+                except Exception as dump_error:
+                    f.write(f"(ast.dump also failed: {dump_error})\n")
+                    # Last resort: try to get at least the top-level structure
+                    try:
+                        f.write(f"Tree type: {type(tree).__name__}\n")
+                        if hasattr(tree, "body"):
+                            f.write(f"Body length: {len(tree.body)}\n")
+                            for i, node in enumerate(tree.body[:10]):
+                                f.write(f"  [{i}] {type(node).__name__}\n")
+                    except Exception:
+                        f.write("(Could not inspect tree structure)\n")
+
+            print(
+                f"  [!] Failing AST dumped to: {dump_path}",
+                file=sys.stderr,
+            )
+        except Exception as dump_error:
+            # Don't let the diagnostic dump crash the fuzzer
+            print(
+                f"  [!] Could not dump failing AST: {dump_error}",
+                file=sys.stderr,
+            )

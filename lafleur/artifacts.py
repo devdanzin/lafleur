@@ -455,19 +455,19 @@ class ArtifactManager:
                 )
                 return False
 
-            # Filter out SyntaxErrors and IndentationErrors early (applies to all crash types)
-            # These are just invalid mutations, not real bugs. The driver may output them in
-            # a format that the fingerprinter doesn't recognize as PYTHON_UNCAUGHT.
-            if "SyntaxError:" in log_content or "IndentationError:" in log_content:
-                print(
-                    "  [~] Ignoring SyntaxError/IndentationError from invalid mutation.",
-                    file=sys.stderr,
-                )
-                return False
-
-            # Filter out mundane Python errors (Exit Code 1)
+            # Filter out mundane Python errors (Exit Code 1).
+            # This correctly handles SyntaxError and IndentationError from invalid
+            # mutations — the fingerprinter classifies them as PYTHON_UNCAUGHT.
+            # We must NOT use a substring check on log_content because LLTRACE
+            # output and caught exceptions routinely contain "SyntaxError:" even
+            # when the actual crash is a signal (SIGSEGV, SIGABRT, etc.).
             if crash_signature.crash_type == CrashType.PYTHON_UNCAUGHT:
-                # If it's just a Python exception without other signals, ignore it
+                fp = crash_signature.fingerprint
+                if "SyntaxError" in fp or "IndentationError" in fp:
+                    print(
+                        "  [~] Ignoring SyntaxError/IndentationError from invalid mutation.",
+                        file=sys.stderr,
+                    )
                 return False
 
             crash_reason = crash_signature.fingerprint

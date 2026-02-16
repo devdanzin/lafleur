@@ -21,7 +21,7 @@ class TestSniperTargeting(unittest.TestCase):
         orch.coverage_manager.state = {
             "per_file_coverage": {
                 "test.py": {
-                    "mutation_info": {
+                    "discovery_mutation": {
                         "jit_stats": {
                             "watched_dependencies": ["len", "uop_harness_test", "MyGlobal"]
                         }

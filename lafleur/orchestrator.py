@@ -472,7 +472,7 @@ class LafleurOrchestrator:
 
         # Retrieve watched dependencies from parent metadata
         watched_keys = (
-            parent_metadata.get("mutation_info", {})
+            parent_metadata.get("discovery_mutation", {})
             .get("jit_stats", {})
             .get("watched_dependencies")
         )

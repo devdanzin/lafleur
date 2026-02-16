@@ -940,7 +940,7 @@ class TestPrepareParentContext(unittest.TestCase):
                         "harness_b": {"edges": {4, 5}},
                     },
                     "file_size_bytes": 2048,
-                    "mutation_info": {
+                    "discovery_mutation": {
                         "jit_stats": {
                             "watched_dependencies": ["dep_a", "uop_harness_test", "dep_b"]
                         }

@@ -47,7 +47,11 @@ class TestCheckForCrash(unittest.TestCase):
         """Test that IndentationError is ignored as known-uninteresting."""
         source_path = Path("/tmp/child_test.py")
         log_path = Path("/tmp/child_test.log")
-        log_content = "IndentationError: too many levels of indentation"
+        log_content = (
+            "Traceback (most recent call last):\n"
+            '  File "/tmp/child_test.py", line 1\n'
+            "IndentationError: too many levels of indentation"
+        )
 
         with patch("sys.stderr", new_callable=io.StringIO) as mock_stderr:
             result = self.artifact_manager.check_for_crash(1, log_content, source_path, log_path)
@@ -62,7 +66,11 @@ class TestCheckForCrash(unittest.TestCase):
         """Test that nested blocks SyntaxError is ignored."""
         source_path = Path("/tmp/child_test.py")
         log_path = Path("/tmp/child_test.log")
-        log_content = "SyntaxError: too many statically nested blocks"
+        log_content = (
+            "Traceback (most recent call last):\n"
+            '  File "/tmp/child_test.py", line 1\n'
+            "SyntaxError: too many statically nested blocks"
+        )
 
         with patch("sys.stderr", new_callable=io.StringIO) as mock_stderr:
             result = self.artifact_manager.check_for_crash(1, log_content, source_path, log_path)
@@ -72,6 +80,88 @@ class TestCheckForCrash(unittest.TestCase):
                 "Ignoring SyntaxError/IndentationError from invalid mutation",
                 mock_stderr.getvalue(),
             )
+
+    def test_signal_crash_not_suppressed_by_incidental_syntax_error(self):
+        """SIGSEGV must NOT be suppressed just because log contains 'SyntaxError:'."""
+        source_path = Path("/tmp/child_test.py")
+        log_path = Path("/tmp/child_test.log")
+        # Log contains SyntaxError from LLTRACE/caught exception, but crash is SIGSEGV
+        log_content = (
+            "ADD_TO_TRACE: _CHECK_VALIDITY\n"
+            "SyntaxError: invalid syntax\n"  # From LLTRACE or caught exception
+            "Segmentation fault (core dumped)\n"
+        )
+
+        with patch("shutil.copy"), patch("sys.stderr", new_callable=io.StringIO) as mock_stderr:
+            result = self.artifact_manager.check_for_crash(
+                -11,
+                log_content,
+                source_path,
+                log_path,  # SIGSEGV
+            )
+
+            self.assertTrue(result)  # Crash MUST be saved
+            self.assertIn("CRASH DETECTED", mock_stderr.getvalue())
+            self.assertNotIn("Ignoring SyntaxError", mock_stderr.getvalue())
+
+    def test_assertion_crash_not_suppressed_by_incidental_syntax_error(self):
+        """C assertion failure must NOT be suppressed by incidental SyntaxError in log."""
+        source_path = Path("/tmp/child_test.py")
+        log_path = Path("/tmp/child_test.log")
+        log_content = (
+            "try:\n    compile('bad', '', 'exec')\nexcept SyntaxError:\n    pass\n"
+            "python: Objects/codeobject.c:123: PyCode_New: "
+            "Assertion `code != NULL' failed.\n"
+            "Aborted (core dumped)\n"
+        )
+
+        with patch("shutil.copy"), patch("sys.stderr", new_callable=io.StringIO) as mock_stderr:
+            result = self.artifact_manager.check_for_crash(
+                -6,
+                log_content,
+                source_path,
+                log_path,  # SIGABRT
+            )
+
+            self.assertTrue(result)  # Crash MUST be saved
+            self.assertIn("CRASH DETECTED", mock_stderr.getvalue())
+
+    def test_pure_syntax_error_still_ignored(self):
+        """SyntaxError as the actual crash cause (exit 1) is still correctly ignored."""
+        source_path = Path("/tmp/child_test.py")
+        log_path = Path("/tmp/child_test.log")
+        log_content = (
+            "Traceback (most recent call last):\n"
+            '  File "/tmp/child_test.py", line 1\n'
+            "    def (\n"
+            "        ^\n"
+            "SyntaxError: invalid syntax\n"
+        )
+
+        with patch("sys.stderr", new_callable=io.StringIO) as mock_stderr:
+            result = self.artifact_manager.check_for_crash(1, log_content, source_path, log_path)
+
+            self.assertFalse(result)
+            self.assertIn("Ignoring SyntaxError/IndentationError", mock_stderr.getvalue())
+
+    def test_asan_crash_not_suppressed_by_lltrace_syntax_error(self):
+        """ASAN violation must not be suppressed by SyntaxError in LLTRACE output."""
+        source_path = Path("/tmp/child_test.py")
+        log_path = Path("/tmp/child_test.log")
+        log_content = (
+            "ADD_TO_TRACE: _LOAD_FAST\n"
+            "SyntaxError: unexpected indent\n"  # From LLTRACE tracing exception handling
+            "=================================================================\n"
+            "==12345==ERROR: AddressSanitizer: heap-use-after-free on address 0x60300000abcd\n"
+            "SUMMARY: AddressSanitizer: heap-use-after-free\n"
+            "    #0 0x555 in _PyEval_EvalFrameDefault Python/ceval.c:1234\n"
+        )
+
+        with patch("shutil.copy"), patch("sys.stderr", new_callable=io.StringIO) as mock_stderr:
+            result = self.artifact_manager.check_for_crash(-6, log_content, source_path, log_path)
+
+            self.assertTrue(result)
+            self.assertIn("CRASH DETECTED", mock_stderr.getvalue())
 
     def test_detects_signal_crash(self):
         """Test that negative return code is interpreted as signal."""

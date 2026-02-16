@@ -116,6 +116,7 @@ class LafleurOrchestrator:
         target_python: str = sys.executable,
         deepening_probability: float = 0.2,
         run_stats: dict | None = None,
+        no_ekg: bool = False,
     ):
         """Initialize the orchestrator and the corpus manager."""
         self.differential_testing = differential_testing
@@ -220,7 +221,15 @@ class LafleurOrchestrator:
             differential_testing=differential_testing,
             timing_fuzz=timing_fuzz,
             session_fuzz=session_fuzz,
+            no_ekg=no_ekg,
         )
+
+        if no_ekg:
+            print(
+                "[!] WARNING: EKG introspection disabled (--no-ekg). "
+                "JIT executor metrics will not be collected.",
+                file=sys.stderr,
+            )
 
         # Verify that the target python is suitable for fuzzing before doing anything else
         self.execution_manager.verify_target_capabilities()
@@ -847,6 +856,12 @@ def main():
         help="A human-readable name for this fuzzing instance (e.g., 'stoic-darwin'). "
         "Auto-generated if not provided.",
     )
+    parser.add_argument(
+        "--no-ekg",
+        action="store_true",
+        help="Disable ctypes-based JIT introspection in the driver. "
+        "Use this for CPython builds older than 3.15 where the executor struct layout differs.",
+    )
     args = parser.parse_args()
 
     LOGS_DIR.mkdir(exist_ok=True)
@@ -901,6 +916,7 @@ def main():
             target_python=args.target_python,
             deepening_probability=args.deepening_probability,
             run_stats=copy.deepcopy(start_stats),
+            no_ekg=args.no_ekg,
         )
         if args.prune_corpus:
             orchestrator.corpus_manager.prune_corpus(dry_run=not args.force)

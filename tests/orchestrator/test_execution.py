@@ -1121,5 +1121,69 @@ class TestSoloSessionProbability(unittest.TestCase):
             self.assertIsNone(result.session_files)
 
 
+class TestNoEkgFlag(unittest.TestCase):
+    """Test that --no-ekg flag is correctly passed to driver command."""
+
+    def test_no_ekg_flag_passed_to_driver_command(self):
+        """Test that --no-ekg is appended to driver command when enabled."""
+        artifact_manager = MagicMock()
+        corpus_manager = MagicMock()
+        em = ExecutionManager(
+            target_python="/usr/bin/python3",
+            timeout=10,
+            artifact_manager=artifact_manager,
+            corpus_manager=corpus_manager,
+            session_fuzz=True,
+            no_ekg=True,
+        )
+
+        source = "def uop_harness_test():\n    pass"
+        source_path = Path("/tmp/child.py")
+        log_path = Path("/tmp/child.log")
+        parent_path = Path("/tmp/parent.py")
+
+        with patch("lafleur.execution.random.random", return_value=0.1):  # Solo session
+            with patch("pathlib.Path.write_text"):
+                with patch("subprocess.run") as mock_run:
+                    mock_run.return_value = subprocess.CompletedProcess(args=[], returncode=0)
+                    with patch("sys.stderr", new_callable=io.StringIO):
+                        em.execute_child(source, source_path, log_path, parent_path)
+
+                    cmd = mock_run.call_args[0][0]
+                    self.assertIn("--no-ekg", cmd)
+                    # --no-ekg should appear before script paths
+                    ekg_idx = cmd.index("--no-ekg")
+                    script_idx = cmd.index(str(source_path))
+                    self.assertLess(ekg_idx, script_idx)
+
+    def test_no_ekg_flag_not_passed_by_default(self):
+        """Test that --no-ekg is NOT in driver command when no_ekg=False."""
+        artifact_manager = MagicMock()
+        corpus_manager = MagicMock()
+        em = ExecutionManager(
+            target_python="/usr/bin/python3",
+            timeout=10,
+            artifact_manager=artifact_manager,
+            corpus_manager=corpus_manager,
+            session_fuzz=True,
+            no_ekg=False,
+        )
+
+        source = "def uop_harness_test():\n    pass"
+        source_path = Path("/tmp/child.py")
+        log_path = Path("/tmp/child.log")
+        parent_path = Path("/tmp/parent.py")
+
+        with patch("lafleur.execution.random.random", return_value=0.1):  # Solo session
+            with patch("pathlib.Path.write_text"):
+                with patch("subprocess.run") as mock_run:
+                    mock_run.return_value = subprocess.CompletedProcess(args=[], returncode=0)
+                    with patch("sys.stderr", new_callable=io.StringIO):
+                        em.execute_child(source, source_path, log_path, parent_path)
+
+                    cmd = mock_run.call_args[0][0]
+                    self.assertNotIn("--no-ekg", cmd)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

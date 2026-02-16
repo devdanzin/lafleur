@@ -424,7 +424,7 @@ def get_jit_stats(namespace: dict, baseline: dict[tuple[int, int], int] | None =
     return result
 
 
-def run_session(files: list[str]) -> int:
+def run_session(files: list[str], *, no_ekg: bool = False) -> int:
     """
     Execute a sequence of Python scripts in the same process.
 
@@ -434,6 +434,7 @@ def run_session(files: list[str]) -> int:
 
     Args:
         files: List of script paths to execute in order.
+        no_ekg: If True, skip all ctypes-based JIT introspection.
 
     Returns:
         Exit code (0 for success, 1 for errors).
@@ -462,7 +463,7 @@ def run_session(files: list[str]) -> int:
         original_argv = sys.argv
 
         # Snapshot executor state before this script runs
-        baseline = snapshot_executor_state(shared_globals)
+        baseline = snapshot_executor_state(shared_globals) if not no_ekg else None
 
         try:
             # Read and compile the script
@@ -481,9 +482,16 @@ def run_session(files: list[str]) -> int:
             exec(code, shared_globals)
 
             # Report JIT stats with delta from baseline
-            stats = get_jit_stats(shared_globals, baseline=baseline)
-            stats["file"] = path.name
-            stats["status"] = "success"
+            if no_ekg:
+                stats = {
+                    "file": path.name,
+                    "status": "success",
+                    "ekg_disabled": True,
+                }
+            else:
+                stats = get_jit_stats(shared_globals, baseline=baseline)
+                stats["file"] = path.name
+                stats["status"] = "success"
             print(f"[DRIVER:STATS] {json.dumps(stats)}", flush=True)
 
         except SyntaxError as e:
@@ -547,6 +555,11 @@ def main() -> int:
         action="store_true",
         help="Print additional debug information.",
     )
+    parser.add_argument(
+        "--no-ekg",
+        action="store_true",
+        help="Disable ctypes-based JIT introspection (for older CPython builds).",
+    )
 
     args = parser.parse_args()
 
@@ -554,7 +567,7 @@ def main() -> int:
         print(f"[DRIVER:INFO] JIT introspection available: {HAS_OPCODE}", flush=True)
         print(f"[DRIVER:INFO] Scripts to execute: {args.files}", flush=True)
 
-    return run_session(args.files)
+    return run_session(args.files, no_ekg=args.no_ekg)
 
 
 if __name__ == "__main__":

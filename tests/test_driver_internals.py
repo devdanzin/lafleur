@@ -677,5 +677,75 @@ class TestRunSessionDeltaStats(unittest.TestCase):
             self.assertIsInstance(stats_b["delta_total_exits"], int)
 
 
+class TestRunSessionNoEkg(unittest.TestCase):
+    """Tests for run_session with no_ekg=True."""
+
+    def setUp(self):
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.temp_path = Path(self.temp_dir.name)
+
+    def tearDown(self):
+        self.temp_dir.cleanup()
+
+    def test_run_session_no_ekg_skips_introspection(self):
+        """Test that no_ekg=True skips introspection and emits ekg_disabled stats."""
+        script = self.temp_path / "simple.py"
+        script.write_text("x = 42")
+
+        captured_stdout = StringIO()
+        with patch("sys.stdout", captured_stdout):
+            result = run_session([str(script)], no_ekg=True)
+
+        self.assertEqual(result, 0)
+        output = captured_stdout.getvalue()
+
+        # Parse stats and verify ekg_disabled flag
+        for line in output.splitlines():
+            if line.startswith("[DRIVER:STATS]"):
+                json_str = line.replace("[DRIVER:STATS] ", "")
+                stats = json.loads(json_str)
+                self.assertEqual(stats["status"], "success")
+                self.assertTrue(stats["ekg_disabled"])
+                # Should NOT have JIT introspection fields
+                self.assertNotIn("executors", stats)
+                self.assertNotIn("zombie_traces", stats)
+
+    def test_run_session_no_ekg_error_handling(self):
+        """Test that no_ekg=True still handles errors gracefully."""
+        error_script = self.temp_path / "error.py"
+        error_script.write_text("raise ValueError('test error')")
+
+        captured_stdout = StringIO()
+        with patch("sys.stdout", captured_stdout):
+            result = run_session([str(error_script)], no_ekg=True)
+
+        self.assertEqual(result, 1)
+        output = captured_stdout.getvalue()
+        self.assertIn("[DRIVER:ERROR]", output)
+        self.assertIn("ValueError", output)
+
+    def test_run_session_no_ekg_shared_globals_still_work(self):
+        """Test that shared globals work correctly with no_ekg=True."""
+        script1 = self.temp_path / "a.py"
+        script1.write_text("shared_var = 999")
+
+        script2 = self.temp_path / "b.py"
+        script2.write_text("assert shared_var == 999")
+
+        captured_stdout = StringIO()
+        with patch("sys.stdout", captured_stdout):
+            result = run_session([str(script1), str(script2)], no_ekg=True)
+
+        self.assertEqual(result, 0)
+
+        output = captured_stdout.getvalue()
+        stats_lines = [line for line in output.splitlines() if line.startswith("[DRIVER:STATS]")]
+        self.assertEqual(len(stats_lines), 2)
+
+        for line in stats_lines:
+            stats = json.loads(line.split("[DRIVER:STATS] ", 1)[1])
+            self.assertTrue(stats["ekg_disabled"])
+
+
 if __name__ == "__main__":
     unittest.main()

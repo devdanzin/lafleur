@@ -110,6 +110,7 @@ class ExecutionManager:
         differential_testing: bool = False,
         timing_fuzz: bool = False,
         session_fuzz: bool = False,
+        no_ekg: bool = False,
     ):
         """
         Initialize the ExecutionManager.
@@ -122,6 +123,7 @@ class ExecutionManager:
             differential_testing: Enable differential testing mode
             timing_fuzz: Enable timing-based fuzzing mode
             session_fuzz: Enable session mode execution
+            no_ekg: Disable ctypes-based JIT introspection in the driver
         """
         self.target_python = target_python
         self.timeout = timeout
@@ -130,6 +132,7 @@ class ExecutionManager:
         self.differential_testing = differential_testing
         self.timing_fuzz = timing_fuzz
         self.session_fuzz = session_fuzz
+        self.no_ekg = no_ekg
 
     def _build_env(self, *, jit: bool, debug_logs: bool = False) -> dict[str, str]:
         """Build a subprocess environment with explicit JIT and logging flags.
@@ -523,7 +526,10 @@ class ExecutionManager:
                     self.target_python,
                     "-m",
                     "lafleur.driver",
-                ] + [str(f) for f in session_files]
+                ]
+                if self.no_ekg:
+                    cmd.append("--no-ekg")
+                cmd += [str(f) for f in session_files]
             else:
                 # Normal mode: run child in fresh process
                 cmd = [self.target_python, str(child_source_path)]

@@ -160,6 +160,9 @@ class InterestingnessScorer:
         if child_delta_density > 0 or child_delta_exits > 0:
             # Delta metrics available — use child-isolated measurement.
             # Exits threshold is parent-relative to prevent coasting.
+            print(f"  [DBG] parent_jit_stats keys: {list(self.parent_jit_stats.keys())}", file=sys.stderr)
+            print(f"  [DBG] parent_delta_exits raw: {self.parent_jit_stats.get('child_delta_total_exits', 'MISSING')}",
+                  file=sys.stderr)
             parent_delta_exits = self.parent_jit_stats.get("child_delta_total_exits", 0)
             exits_threshold = max(
                 self.TACHYCARDIA_DELTA_EXITS_THRESHOLD,
@@ -169,6 +172,9 @@ class InterestingnessScorer:
                 child_delta_density > self.TACHYCARDIA_DELTA_DENSITY_THRESHOLD
                 or child_delta_exits > exits_threshold
             )
+            print(f"  [DBG] parent_jit_stats keys: {list(self.parent_jit_stats.keys())}", file=sys.stderr)
+            print(f"  [DBG] parent_delta_exits raw: {self.parent_jit_stats.get('child_delta_total_exits', 'MISSING')}",
+                  file=sys.stderr)
             if tachycardia_triggered:
                 print(
                     f"  [+] JIT Tachycardia (delta): density={child_delta_density:.2f}, "
@@ -176,6 +182,10 @@ class InterestingnessScorer:
                     file=sys.stderr,
                 )
                 score += self.TACHYCARDIA_DELTA_BONUS
+                print(f"  [DBG] parent_jit_stats keys: {list(self.parent_jit_stats.keys())}", file=sys.stderr)
+                print(
+                    f"  [DBG] parent_delta_exits raw: {self.parent_jit_stats.get('child_delta_total_exits', 'MISSING')}",
+                    file=sys.stderr)
         else:
             # No delta metrics — fall back to absolute (original behavior).
             child_density = self.jit_stats.get("max_exit_density", 0.0)
@@ -608,7 +618,7 @@ class ScoringManager:
         parent_jit_stats = {}
         if parent_id:
             parent_metadata = self.coverage_manager.state["per_file_coverage"].get(parent_id, {})
-            parent_jit_stats = parent_metadata.get("mutation_info", {}).get("jit_stats", {})
+            parent_jit_stats = parent_metadata.get("discovery_mutation", {}).get("jit_stats", {})
 
         is_interesting = self.score_and_decide_interestingness(
             coverage_info,

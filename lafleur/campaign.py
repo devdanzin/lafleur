@@ -103,6 +103,7 @@ class InstanceData:
     coverage: int = 0
     crash_count: int = 0
     corpus_size: int = 0
+    relative_dir: str = ""
 
 
 class CampaignAggregator:
@@ -145,6 +146,15 @@ class CampaignAggregator:
             if instance:
                 self.instances.append(instance)
 
+    def set_relative_dirs(self, campaign_root: Path) -> None:
+        """Set relative directory paths for all instances."""
+        for inst in self.instances:
+            try:
+                inst.relative_dir = str(inst.path.relative_to(campaign_root))
+            except ValueError:
+                # Instance path is not under campaign_root
+                inst.relative_dir = str(inst.path)
+
     def _load_instance(self, path: Path) -> InstanceData | None:
         """Load data from a single instance directory."""
         metadata_path = path / "logs" / "run_metadata.json"
@@ -167,6 +177,7 @@ class CampaignAggregator:
             metadata=metadata,
             stats=stats,
             corpus_stats=corpus_stats,
+            relative_dir=path.name,
         )
 
         # Calculate derived metrics
@@ -405,15 +416,16 @@ class CampaignAggregator:
         # Table header
         lines.append(
             f"{'Name':<25} | {'Status':<8} | {'Speed':>10} | {'Coverage':>8} | "
-            f"{'Crashes':>7} | {'Corpus':>8}"
+            f"{'Crashes':>7} | {'Corpus':>8} | {'Dir'}"
         )
-        lines.append("-" * 90)
+        lines.append("-" * 120)
 
         for inst in sorted_instances:
             speed_str = f"{inst.speed:.2f}/s" if inst.speed > 0 else "N/A"
             lines.append(
                 f"{inst.name:<25} | {inst.status:<8} | {speed_str:>10} | "
-                f"{inst.coverage:>8,} | {inst.crash_count:>7,} | {inst.corpus_size:>8,}"
+                f"{inst.coverage:>8,} | {inst.crash_count:>7,} | {inst.corpus_size:>8,} | "
+                f"{inst.relative_dir}"
             )
 
         lines.append("")
@@ -558,6 +570,7 @@ def generate_html_report(aggregator: CampaignAggregator) -> str:
     instance_rows = []
     for inst in sorted_instances:
         name_escaped = html.escape(inst.name)
+        dir_escaped = html.escape(inst.relative_dir)
         status_class = "running" if inst.status == "Running" else "stopped"
         speed_pct = (inst.speed / max_speed) * 100 if max_speed else 0
         coverage_pct = (inst.coverage / max_coverage) * 100 if max_coverage else 0
@@ -570,6 +583,7 @@ def generate_html_report(aggregator: CampaignAggregator) -> str:
           <td data-sort="{inst.coverage}"><div class="bar-container"><div class="bar-fill coverage" style="width:{coverage_pct:.1f}%"></div><span class="bar-text">{inst.coverage:,}</span></div></td>
           <td data-sort="{inst.corpus_size}">{inst.corpus_size:,}</td>
           <td data-sort="{inst.crash_count}">{inst.crash_count:,}</td>
+          <td>{dir_escaped}</td>
         </tr>""")
 
     # Build crash rows
@@ -795,6 +809,7 @@ def generate_html_report(aggregator: CampaignAggregator) -> str:
         <th>Coverage</th>
         <th>Corpus</th>
         <th>Crashes</th>
+        <th>Directory</th>
       </tr>
     </thead>
     <tbody>
@@ -949,6 +964,13 @@ Examples:
     # Create aggregator and run analysis
     aggregator = CampaignAggregator(unique_instances)
     aggregator.load_instances()
+
+    # Set relative directory paths from the campaign root
+    campaign_root = args.paths[0].resolve()
+    if campaign_root.is_file():
+        campaign_root = campaign_root.parent
+    aggregator.set_relative_dirs(campaign_root)
+
     aggregator.aggregate()
 
     # Enrich crashes with registry data if provided

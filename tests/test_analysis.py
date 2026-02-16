@@ -97,11 +97,32 @@ SUMMARY: AddressSanitizer: heap-buffer-overflow
         self.assertEqual(sig.fingerprint, "PYTHON:ValueError")
 
     def test_python_exception_ignored_if_not_traceback(self):
-        # Exit code 1 but no traceback found -> UNKNOWN/EXIT:1
+        # Exit code 1 but no traceback found -> still PYTHON_UNCAUGHT
         log = "Some script output"
         sig = self.fingerprinter.analyze(1, log)
-        self.assertEqual(sig.category, "UNKNOWN")
-        self.assertEqual(sig.fingerprint, "EXIT:1")
+        self.assertEqual(sig.category, "PYTHON")
+        self.assertEqual(sig.crash_type, CrashType.PYTHON_UNCAUGHT)
+        self.assertEqual(sig.fingerprint, "PYTHON:unknown")
+
+    def test_syntax_error_without_traceback_is_python_uncaught(self):
+        """SyntaxError with no standard traceback still classified as PYTHON_UNCAUGHT."""
+        log = "SyntaxError: invalid syntax\n"
+        sig = self.fingerprinter.analyze(1, log)
+        self.assertEqual(sig.crash_type, CrashType.PYTHON_UNCAUGHT)
+        self.assertEqual(sig.fingerprint, "PYTHON:SyntaxError")
+
+    def test_exit_code_1_with_lltrace_noise(self):
+        """Exit code 1 with LLTRACE output obscuring traceback is PYTHON_UNCAUGHT."""
+        log = "ADD_TO_TRACE: _LOAD_FAST\n" * 100 + "some error happened\n"
+        sig = self.fingerprinter.analyze(1, log)
+        self.assertEqual(sig.crash_type, CrashType.PYTHON_UNCAUGHT)
+        self.assertEqual(sig.fingerprint, "PYTHON:unknown")
+
+    def test_unexpected_exit_code_remains_unknown(self):
+        """Non-zero, non-one, non-signal exit codes remain UNKNOWN."""
+        sig = self.fingerprinter.analyze(2, "some output")
+        self.assertEqual(sig.crash_type, CrashType.UNKNOWN)
+        self.assertEqual(sig.fingerprint, "EXIT:2")
 
     def test_asan_segv_pattern(self):
         """Test ASan SEGV on unknown address triggers SEGV error type."""

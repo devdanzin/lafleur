@@ -220,6 +220,16 @@ class CrashFingerprinter:
                     signal_name=None,
                     fingerprint=f"PYTHON:{exc_type}",
                 )
+            # Exit code 1 without a recognizable traceback is still a Python
+            # error (SyntaxError has non-standard formatting, LLTRACE output
+            # can obscure tracebacks, etc.) — not an interesting JIT crash.
+            return CrashSignature(
+                category="PYTHON",
+                crash_type=CrashType.PYTHON_UNCAUGHT,
+                returncode=1,
+                signal_name=None,
+                fingerprint="PYTHON:unknown",
+            )
 
         # 5. Raw Signal (Segfault, etc.)
         if returncode < 0:

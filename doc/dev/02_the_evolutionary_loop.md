@@ -127,7 +127,7 @@ The `InterestingnessScorer` evaluates the child using a multi-factor scoring sys
   * **Density penalty**: if the child has significantly grown in file size but only discovered relative (not global) coverage, a penalty discourages bloat.
   * **Zombie bonus (+50)**: massive reward if any `zombie_traces` (executors in `pending_deletion` state) were detected — these indicate potential Use-After-Free bugs.
   * **Tachycardia bonus (+20)**: rewards children that provoke high JIT exit density. Two scoring paths exist:
-      * **Delta path** (preferred, session mode): triggers if `child_delta_max_exit_density > 0.5` or `child_delta_total_exits > 20`. Uses fixed thresholds because delta metrics already isolate the child's contribution.
+      * **Delta path** (preferred, session mode): triggers if `child_delta_max_exit_density > max(0.135, parent_delta_density × 1.25)` or `child_delta_total_exits > max(20, parent_delta_exits × 1.25)`. Both thresholds are parent-relative to prevent lineages from coasting on inherited instability.
       * **Absolute path** (fallback, non-session mode): triggers if the child's `max_exit_density` exceeds `max(10.0, parent_density × 1.25)`. This parent-relative threshold prevents lineages from coasting on inherited instability.
   * **Chain depth bonus (+10)**: rewards children where the JIT built deep executor chains (depth > 3), indicating "Hyper-Extension."
   * **Stub bonus (+5)**: rewards children that produced very small compiled traces (code size < 5), which often indicate degenerate compilation.

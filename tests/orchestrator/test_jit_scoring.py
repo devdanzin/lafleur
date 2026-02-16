@@ -142,10 +142,40 @@ class TestDeltaTachycardiaScoring(unittest.TestCase):
 
     def test_delta_below_both_thresholds_no_bonus(self):
         """Both below thresholds — no tachycardia bonus."""
-        jit_stats = {"child_delta_max_exit_density": 0.2, "child_delta_total_exits": 10}
+        jit_stats = {"child_delta_max_exit_density": 0.1, "child_delta_total_exits": 10}
         scorer = InterestingnessScorer(jit_stats=jit_stats, **self.scorer_args)
         score = scorer.calculate_score()
         self.assertEqual(score, 0.0)
+
+    def test_delta_density_parent_relative_threshold(self):
+        """Parent with 2.0 delta density, child with 2.2: 2.2 < max(0.135, 2.5) → no bonus."""
+        parent_stats = {"child_delta_max_exit_density": 2.0}
+        jit_stats = {"child_delta_max_exit_density": 2.2, "child_delta_total_exits": 5}
+        scorer = InterestingnessScorer(
+            jit_stats=jit_stats, parent_jit_stats=parent_stats, **self.scorer_args
+        )
+        score = scorer.calculate_score()
+        self.assertEqual(score, 0.0)
+
+    def test_delta_density_parent_relative_threshold_exceeded(self):
+        """Parent with 2.0 delta density, child with 3.0: 3.0 > max(0.135, 2.5) → bonus."""
+        parent_stats = {"child_delta_max_exit_density": 2.0}
+        jit_stats = {"child_delta_max_exit_density": 3.0, "child_delta_total_exits": 5}
+        scorer = InterestingnessScorer(
+            jit_stats=jit_stats, parent_jit_stats=parent_stats, **self.scorer_args
+        )
+        score = scorer.calculate_score()
+        self.assertEqual(score, 20.0)
+
+    def test_delta_density_floor_used_when_parent_low(self):
+        """Parent with 0.05 delta density, child with 0.2: 0.2 > max(0.135, 0.0625) → bonus."""
+        parent_stats = {"child_delta_max_exit_density": 0.05}
+        jit_stats = {"child_delta_max_exit_density": 0.2, "child_delta_total_exits": 5}
+        scorer = InterestingnessScorer(
+            jit_stats=jit_stats, parent_jit_stats=parent_stats, **self.scorer_args
+        )
+        score = scorer.calculate_score()
+        self.assertEqual(score, 20.0)
 
     def test_delta_metrics_take_priority_over_absolute(self):
         """Delta path is taken when delta fields are present, even if absolute is high."""

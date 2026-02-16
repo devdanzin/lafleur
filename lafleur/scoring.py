@@ -86,7 +86,7 @@ class InterestingnessScorer:
     TACHYCARDIA_PARENT_MULTIPLIER = 1.25
 
     # --- JIT Vitals bonuses (delta density, session mode) ---
-    TACHYCARDIA_DELTA_DENSITY_THRESHOLD = 0.5
+    TACHYCARDIA_DELTA_DENSITY_THRESHOLD = 0.135
     TACHYCARDIA_DELTA_EXITS_THRESHOLD = 20
     TACHYCARDIA_DELTA_BONUS = 20.0
 
@@ -159,19 +159,24 @@ class InterestingnessScorer:
 
         if child_delta_density > 0 or child_delta_exits > 0:
             # Delta metrics available — use child-isolated measurement.
-            # Exits threshold is parent-relative to prevent coasting.
+            # Both thresholds are parent-relative to prevent coasting.
+            parent_delta_density = self.parent_jit_stats.get("child_delta_max_exit_density", 0.0)
+            density_threshold = max(
+                self.TACHYCARDIA_DELTA_DENSITY_THRESHOLD,
+                parent_delta_density * self.TACHYCARDIA_PARENT_MULTIPLIER,
+            )
             parent_delta_exits = self.parent_jit_stats.get("child_delta_total_exits", 0)
             exits_threshold = max(
                 self.TACHYCARDIA_DELTA_EXITS_THRESHOLD,
                 parent_delta_exits * self.TACHYCARDIA_PARENT_MULTIPLIER,
             )
             tachycardia_triggered = (
-                child_delta_density > self.TACHYCARDIA_DELTA_DENSITY_THRESHOLD
-                or child_delta_exits > exits_threshold
+                child_delta_density > density_threshold or child_delta_exits > exits_threshold
             )
             if tachycardia_triggered:
                 print(
-                    f"  [+] JIT Tachycardia (delta): density={child_delta_density:.2f}, "
+                    f"  [+] JIT Tachycardia (delta): density={child_delta_density:.2f} "
+                    f"(threshold={density_threshold:.2f}), "
                     f"exits={child_delta_exits} (threshold={exits_threshold:.0f})",
                     file=sys.stderr,
                 )

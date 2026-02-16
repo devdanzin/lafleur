@@ -7,6 +7,7 @@ from unittest.mock import patch, MagicMock
 
 from lafleur.campaign import (
     CampaignAggregator,
+    InstanceData,
     generate_html_report,
     load_json_file,
     parse_timestamp,
@@ -163,6 +164,41 @@ class TestCrashInfo(unittest.TestCase):
         self.assertEqual(info.status_label, "NEW")
 
 
+class TestInstanceData(unittest.TestCase):
+    """Tests for InstanceData dataclass."""
+
+    def test_relative_dir_defaults_to_empty(self):
+        """Test that relative_dir defaults to empty string."""
+        inst = InstanceData(path=Path("/tmp/run1"), name="run1")
+        self.assertEqual(inst.relative_dir, "")
+
+
+class TestSetRelativeDirs(unittest.TestCase):
+    """Tests for CampaignAggregator.set_relative_dirs."""
+
+    def test_computes_relative_paths(self):
+        """Test that relative paths are computed from campaign root."""
+        aggregator = CampaignAggregator([])
+        aggregator.instances = [
+            InstanceData(path=Path("/campaign/runs/run1"), name="run1"),
+            InstanceData(path=Path("/campaign/runs/run2"), name="run2"),
+        ]
+        aggregator.set_relative_dirs(Path("/campaign"))
+
+        self.assertEqual(aggregator.instances[0].relative_dir, "runs/run1")
+        self.assertEqual(aggregator.instances[1].relative_dir, "runs/run2")
+
+    def test_falls_back_to_absolute_when_not_under_root(self):
+        """Test fallback to absolute path when instance is not under root."""
+        aggregator = CampaignAggregator([])
+        aggregator.instances = [
+            InstanceData(path=Path("/other/location/run1"), name="run1"),
+        ]
+        aggregator.set_relative_dirs(Path("/campaign"))
+
+        self.assertEqual(aggregator.instances[0].relative_dir, "/other/location/run1")
+
+
 class TestCampaignAggregator(unittest.TestCase):
     def setUp(self):
         self.temp_dir = tempfile.TemporaryDirectory()
@@ -237,6 +273,8 @@ class TestCampaignAggregator(unittest.TestCase):
         self.assertIn("Executions:     30", report)  # 10 + 20
         # Check rates
         self.assertIn("Fleet Speed:", report)
+        # Check Dir column in leaderboard
+        self.assertIn("| Dir", report)
 
     def test_html_generation(self):
         """Test that HTML report is generated without error."""
@@ -255,6 +293,7 @@ class TestCampaignAggregator(unittest.TestCase):
         self.assertTrue(output_path.exists())
         self.assertIn('<html lang="en">', content)
         self.assertIn("Lafleur Campaign", content)
+        self.assertIn("<th>Directory</th>", content)
 
     def test_empty_instances(self):
         """Test report with no valid instances."""

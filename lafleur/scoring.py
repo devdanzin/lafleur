@@ -147,25 +147,25 @@ class InterestingnessScorer:
                     score += performance_bonus
 
         # --- JIT Vitals Scoring ---
-        zombie_traces = self.jit_stats.get("zombie_traces", 0)
-        max_chain_depth = self.jit_stats.get("max_chain_depth", 0)
-        min_code_size = self.jit_stats.get("min_code_size", 0)
+        zombie_traces = self.jit_stats.get("zombie_traces") or 0
+        max_chain_depth = self.jit_stats.get("max_chain_depth") or 0
+        min_code_size = self.jit_stats.get("min_code_size") or 0
 
         # --- Tachycardia scoring ---
         # Prefer delta metrics (child-isolated) when available from session mode.
         # Fall back to absolute metrics for non-session runs or old data.
-        child_delta_density = self.jit_stats.get("child_delta_max_exit_density", 0.0)
-        child_delta_exits = self.jit_stats.get("child_delta_total_exits", 0)
+        child_delta_density = self.jit_stats.get("child_delta_max_exit_density") or 0.0
+        child_delta_exits = self.jit_stats.get("child_delta_total_exits") or 0
 
         if child_delta_density > 0 or child_delta_exits > 0:
             # Delta metrics available — use child-isolated measurement.
             # Both thresholds are parent-relative to prevent coasting.
-            parent_delta_density = self.parent_jit_stats.get("child_delta_max_exit_density", 0.0)
+            parent_delta_density = self.parent_jit_stats.get("child_delta_max_exit_density") or 0.0
             density_threshold = max(
                 self.TACHYCARDIA_DELTA_DENSITY_THRESHOLD,
                 parent_delta_density * self.TACHYCARDIA_PARENT_MULTIPLIER,
             )
-            parent_delta_exits = self.parent_jit_stats.get("child_delta_total_exits", 0)
+            parent_delta_exits = self.parent_jit_stats.get("child_delta_total_exits") or 0
             exits_threshold = max(
                 self.TACHYCARDIA_DELTA_EXITS_THRESHOLD,
                 parent_delta_exits * self.TACHYCARDIA_PARENT_MULTIPLIER,
@@ -183,8 +183,8 @@ class InterestingnessScorer:
                 score += self.TACHYCARDIA_DELTA_BONUS
         else:
             # No delta metrics — fall back to absolute (original behavior).
-            child_density = self.jit_stats.get("max_exit_density", 0.0)
-            parent_density = self.parent_jit_stats.get("max_exit_density", 0.0)
+            child_density = self.jit_stats.get("max_exit_density") or 0.0
+            parent_density = self.parent_jit_stats.get("max_exit_density") or 0.0
             density_threshold = max(
                 self.TACHYCARDIA_MIN_DENSITY,
                 parent_density * self.TACHYCARDIA_PARENT_MULTIPLIER,
@@ -368,38 +368,42 @@ class ScoringManager:
                     stats = json.loads(json_str)
 
                     aggregated_stats["max_exit_count"] = max(
-                        aggregated_stats["max_exit_count"], stats.get("max_exit_count", 0)
+                        aggregated_stats["max_exit_count"],
+                        stats.get("max_exit_count") or 0,
                     )
                     aggregated_stats["max_chain_depth"] = max(
-                        aggregated_stats["max_chain_depth"], stats.get("max_chain_depth", 0)
+                        aggregated_stats["max_chain_depth"],
+                        stats.get("max_chain_depth") or 0,
                     )
                     aggregated_stats["zombie_traces"] = max(
-                        aggregated_stats["zombie_traces"], stats.get("zombie_traces", 0)
+                        aggregated_stats["zombie_traces"],
+                        stats.get("zombie_traces") or 0,
                     )
                     aggregated_stats["max_exit_density"] = max(
-                        aggregated_stats["max_exit_density"], stats.get("max_exit_density", 0.0)
+                        aggregated_stats["max_exit_density"],
+                        stats.get("max_exit_density") or 0.0,
                     )
 
-                    code_size = stats.get("min_code_size", 0)
+                    code_size = stats.get("min_code_size") or 0
                     if code_size > 0:
                         min_code_sizes.append(code_size)
 
                     # Delta metrics: overwrite each time (we want the LAST line = child)
                     if "delta_max_exit_density" in stats:
-                        aggregated_stats["child_delta_max_exit_density"] = stats[
-                            "delta_max_exit_density"
-                        ]
-                        aggregated_stats["child_delta_max_exit_count"] = stats.get(
-                            "delta_max_exit_count", 0
+                        aggregated_stats["child_delta_max_exit_density"] = (
+                            stats.get("delta_max_exit_density") or 0.0
                         )
-                        aggregated_stats["child_delta_total_exits"] = stats.get(
-                            "delta_total_exits", 0
+                        aggregated_stats["child_delta_max_exit_count"] = (
+                            stats.get("delta_max_exit_count") or 0
                         )
-                        aggregated_stats["child_delta_new_executors"] = stats.get(
-                            "delta_new_executors", 0
+                        aggregated_stats["child_delta_total_exits"] = (
+                            stats.get("delta_total_exits") or 0
                         )
-                        aggregated_stats["child_delta_new_zombies"] = stats.get(
-                            "delta_new_zombies", 0
+                        aggregated_stats["child_delta_new_executors"] = (
+                            stats.get("delta_new_executors") or 0
+                        )
+                        aggregated_stats["child_delta_new_zombies"] = (
+                            stats.get("delta_new_zombies") or 0
                         )
 
                 except (json.JSONDecodeError, IndexError) as e:
@@ -672,8 +676,8 @@ class ScoringManager:
 
         # --- Dynamic Density Clamping ---
         # Prevent a single massive spike from setting an unreachable bar for the next generation.
-        child_density = jit_stats.get("max_exit_density", 0.0)
-        parent_density = parent_jit_stats.get("max_exit_density", 0.0)
+        child_density = jit_stats.get("max_exit_density") or 0.0
+        parent_density = parent_jit_stats.get("max_exit_density") or 0.0
 
         if parent_density > 0:
             clamped_density = min(parent_density * MAX_DENSITY_GROWTH_FACTOR, child_density)
@@ -681,8 +685,8 @@ class ScoringManager:
             clamped_density = child_density
 
         # Also clamp delta density if present
-        child_delta_density = jit_stats.get("child_delta_max_exit_density", 0.0)
-        parent_delta_density = parent_jit_stats.get("child_delta_max_exit_density", 0.0)
+        child_delta_density = jit_stats.get("child_delta_max_exit_density") or 0.0
+        parent_delta_density = parent_jit_stats.get("child_delta_max_exit_density") or 0.0
 
         if parent_delta_density > 0:
             clamped_delta_density = min(
@@ -692,8 +696,8 @@ class ScoringManager:
             clamped_delta_density = child_delta_density
 
         # Also clamp delta exits if present
-        child_delta_exits = jit_stats.get("child_delta_total_exits", 0)
-        parent_delta_exits = parent_jit_stats.get("child_delta_total_exits", 0)
+        child_delta_exits = jit_stats.get("child_delta_total_exits") or 0
+        parent_delta_exits = parent_jit_stats.get("child_delta_total_exits") or 0
 
         if parent_delta_exits > 0:
             clamped_delta_exits = min(

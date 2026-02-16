@@ -184,5 +184,48 @@ class TestJITParsing(unittest.TestCase):
         self.assertEqual(parsed["child_delta_total_exits"], 20)
 
 
+    def test_parse_jit_stats_null_min_code_size(self):
+        """None value for min_code_size should not crash."""
+        stats = {"min_code_size": None, "max_exit_count": 5}
+        log_content = f"[DRIVER:STATS] {json.dumps(stats)}\n"
+        parsed = self.orch.scoring_manager.parse_jit_stats(log_content)
+        self.assertEqual(parsed["min_code_size"], 0)
+        self.assertEqual(parsed["max_exit_count"], 5)
+
+    def test_parse_jit_stats_null_values_throughout(self):
+        """All fields set to None should not crash and should default to zero."""
+        stats = {
+            "max_exit_count": None,
+            "max_chain_depth": None,
+            "zombie_traces": None,
+            "min_code_size": None,
+            "max_exit_density": None,
+        }
+        log_content = f"[DRIVER:STATS] {json.dumps(stats)}\n"
+        parsed = self.orch.scoring_manager.parse_jit_stats(log_content)
+        self.assertEqual(parsed["max_exit_count"], 0)
+        self.assertEqual(parsed["max_chain_depth"], 0)
+        self.assertEqual(parsed["zombie_traces"], 0)
+        self.assertEqual(parsed["min_code_size"], 0)
+        self.assertAlmostEqual(parsed["max_exit_density"], 0.0)
+
+    def test_parse_jit_stats_null_delta_values(self):
+        """None values in delta fields should not crash."""
+        stats = {
+            "delta_max_exit_density": None,
+            "delta_max_exit_count": None,
+            "delta_total_exits": None,
+            "delta_new_executors": None,
+            "delta_new_zombies": None,
+        }
+        log_content = f"[DRIVER:STATS] {json.dumps(stats)}\n"
+        parsed = self.orch.scoring_manager.parse_jit_stats(log_content)
+        self.assertAlmostEqual(parsed["child_delta_max_exit_density"], 0.0)
+        self.assertEqual(parsed["child_delta_max_exit_count"], 0)
+        self.assertEqual(parsed["child_delta_total_exits"], 0)
+        self.assertEqual(parsed["child_delta_new_executors"], 0)
+        self.assertEqual(parsed["child_delta_new_zombies"], 0)
+
+
 if __name__ == "__main__":
     unittest.main()

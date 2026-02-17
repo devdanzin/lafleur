@@ -519,14 +519,18 @@ class TestMutationCycleIntegration(unittest.TestCase):
                 is_deepening_session=False,
             )
 
-        # Verify crash was saved
-        crash_files = list(Path("crashes").glob("crash_*.py"))
-        self.assertGreater(len(crash_files), 0, "Crash file should be saved")
+        # Verify crash was saved in a structured directory
+        crash_dirs = [d for d in Path("crashes").iterdir() if d.is_dir()]
+        self.assertGreater(len(crash_dirs), 0, "Crash directory should be created")
 
-        # Verify log file exists
-        if crash_files:
-            log_file = crash_files[0].with_suffix(".log")
-            self.assertTrue(log_file.exists(), "Crash log should be saved")
+        # Verify directory contains metadata.json and crash_script.py
+        crash_dir = crash_dirs[0]
+        self.assertTrue(
+            (crash_dir / "metadata.json").exists(), "metadata.json should exist in crash dir"
+        )
+        self.assertTrue(
+            (crash_dir / "crash_script.py").exists(), "crash_script.py should exist in crash dir"
+        )
 
     def test_mutation_cycle_with_timeout_saves_artifact(self):
         """Mutation cycle detecting timeout saves timeout artifact."""

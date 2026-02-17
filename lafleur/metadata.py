@@ -420,6 +420,7 @@ def generate_run_metadata(output_dir: Path, args: argparse.Namespace) -> dict:
         },
         # Configuration (always fresh - may change between runs)
         "configuration": {
+            "execution_mode": "session" if getattr(args, "session_fuzz", False) else "legacy",
             "args": vars(args),
             "env_vars": {
                 "PYTHON_JIT": os.environ.get("PYTHON_JIT"),

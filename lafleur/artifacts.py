@@ -346,6 +346,58 @@ class ArtifactManager:
         if self._safe_copy(source_path, dest_path, "JIT hang file"):
             print(f"  [+] JIT hang saved to {dest_path}", file=sys.stderr)
 
+    def save_standalone_crash(
+        self,
+        source_path: Path,
+        exit_code: int,
+        crash_signature: CrashSignature | None = None,
+    ) -> Path:
+        """Save a standalone (non-session) crash in a structured directory.
+
+        Creates the same directory layout as save_session_crash() so that
+        campaign and report tools can discover and aggregate these crashes.
+
+        Args:
+            source_path: Path to the script that triggered the crash.
+            exit_code: The exit code from the crashed execution.
+            crash_signature: Optional crash fingerprint metadata.
+
+        Returns:
+            Path to the created crash directory.
+        """
+        timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+        random_suffix = random.randint(1000, 9999)
+        crash_dir = self.crashes_dir / f"crash_{timestamp}_{random_suffix}"
+        crash_dir.mkdir(parents=True, exist_ok=True)
+
+        # Write metadata.json
+        if crash_signature:
+            metadata_path = crash_dir / "metadata.json"
+            metadata = crash_signature.to_dict()
+            metadata["timestamp"] = timestamp
+            metadata_path.write_text(json.dumps(metadata, indent=2))
+
+        # Copy the triggering script
+        dest_name = "crash_script.py"
+        self._safe_copy(
+            source_path, crash_dir / dest_name, "crash source file", preserve_metadata=True
+        )
+
+        # Create reproduce.sh
+        reproduce_script = crash_dir / "reproduce.sh"
+        reproduce_content = dedent(f"""\
+            #!/bin/bash
+            # Crash reproducer
+            # Exit code: {exit_code}
+            # Generated: {timestamp}
+
+            python3 {dest_name}
+        """)
+        reproduce_script.write_text(reproduce_content)
+        reproduce_script.chmod(0o755)
+
+        return crash_dir
+
     def save_session_crash(
         self, scripts: list[Path], exit_code: int, crash_signature: CrashSignature | None = None
     ) -> Path:
@@ -518,21 +570,17 @@ class ArtifactManager:
                     print(f"  [!!!] Session crash bundle saved to: {crash_dir}", file=sys.stderr)
 
             else:
-                # Standard mode: save single child file
-                # Use sanitization for filename
-                safe_reason = re.sub(r"[^a-zA-Z0-9_.-]", "_", crash_reason[:50])
-                crash_base_name = f"crash_{safe_reason}_{source_path.name}"
-                crash_source_path = self.crashes_dir / crash_base_name
+                # Standard mode: save single child in structured directory
+                crash_dir = self.save_standalone_crash(source_path, return_code, crash_signature)
 
-                # Determine destination log name, preserving extensions/markers
+                # Copy log into the crash directory
                 log_suffix = self._get_log_suffix(log_to_save)
-                crash_log_path = self.crashes_dir / f"{Path(crash_base_name).stem}{log_suffix}"
+                crash_log_path = crash_dir / f"crash{log_suffix}"
 
-                self._safe_copy(source_path, crash_source_path, "crash source file")
                 if self._safe_copy(log_to_save, crash_log_path, "crash log file"):
-                    # Clean up the processed temp log if we created one
                     if log_to_save != log_path:
                         log_to_save.unlink()
+                    print(f"  [!!!] Crash saved to: {crash_dir}", file=sys.stderr)
 
             return True
 

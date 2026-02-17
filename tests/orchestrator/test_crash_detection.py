@@ -8,12 +8,14 @@ Also tests _filter_jit_stderr on ExecutionManager.
 """
 
 import io
+import json
 import signal
+import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch, mock_open
 from lafleur.artifacts import ArtifactManager
-from lafleur.analysis import CrashFingerprinter
+from lafleur.analysis import CrashFingerprinter, CrashSignature, CrashType
 from lafleur.execution import ExecutionManager
 
 
@@ -239,21 +241,24 @@ class TestCheckForCrash(unittest.TestCase):
                         )
 
     def test_saves_crash_artifacts(self):
-        """Test that source and log files are copied to crashes/ directory."""
+        """Test that crash is saved in a structured directory via save_standalone_crash."""
         source_path = Path("/tmp/child_abc123.py")
         log_path = Path("/tmp/child_abc123.log")
         log_content = "Abort trap!"
 
+        mock_crash_dir = Path("/tmp/crashes/crash_20260101_120000_1234")
         with patch.object(self.artifact_manager, "process_log_file", return_value=log_path):
-            with patch("shutil.copy") as mock_copy:
-                with patch("sys.stderr", new_callable=io.StringIO):
-                    result = self.artifact_manager.check_for_crash(
-                        0, log_content, source_path, log_path
-                    )
+            with patch.object(
+                self.artifact_manager, "save_standalone_crash", return_value=mock_crash_dir
+            ) as mock_save:
+                with patch.object(self.artifact_manager, "_safe_copy", return_value=True):
+                    with patch("sys.stderr", new_callable=io.StringIO):
+                        result = self.artifact_manager.check_for_crash(
+                            0, log_content, source_path, log_path
+                        )
 
-                    self.assertTrue(result)
-                    # Should copy both source and log
-                    self.assertEqual(mock_copy.call_count, 2)
+                        self.assertTrue(result)
+                        mock_save.assert_called_once()
 
     def test_session_crash_saving(self):
         """Test that session fuzzing crashes save the full bundle of scripts."""
@@ -316,44 +321,56 @@ class TestCheckForCrash(unittest.TestCase):
             self.assertTrue(result)
 
     def test_preserves_truncated_log_extension(self):
-        """Test that _truncated.log extension is preserved in crash filename."""
+        """Test that _truncated.log extension is preserved in crash directory."""
         source_path = Path("/tmp/child_abc123.py")
         log_path = Path("/tmp/child_abc123.log")
         log_content = "Assertion error"
 
         truncated_log = Path("/tmp/child_abc123_truncated.log")
+        mock_crash_dir = Path("/tmp/crashes/crash_20260101_120000_1234")
         with patch.object(self.artifact_manager, "process_log_file", return_value=truncated_log):
-            with patch("shutil.copy") as mock_copy:
-                with patch("pathlib.Path.unlink"):
-                    with patch("sys.stderr", new_callable=io.StringIO):
-                        self.artifact_manager.check_for_crash(0, log_content, source_path, log_path)
+            with patch.object(
+                self.artifact_manager, "save_standalone_crash", return_value=mock_crash_dir
+            ):
+                with patch.object(
+                    self.artifact_manager, "_safe_copy", return_value=True
+                ) as mock_safe_copy:
+                    with patch("pathlib.Path.unlink"):
+                        with patch("sys.stderr", new_callable=io.StringIO):
+                            self.artifact_manager.check_for_crash(
+                                0, log_content, source_path, log_path
+                            )
 
-                        # Check that the log was copied with _truncated.log extension
-                        calls = [str(call[0][1]) for call in mock_copy.call_args_list]
-                        self.assertTrue(
-                            any("_truncated.log" in call for call in calls),
-                            f"Expected _truncated.log in calls: {calls}",
-                        )
+                            # Check that the log destination uses _truncated.log
+                            log_copy_call = mock_safe_copy.call_args
+                            log_dest = str(log_copy_call[0][1])
+                            self.assertIn("crash_truncated.log", log_dest)
 
     def test_preserves_compressed_log_extension(self):
-        """Test that .log.zst extension is preserved in crash filename."""
+        """Test that .log.zst extension is preserved in crash directory."""
         source_path = Path("/tmp/child_abc123.py")
         log_path = Path("/tmp/child_abc123.log")
         log_content = "JITCorrectnessError: Bad trace"
 
         compressed_log = Path("/tmp/child_abc123.log.zst")
+        mock_crash_dir = Path("/tmp/crashes/crash_20260101_120000_1234")
         with patch.object(self.artifact_manager, "process_log_file", return_value=compressed_log):
-            with patch("shutil.copy") as mock_copy:
-                with patch("pathlib.Path.unlink"):
-                    with patch("sys.stderr", new_callable=io.StringIO):
-                        self.artifact_manager.check_for_crash(0, log_content, source_path, log_path)
+            with patch.object(
+                self.artifact_manager, "save_standalone_crash", return_value=mock_crash_dir
+            ):
+                with patch.object(
+                    self.artifact_manager, "_safe_copy", return_value=True
+                ) as mock_safe_copy:
+                    with patch("pathlib.Path.unlink"):
+                        with patch("sys.stderr", new_callable=io.StringIO):
+                            self.artifact_manager.check_for_crash(
+                                0, log_content, source_path, log_path
+                            )
 
-                        # Check that the log was copied with .log.zst extension
-                        calls = [str(call[0][1]) for call in mock_copy.call_args_list]
-                        self.assertTrue(
-                            any(".log.zst" in call for call in calls),
-                            f"Expected .log.zst in calls: {calls}",
-                        )
+                            # Check that the log destination uses .log.zst
+                            log_copy_call = mock_safe_copy.call_args
+                            log_dest = str(log_copy_call[0][1])
+                            self.assertIn("crash.log.zst", log_dest)
 
     def test_handles_io_error_gracefully(self):
         """Test that IOError during file copy is handled gracefully."""
@@ -925,6 +942,107 @@ class TestSaveTimeoutArtifact(unittest.TestCase):
             )
             # Two copies: source + log
             self.assertEqual(mock_copy.call_count, 2)
+
+
+class TestSaveStandaloneCrash(unittest.TestCase):
+    """Test ArtifactManager.save_standalone_crash method."""
+
+    def setUp(self):
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.crashes_dir = Path(self.temp_dir.name) / "crashes"
+        self.crashes_dir.mkdir()
+        self.artifact_manager = ArtifactManager(
+            crashes_dir=self.crashes_dir,
+            timeouts_dir=Path(self.temp_dir.name) / "timeouts",
+            divergences_dir=Path(self.temp_dir.name) / "divergences",
+            regressions_dir=Path(self.temp_dir.name) / "regressions",
+            fingerprinter=CrashFingerprinter(),
+            max_timeout_log_bytes=10_000_000,
+            max_crash_log_bytes=10_000_000,
+            session_fuzz=False,
+        )
+
+    def tearDown(self):
+        self.temp_dir.cleanup()
+
+    def test_creates_crash_directory(self):
+        """Crash directory is created under crashes/."""
+        source = Path(self.temp_dir.name) / "child.py"
+        source.write_text("x = 1")
+
+        crash_dir = self.artifact_manager.save_standalone_crash(source, -11)
+
+        self.assertTrue(crash_dir.is_dir())
+        self.assertEqual(crash_dir.parent, self.crashes_dir)
+
+    def test_writes_metadata_json(self):
+        """metadata.json is written with fingerprint and timestamp."""
+        source = Path(self.temp_dir.name) / "child.py"
+        source.write_text("x = 1")
+
+        signature = CrashSignature(
+            category="SIGNAL",
+            crash_type=CrashType.RAW_SEGFAULT,
+            returncode=-11,
+            signal_name="SIGSEGV",
+            fingerprint="SEGV:unknown",
+        )
+        crash_dir = self.artifact_manager.save_standalone_crash(source, -11, signature)
+
+        metadata_path = crash_dir / "metadata.json"
+        self.assertTrue(metadata_path.exists())
+        metadata = json.loads(metadata_path.read_text())
+        self.assertEqual(metadata["fingerprint"], "SEGV:unknown")
+        self.assertIn("timestamp", metadata)
+
+    def test_copies_source_script(self):
+        """Triggering script is copied into crash directory."""
+        source = Path(self.temp_dir.name) / "child.py"
+        source.write_text("x = 1 / 0")
+
+        crash_dir = self.artifact_manager.save_standalone_crash(source, -11)
+
+        script_path = crash_dir / "crash_script.py"
+        self.assertTrue(script_path.exists())
+        self.assertEqual(script_path.read_text(), "x = 1 / 0")
+
+    def test_creates_reproduce_sh(self):
+        """reproduce.sh is created and executable."""
+        source = Path(self.temp_dir.name) / "child.py"
+        source.write_text("x = 1")
+
+        crash_dir = self.artifact_manager.save_standalone_crash(source, -11)
+
+        reproduce = crash_dir / "reproduce.sh"
+        self.assertTrue(reproduce.exists())
+        content = reproduce.read_text()
+        self.assertIn("crash_script.py", content)
+        self.assertIn("-11", content)
+
+    def test_campaign_can_discover_crash(self):
+        """Campaign aggregator can discover standalone crash via metadata.json."""
+        source = Path(self.temp_dir.name) / "child.py"
+        source.write_text("x = 1")
+
+        signature = CrashSignature(
+            category="SIGNAL",
+            crash_type=CrashType.RAW_SEGFAULT,
+            returncode=-11,
+            signal_name="SIGSEGV",
+            fingerprint="SEGV:test",
+        )
+        self.artifact_manager.save_standalone_crash(source, -11, signature)
+
+        # Simulate what campaign _aggregate_crashes does
+        found = False
+        for entry in self.crashes_dir.iterdir():
+            if entry.is_dir():
+                meta_path = entry / "metadata.json"
+                if meta_path.exists():
+                    meta = json.loads(meta_path.read_text())
+                    if meta.get("fingerprint") == "SEGV:test":
+                        found = True
+        self.assertTrue(found, "Campaign aggregator pattern should find the crash")
 
 
 if __name__ == "__main__":

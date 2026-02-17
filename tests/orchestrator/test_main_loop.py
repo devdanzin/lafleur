@@ -22,6 +22,7 @@ from lafleur.orchestrator import (
     ParentContext,
     _format_run_header,
     _format_run_summary,
+    main,
 )
 
 
@@ -1581,6 +1582,29 @@ class TestMain(unittest.TestCase):
         mock_orch.corpus_manager.prune_corpus.assert_called_once_with(dry_run=True)
         mock_orch.run_evolutionary_loop.assert_not_called()
 
+    @patch("lafleur.orchestrator.LafleurOrchestrator")
+    @patch("lafleur.orchestrator.generate_run_metadata")
+    @patch("lafleur.orchestrator.load_run_stats")
+    @patch("lafleur.orchestrator.TeeLogger")
+    def test_prune_corpus_with_force_passes_dry_run_false(
+        self, mock_tee, mock_stats, mock_metadata, mock_orch_class
+    ):
+        """--prune-corpus --force passes dry_run=False to prune_corpus()."""
+        mock_stats.return_value = {"total_mutations": 0}
+        mock_metadata.return_value = {"run_id": "test", "instance_name": "test"}
+        mock_tee.return_value = MagicMock()
+        mock_orch = MagicMock()
+        mock_orch_class.return_value = mock_orch
+
+        with patch("sys.argv", ["lafleur", "--fusil-path", "/fake", "--prune-corpus", "--force"]):
+            with patch("lafleur.orchestrator.LOGS_DIR") as mock_logs:
+                mock_logs.mkdir = MagicMock()
+                with patch("sys.exit", side_effect=SystemExit(0)):
+                    with self.assertRaises(SystemExit):
+                        main()
+
+        mock_orch.corpus_manager.prune_corpus.assert_called_once_with(dry_run=False)
+
 
 class TestCheckTimingRegression(unittest.TestCase):
     """Test _check_timing_regression method."""
@@ -1655,6 +1679,278 @@ class TestCheckTimingRegression(unittest.TestCase):
         self.orchestrator._check_timing_regression(data, "child.py", None)
 
         self.orchestrator.artifact_manager.save_regression.assert_not_called()
+
+
+class TestMainCLIPlumbing(unittest.TestCase):
+    """Verify every CLI flag reaches LafleurOrchestrator.__init__() correctly."""
+
+    def _run_main(self, cli_args: list[str]) -> tuple:
+        """Run main() with given CLI args and return (call_args, call_kwargs) of the constructor."""
+        with (
+            patch("lafleur.orchestrator.LafleurOrchestrator") as mock_orch_class,
+            patch("lafleur.orchestrator.generate_run_metadata") as mock_metadata,
+            patch("lafleur.orchestrator.load_run_stats") as mock_stats,
+            patch("lafleur.orchestrator.TeeLogger") as mock_tee,
+        ):
+            mock_stats.return_value = {"total_mutations": 0}
+            mock_metadata.return_value = {"run_id": "test-run", "instance_name": "test"}
+            mock_tee.return_value = MagicMock()
+
+            mock_orch = MagicMock()
+            mock_orch_class.return_value = mock_orch
+
+            with patch("sys.argv", ["lafleur"] + cli_args):
+                with patch("lafleur.orchestrator.LOGS_DIR") as mock_logs:
+                    mock_logs.mkdir = MagicMock()
+                    mock_logs.__truediv__ = lambda self, x: Path("/fake/logs") / x
+                    main()
+
+            return mock_orch_class.call_args
+
+    # --- Boolean flags (store_true) ---
+
+    def test_keep_tmp_logs_default_false(self):
+        """--keep-tmp-logs defaults to False."""
+        _, kwargs = self._run_main(["--fusil-path", "/fake"])
+        self.assertFalse(kwargs["keep_tmp_logs"])
+
+    def test_keep_tmp_logs_enabled(self):
+        """--keep-tmp-logs=True reaches constructor."""
+        _, kwargs = self._run_main(["--fusil-path", "/fake", "--keep-tmp-logs"])
+        self.assertTrue(kwargs["keep_tmp_logs"])
+
+    def test_differential_testing_default_false(self):
+        """--differential-testing defaults to False."""
+        _, kwargs = self._run_main(["--fusil-path", "/fake"])
+        self.assertFalse(kwargs["differential_testing"])
+
+    def test_differential_testing_enabled(self):
+        """--differential-testing=True reaches constructor."""
+        _, kwargs = self._run_main(["--fusil-path", "/fake", "--differential-testing"])
+        self.assertTrue(kwargs["differential_testing"])
+
+    def test_dynamic_runs_default_false(self):
+        """--dynamic-runs defaults to False."""
+        _, kwargs = self._run_main(["--fusil-path", "/fake"])
+        self.assertFalse(kwargs["use_dynamic_runs"])
+
+    def test_dynamic_runs_enabled(self):
+        """--dynamic-runs=True reaches constructor."""
+        _, kwargs = self._run_main(["--fusil-path", "/fake", "--dynamic-runs"])
+        self.assertTrue(kwargs["use_dynamic_runs"])
+
+    def test_timing_fuzz_default_false(self):
+        """--timing-fuzz defaults to False."""
+        _, kwargs = self._run_main(["--fusil-path", "/fake"])
+        self.assertFalse(kwargs["timing_fuzz"])
+
+    def test_timing_fuzz_enabled(self):
+        """--timing-fuzz=True reaches constructor."""
+        _, kwargs = self._run_main(["--fusil-path", "/fake", "--timing-fuzz"])
+        self.assertTrue(kwargs["timing_fuzz"])
+
+    def test_session_fuzz_default_false(self):
+        """--session-fuzz defaults to False."""
+        _, kwargs = self._run_main(["--fusil-path", "/fake"])
+        self.assertFalse(kwargs["session_fuzz"])
+
+    def test_session_fuzz_enabled(self):
+        """--session-fuzz=True reaches constructor."""
+        _, kwargs = self._run_main(["--fusil-path", "/fake", "--session-fuzz"])
+        self.assertTrue(kwargs["session_fuzz"])
+
+    def test_no_ekg_default_false(self):
+        """--no-ekg defaults to False."""
+        _, kwargs = self._run_main(["--fusil-path", "/fake"])
+        self.assertFalse(kwargs["no_ekg"])
+
+    def test_no_ekg_enabled(self):
+        """--no-ekg=True reaches constructor."""
+        _, kwargs = self._run_main(["--fusil-path", "/fake", "--no-ekg"])
+        self.assertTrue(kwargs["no_ekg"])
+
+    # --- Value flags ---
+
+    def test_fusil_path_passed(self):
+        """--fusil-path value reaches constructor."""
+        _, kwargs = self._run_main(["--fusil-path", "/my/fusil"])
+        self.assertEqual(kwargs["fusil_path"], "/my/fusil")
+
+    def test_fusil_path_default_none(self):
+        """--fusil-path defaults to None."""
+        _, kwargs = self._run_main([])
+        self.assertIsNone(kwargs["fusil_path"])
+
+    def test_min_corpus_files_default(self):
+        """--min-corpus-files defaults to 1."""
+        _, kwargs = self._run_main(["--fusil-path", "/fake"])
+        self.assertEqual(kwargs["min_corpus_files"], 1)
+
+    def test_min_corpus_files_custom(self):
+        """--min-corpus-files custom value reaches constructor."""
+        _, kwargs = self._run_main(["--fusil-path", "/fake", "--min-corpus-files", "20"])
+        self.assertEqual(kwargs["min_corpus_files"], 20)
+
+    def test_timeout_default(self):
+        """--timeout defaults to 10."""
+        _, kwargs = self._run_main(["--fusil-path", "/fake"])
+        self.assertEqual(kwargs["timeout"], 10)
+
+    def test_timeout_custom(self):
+        """--timeout custom value reaches constructor."""
+        _, kwargs = self._run_main(["--fusil-path", "/fake", "--timeout", "30"])
+        self.assertEqual(kwargs["timeout"], 30)
+
+    def test_runs_default(self):
+        """--runs defaults to 1."""
+        _, kwargs = self._run_main(["--fusil-path", "/fake"])
+        self.assertEqual(kwargs["num_runs"], 1)
+
+    def test_runs_custom(self):
+        """--runs custom value reaches constructor as num_runs."""
+        _, kwargs = self._run_main(["--fusil-path", "/fake", "--runs", "5"])
+        self.assertEqual(kwargs["num_runs"], 5)
+
+    def test_deepening_probability_default(self):
+        """--deepening-probability defaults to 0.2."""
+        _, kwargs = self._run_main(["--fusil-path", "/fake"])
+        self.assertAlmostEqual(kwargs["deepening_probability"], 0.2)
+
+    def test_deepening_probability_custom(self):
+        """--deepening-probability custom value reaches constructor."""
+        _, kwargs = self._run_main(["--fusil-path", "/fake", "--deepening-probability", "0.8"])
+        self.assertAlmostEqual(kwargs["deepening_probability"], 0.8)
+
+    def test_max_timeout_log_size_default(self):
+        """--max-timeout-log-size defaults to 400."""
+        _, kwargs = self._run_main(["--fusil-path", "/fake"])
+        self.assertEqual(kwargs["max_timeout_log_size"], 400)
+
+    def test_max_timeout_log_size_custom(self):
+        """--max-timeout-log-size custom value reaches constructor."""
+        _, kwargs = self._run_main(["--fusil-path", "/fake", "--max-timeout-log-size", "100"])
+        self.assertEqual(kwargs["max_timeout_log_size"], 100)
+
+    def test_max_crash_log_size_default(self):
+        """--max-crash-log-size defaults to 400."""
+        _, kwargs = self._run_main(["--fusil-path", "/fake"])
+        self.assertEqual(kwargs["max_crash_log_size"], 400)
+
+    def test_max_crash_log_size_custom(self):
+        """--max-crash-log-size custom value reaches constructor."""
+        _, kwargs = self._run_main(["--fusil-path", "/fake", "--max-crash-log-size", "200"])
+        self.assertEqual(kwargs["max_crash_log_size"], 200)
+
+    def test_target_python_default(self):
+        """--target-python defaults to sys.executable."""
+        _, kwargs = self._run_main(["--fusil-path", "/fake"])
+        self.assertIsInstance(kwargs["target_python"], str)
+
+    def test_target_python_custom(self):
+        """--target-python custom value reaches constructor."""
+        _, kwargs = self._run_main(["--fusil-path", "/fake", "--target-python", "/opt/python"])
+        self.assertEqual(kwargs["target_python"], "/opt/python")
+
+    # --- Combined flags ---
+
+    def test_all_flags_combined(self):
+        """All flags set simultaneously reach constructor with correct values."""
+        _, kwargs = self._run_main(
+            [
+                "--fusil-path",
+                "/my/fusil",
+                "--min-corpus-files",
+                "10",
+                "--differential-testing",
+                "--timeout",
+                "25",
+                "--runs",
+                "3",
+                "--dynamic-runs",
+                "--keep-tmp-logs",
+                "--timing-fuzz",
+                "--session-fuzz",
+                "--deepening-probability",
+                "0.7",
+                "--max-timeout-log-size",
+                "150",
+                "--max-crash-log-size",
+                "250",
+                "--target-python",
+                "/opt/python3",
+                "--no-ekg",
+            ]
+        )
+        self.assertEqual(kwargs["fusil_path"], "/my/fusil")
+        self.assertEqual(kwargs["min_corpus_files"], 10)
+        self.assertTrue(kwargs["differential_testing"])
+        self.assertEqual(kwargs["timeout"], 25)
+        self.assertEqual(kwargs["num_runs"], 3)
+        self.assertTrue(kwargs["use_dynamic_runs"])
+        self.assertTrue(kwargs["keep_tmp_logs"])
+        self.assertTrue(kwargs["timing_fuzz"])
+        self.assertTrue(kwargs["session_fuzz"])
+        self.assertAlmostEqual(kwargs["deepening_probability"], 0.7)
+        self.assertEqual(kwargs["max_timeout_log_size"], 150)
+        self.assertEqual(kwargs["max_crash_log_size"], 250)
+        self.assertEqual(kwargs["target_python"], "/opt/python3")
+        self.assertTrue(kwargs["no_ekg"])
+
+    # --- run_stats deep copy ---
+
+    def test_run_stats_is_deep_copied(self):
+        """run_stats kwarg should be a deep copy, not the original dict."""
+        with (
+            patch("lafleur.orchestrator.LafleurOrchestrator") as mock_orch_class,
+            patch("lafleur.orchestrator.generate_run_metadata") as mock_metadata,
+            patch("lafleur.orchestrator.load_run_stats") as mock_stats,
+            patch("lafleur.orchestrator.TeeLogger") as mock_tee,
+        ):
+            original_stats = {"total_mutations": 42, "nested": {"key": "val"}}
+            mock_stats.return_value = original_stats
+            mock_metadata.return_value = {"run_id": "test", "instance_name": "test"}
+            mock_tee.return_value = MagicMock()
+            mock_orch_class.return_value = MagicMock()
+
+            with patch("sys.argv", ["lafleur", "--fusil-path", "/fake"]):
+                with patch("lafleur.orchestrator.LOGS_DIR") as mock_logs:
+                    mock_logs.mkdir = MagicMock()
+                    mock_logs.__truediv__ = lambda self, x: Path("/fake/logs") / x
+                    main()
+
+            _, kwargs = mock_orch_class.call_args
+            # Should be equal but not the same object
+            self.assertEqual(kwargs["run_stats"]["total_mutations"], 42)
+            self.assertIsNot(kwargs["run_stats"], original_stats)
+            self.assertIsNot(kwargs["run_stats"]["nested"], original_stats["nested"])
+
+    # --- --instance-name (passed to generate_run_metadata, not constructor) ---
+
+    def test_instance_name_passed_to_metadata(self):
+        """--instance-name is passed to generate_run_metadata via args."""
+        with (
+            patch("lafleur.orchestrator.LafleurOrchestrator") as mock_orch_class,
+            patch("lafleur.orchestrator.generate_run_metadata") as mock_metadata,
+            patch("lafleur.orchestrator.load_run_stats") as mock_stats,
+            patch("lafleur.orchestrator.TeeLogger") as mock_tee,
+        ):
+            mock_stats.return_value = {"total_mutations": 0}
+            mock_metadata.return_value = {"run_id": "test", "instance_name": "my-instance"}
+            mock_tee.return_value = MagicMock()
+            mock_orch_class.return_value = MagicMock()
+
+            with patch(
+                "sys.argv", ["lafleur", "--fusil-path", "/fake", "--instance-name", "my-instance"]
+            ):
+                with patch("lafleur.orchestrator.LOGS_DIR") as mock_logs:
+                    mock_logs.mkdir = MagicMock()
+                    mock_logs.__truediv__ = lambda self, x: Path("/fake/logs") / x
+                    main()
+
+            # generate_run_metadata receives the args namespace
+            call_args = mock_metadata.call_args[0]
+            args_namespace = call_args[1]
+            self.assertEqual(args_namespace.instance_name, "my-instance")
 
 
 if __name__ == "__main__":

@@ -1061,6 +1061,67 @@ class TestPrepareParentContext(unittest.TestCase):
         # "uop_harness_test" should be filtered out
         self.assertEqual(ctx.watched_keys, ["dep_a", "dep_b"])
 
+    def test_marks_sterile_when_parent_unparseable(self):
+        """Parent is marked sterile when _get_nodes_from_parent returns None."""
+        self.orchestrator.mutation_controller._get_nodes_from_parent.return_value = (
+            None,
+            None,
+            None,
+        )
+        self.orchestrator.mutation_controller._calculate_mutations.return_value = 100
+
+        with patch("sys.stderr", new_callable=io.StringIO) as mock_stderr:
+            result = self.orchestrator._prepare_parent_context(
+                Path("/corpus/parent_test.py"), 100.0, False
+            )
+
+        self.assertIsNone(result)
+        # Parent should now be marked sterile in coverage state
+        parent_meta = self.orchestrator.coverage_manager.state["per_file_coverage"][
+            "parent_test.py"
+        ]
+        self.assertTrue(parent_meta["is_sterile"])
+        self.assertIn("sterile", mock_stderr.getvalue().lower())
+
+    def test_marks_sterile_even_with_empty_metadata(self):
+        """Parent with empty metadata dict is still marked sterile."""
+        # Add a parent with empty metadata
+        self.orchestrator.coverage_manager.state["per_file_coverage"]["empty_parent.py"] = {}
+        self.orchestrator.mutation_controller._get_nodes_from_parent.return_value = (
+            None,
+            None,
+            None,
+        )
+        self.orchestrator.mutation_controller._calculate_mutations.return_value = 100
+
+        with patch("sys.stderr", new_callable=io.StringIO):
+            result = self.orchestrator._prepare_parent_context(
+                Path("/corpus/empty_parent.py"), 50.0, False
+            )
+
+        self.assertIsNone(result)
+        parent_meta = self.orchestrator.coverage_manager.state["per_file_coverage"][
+            "empty_parent.py"
+        ]
+        self.assertTrue(parent_meta["is_sterile"])
+
+    def test_does_not_mark_sterile_when_parent_not_in_state(self):
+        """No crash when parent has no metadata in coverage state."""
+        self.orchestrator.mutation_controller._get_nodes_from_parent.return_value = (
+            None,
+            None,
+            None,
+        )
+        self.orchestrator.mutation_controller._calculate_mutations.return_value = 100
+
+        # Parent not in per_file_coverage — parent_metadata will be {}
+        result = self.orchestrator._prepare_parent_context(
+            Path("/corpus/unknown_parent.py"), 100.0, False
+        )
+
+        # Should return None without crashing
+        self.assertIsNone(result)
+
 
 class TestExecuteSingleMutation(unittest.TestCase):
     """Test _execute_single_mutation method."""

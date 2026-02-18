@@ -380,6 +380,7 @@ class TestExecuteMutationAndAnalysisCycle(unittest.TestCase):
         self.orchestrator.global_seed_counter = 100
         self.orchestrator.use_dynamic_runs = False
         self.orchestrator.base_runs = 3
+        self.orchestrator._last_heartbeat_time = float("inf")
         self.orchestrator.corpus_manager = MagicMock()
         self.orchestrator.execution_manager = MagicMock()
         self.orchestrator.mutation_controller = MagicMock()
@@ -740,6 +741,7 @@ class TestRunStatsKeyErrorWithEmptyStats(unittest.TestCase):
         self.orchestrator.use_dynamic_runs = False
         self.orchestrator.base_runs = 1
         self.orchestrator.keep_tmp_logs = False
+        self.orchestrator._last_heartbeat_time = float("inf")
         self.orchestrator.corpus_manager = MagicMock()
         self.orchestrator.corpus_manager.add_new_file.return_value = "new_child.py"
         self.orchestrator.corpus_manager.scheduler = MagicMock()
@@ -1679,6 +1681,65 @@ class TestCheckTimingRegression(unittest.TestCase):
         self.orchestrator._check_timing_regression(data, "child.py", None)
 
         self.orchestrator.artifact_manager.save_regression.assert_not_called()
+
+
+class TestHeartbeat(unittest.TestCase):
+    """Test _write_heartbeat method and rate limiting."""
+
+    def setUp(self):
+        self.tmp_dir = Path(tempfile.mkdtemp())
+        self.heartbeat_file = self.tmp_dir / "logs" / "heartbeat"
+        self.heartbeat_file.parent.mkdir(parents=True)
+
+        self.orchestrator = LafleurOrchestrator.__new__(LafleurOrchestrator)
+        self.orchestrator._last_heartbeat_time = 0.0
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp_dir)
+
+    def test_writes_heartbeat_file(self):
+        """Heartbeat file is created with an ISO timestamp."""
+        with patch("lafleur.orchestrator.HEARTBEAT_FILE", self.heartbeat_file):
+            self.orchestrator._write_heartbeat()
+
+        self.assertTrue(self.heartbeat_file.exists())
+        content = self.heartbeat_file.read_text().strip()
+        # Should be a valid ISO timestamp
+        ts = datetime.fromisoformat(content)
+        self.assertIsNotNone(ts)
+
+    def test_rate_limited(self):
+        """Heartbeat is not written if called again within the interval."""
+        with patch("lafleur.orchestrator.HEARTBEAT_FILE", self.heartbeat_file):
+            self.orchestrator._write_heartbeat()
+            first_content = self.heartbeat_file.read_text()
+
+            # Call again immediately — should be rate-limited
+            self.orchestrator._write_heartbeat()
+            second_content = self.heartbeat_file.read_text()
+
+        self.assertEqual(first_content, second_content)
+
+    def test_writes_again_after_interval(self):
+        """Heartbeat is written again after the rate-limit interval elapses."""
+        with patch("lafleur.orchestrator.HEARTBEAT_FILE", self.heartbeat_file):
+            self.orchestrator._write_heartbeat()
+            first_content = self.heartbeat_file.read_text()
+
+            # Simulate time passing beyond the interval
+            self.orchestrator._last_heartbeat_time -= 120  # 2 minutes ago
+            self.orchestrator._write_heartbeat()
+            second_content = self.heartbeat_file.read_text()
+
+        # Timestamps should differ
+        self.assertNotEqual(first_content, second_content)
+
+    def test_oserror_does_not_raise(self):
+        """OSError during heartbeat write is silently swallowed."""
+        with patch("lafleur.orchestrator.HEARTBEAT_FILE") as mock_path:
+            mock_path.write_text.side_effect = OSError("disk full")
+            # Should not raise
+            self.orchestrator._write_heartbeat()
 
 
 class TestMainCLIPlumbing(unittest.TestCase):

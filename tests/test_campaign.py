@@ -1,6 +1,7 @@
 import unittest
 import json
 import tempfile
+from datetime import datetime, timedelta, timezone
 from io import StringIO
 from pathlib import Path
 from unittest.mock import patch, MagicMock
@@ -565,3 +566,68 @@ class TestMain(unittest.TestCase):
 
         stderr_output = captured_stderr.getvalue()
         self.assertIn("Registry not found", stderr_output)
+
+
+class TestDetectInstanceStatus(unittest.TestCase):
+    """Test CampaignAggregator._detect_instance_status."""
+
+    def setUp(self):
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.inst_path = Path(self.temp_dir.name)
+        self.logs_dir = self.inst_path / "logs"
+        self.logs_dir.mkdir()
+
+    def tearDown(self):
+        self.temp_dir.cleanup()
+
+    def test_running_from_fresh_heartbeat(self):
+        """Instance is 'Running' when heartbeat is recent."""
+        heartbeat_path = self.logs_dir / "heartbeat"
+        heartbeat_path.write_text(datetime.now(timezone.utc).isoformat())
+
+        stats = {"last_update_time": "2020-01-01T00:00:00+00:00"}  # ancient
+        status = CampaignAggregator._detect_instance_status(self.inst_path, stats)
+        self.assertEqual(status, "Running")
+
+    def test_stopped_from_stale_heartbeat(self):
+        """Instance is 'Stopped' when heartbeat is older than threshold."""
+        old_time = datetime.now(timezone.utc) - timedelta(minutes=10)
+        heartbeat_path = self.logs_dir / "heartbeat"
+        heartbeat_path.write_text(old_time.isoformat())
+
+        stats = {"last_update_time": old_time.isoformat()}
+        status = CampaignAggregator._detect_instance_status(self.inst_path, stats)
+        self.assertEqual(status, "Stopped")
+
+    def test_falls_back_to_stats_when_no_heartbeat(self):
+        """Falls back to last_update_time when heartbeat file doesn't exist."""
+        recent_time = datetime.now(timezone.utc).isoformat()
+        stats = {"last_update_time": recent_time}
+        status = CampaignAggregator._detect_instance_status(self.inst_path, stats)
+        self.assertEqual(status, "Running")
+
+    def test_unknown_when_no_heartbeat_and_no_last_update(self):
+        """Returns 'Unknown' when neither heartbeat nor last_update_time exist."""
+        stats = {}
+        status = CampaignAggregator._detect_instance_status(self.inst_path, stats)
+        self.assertEqual(status, "Unknown")
+
+    def test_heartbeat_takes_priority_over_stale_stats(self):
+        """Recent heartbeat overrides stale last_update_time."""
+        heartbeat_path = self.logs_dir / "heartbeat"
+        heartbeat_path.write_text(datetime.now(timezone.utc).isoformat())
+
+        # Stats say ancient, but heartbeat says now — should be Running
+        stats = {"last_update_time": "2020-01-01T00:00:00+00:00"}
+        status = CampaignAggregator._detect_instance_status(self.inst_path, stats)
+        self.assertEqual(status, "Running")
+
+    def test_handles_corrupt_heartbeat_file(self):
+        """Corrupt heartbeat file falls through to stats gracefully."""
+        heartbeat_path = self.logs_dir / "heartbeat"
+        heartbeat_path.write_text("not a timestamp")
+
+        recent_time = datetime.now(timezone.utc).isoformat()
+        stats = {"last_update_time": recent_time}
+        status = CampaignAggregator._detect_instance_status(self.inst_path, stats)
+        self.assertEqual(status, "Running")

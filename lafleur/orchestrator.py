@@ -18,6 +18,7 @@ import random
 import shutil
 import socket
 import sys
+import time
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -55,6 +56,8 @@ TIMEOUTS_DIR = Path("timeouts")
 DIVERGENCES_DIR = Path("divergences")
 LOGS_DIR = Path("logs")
 RUN_LOGS_DIR = LOGS_DIR / "run_logs"
+HEARTBEAT_FILE = LOGS_DIR / "heartbeat"
+HEARTBEAT_INTERVAL_SECONDS = 60  # Write heartbeat at most once per minute
 
 # --- Sterility Thresholds ---
 # Maximum sterile mutations in a deepening session before abandoning the lineage.
@@ -241,6 +244,22 @@ class LafleurOrchestrator:
 
         self.mutations_since_last_find = 0
         self.global_seed_counter = self.run_stats.get("global_seed_counter", 0)
+        self._last_heartbeat_time: float = 0.0  # monotonic time of last heartbeat write
+
+    def _write_heartbeat(self) -> None:
+        """Write a lightweight heartbeat timestamp to signal the instance is alive.
+
+        Called frequently from the mutation loop. Rate-limited to avoid
+        excessive I/O — writes at most once per HEARTBEAT_INTERVAL_SECONDS.
+        """
+        now = time.monotonic()
+        if now - self._last_heartbeat_time < HEARTBEAT_INTERVAL_SECONDS:
+            return
+        self._last_heartbeat_time = now
+        try:
+            HEARTBEAT_FILE.write_text(datetime.now(timezone.utc).isoformat(), encoding="utf-8")
+        except OSError:
+            pass  # Non-critical — never crash the fuzzer for a heartbeat
 
     def run_evolutionary_loop(self) -> None:
         """
@@ -250,6 +269,10 @@ class LafleurOrchestrator:
         then enters the infinite loop that drives the fuzzer's core logic of
         selection, mutation, execution, and analysis.
         """
+        # Write initial heartbeat so a fresh instance shows "Running" immediately
+        self._last_heartbeat_time = 0.0  # Force immediate write
+        self._write_heartbeat()
+
         # --- Bootstrap the corpus if it's smaller than the minimum required size ---
         current_corpus_size = len(self.coverage_manager.state.get("per_file_coverage", {}))
         needed = self.min_corpus_files - current_corpus_size
@@ -643,6 +666,7 @@ class LafleurOrchestrator:
                 mutation_index += 1
                 mutation_id += 1
                 self.run_stats["total_mutations"] = self.run_stats.get("total_mutations", 0) + 1
+                self._write_heartbeat()
                 self.mutations_since_last_find += 1
                 mutations_since_last_find_in_session += 1
 

@@ -182,13 +182,9 @@ class CampaignAggregator:
 
         # Calculate derived metrics
         if stats:
-            # Determine status based on last update time
-            last_update = parse_timestamp(stats.get("last_update_time"))
-            if last_update:
-                age_seconds = (datetime.now(timezone.utc) - last_update).total_seconds()
-                instance.status = "Running" if age_seconds < 300 else "Stopped"  # 5 min threshold
-            else:
-                instance.status = "Unknown"
+            # Determine status: check heartbeat file first (updates every ~60s),
+            # fall back to last_update_time in stats (updates once per session).
+            instance.status = self._detect_instance_status(path, stats)
 
             # Calculate speed
             total_mutations = stats.get("total_mutations", 0)
@@ -205,6 +201,44 @@ class CampaignAggregator:
             instance.corpus_size = stats.get("corpus_size", 0)
 
         return instance
+
+    @staticmethod
+    def _detect_instance_status(instance_path: Path, stats: dict[str, Any]) -> str:
+        """Detect whether an instance is running or stopped.
+
+        Checks the heartbeat file first (written every ~60s from the mutation
+        loop), then falls back to last_update_time in fuzz_run_stats.json
+        (written once per session). This avoids false "Stopped" status during
+        long sessions.
+
+        Args:
+            instance_path: Root directory of the instance.
+            stats: Loaded fuzz_run_stats.json contents.
+
+        Returns:
+            "Running", "Stopped", or "Unknown".
+        """
+        now = datetime.now(timezone.utc)
+        threshold_seconds = 300  # 5 minutes
+
+        # Primary signal: heartbeat file (written every ~60s)
+        heartbeat_path = instance_path / "logs" / "heartbeat"
+        try:
+            heartbeat_text = heartbeat_path.read_text(encoding="utf-8").strip()
+            heartbeat_time = parse_timestamp(heartbeat_text)
+            if heartbeat_time:
+                age = (now - heartbeat_time).total_seconds()
+                return "Running" if age < threshold_seconds else "Stopped"
+        except (OSError, ValueError):
+            pass  # File doesn't exist or is unreadable — fall through
+
+        # Fallback: last_update_time from stats (written once per session)
+        last_update = parse_timestamp(stats.get("last_update_time"))
+        if last_update:
+            age = (now - last_update).total_seconds()
+            return "Running" if age < threshold_seconds else "Stopped"
+
+        return "Unknown"
 
     def aggregate(self) -> None:
         """Perform full aggregation across all loaded instances."""

@@ -573,6 +573,41 @@ class TestPrepareNewCoverageResult(unittest.TestCase):
         saved = result["mutation_info"]["jit_stats"]["child_delta_total_exits"]
         self.assertAlmostEqual(saved, 95.0)
 
+    def test_syntax_error_in_core_code_returns_no_change(self):
+        """SyntaxError in extracted core code returns NO_CHANGE to prevent corpus poisoning."""
+        # Make _get_core_code return unparseable code
+        self.scoring_manager._get_core_code = lambda code: "def broken(:\n    pass"
+
+        result = self.scoring_manager._prepare_new_coverage_result(
+            exec_result=self.exec_result,
+            child_coverage={"edges": {1}},
+            jit_stats={"max_exit_density": 0.0},
+            parent_jit_stats={},
+            parent_id="parent.py",
+            mutation_info={"mutator": "test"},
+            mutation_seed=42,
+        )
+
+        self.assertEqual(result["status"], "NO_CHANGE")
+        # Coverage should NOT be committed
+        self.scoring_manager._update_global_coverage.assert_not_called()
+
+    def test_valid_core_code_proceeds_normally(self):
+        """Valid core code passes validation and returns NEW_COVERAGE."""
+        self.exec_result.source_path.read_text.return_value = "x = 1"
+
+        result = self.scoring_manager._prepare_new_coverage_result(
+            exec_result=self.exec_result,
+            child_coverage={"edges": {1}},
+            jit_stats={"max_exit_density": 0.0},
+            parent_jit_stats={},
+            parent_id="parent.py",
+            mutation_info={"mutator": "test"},
+            mutation_seed=42,
+        )
+
+        self.assertEqual(result["status"], "NEW_COVERAGE")
+
     def test_original_mutation_info_not_modified_with_delta(self):
         """Confirm mutation_info is still not mutated after delta changes."""
         original = {"mutator": "test", "stage": "havoc"}

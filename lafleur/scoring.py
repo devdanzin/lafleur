@@ -8,6 +8,7 @@ This module provides the ScoringManager class ("The Judge") which handles:
 - Analyzing runs for new coverage and interestingness
 """
 
+import ast
 import copy
 import hashlib
 import json
@@ -661,6 +662,21 @@ class ScoringManager:
         assert self._get_core_code is not None
 
         core_code_to_save = self._get_core_code(exec_result.source_path.read_text())
+
+        # Validate the extracted core code is syntactically valid before saving.
+        # _get_core_code() can produce broken output if boilerplate boundaries
+        # are unusual, and saving unparseable files poisons the corpus — they
+        # are selected repeatedly but can never be mutated.
+        try:
+            ast.parse(core_code_to_save)
+        except SyntaxError as e:
+            print(
+                f"  [!] Warning: Extracted core code has SyntaxError: {e}. "
+                f"Discarding to prevent corpus poisoning.",
+                file=sys.stderr,
+            )
+            return {"status": "NO_CHANGE"}
+
         content_hash = hashlib.sha256(core_code_to_save.encode("utf-8")).hexdigest()
         coverage_hash = self._calculate_coverage_hash(child_coverage)
 

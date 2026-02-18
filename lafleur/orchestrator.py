@@ -500,6 +500,15 @@ class LafleurOrchestrator:
             self.mutation_controller._get_nodes_from_parent(parent_path)
         )
         if base_harness_node is None or parent_core_tree is None:
+            # Mark the parent as sterile so it's deprioritized by the scheduler.
+            # Without this, unparseable files retain their score and get selected
+            # repeatedly, burning cycles on parents that can never produce children.
+            if parent_metadata is not None:
+                parent_metadata["is_sterile"] = True
+                print(
+                    f"  [!] Marking {parent_id} as sterile (unparseable or missing harness).",
+                    file=sys.stderr,
+                )
             return None
 
         # Retrieve watched dependencies from parent metadata

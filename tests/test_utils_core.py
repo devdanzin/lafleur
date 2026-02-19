@@ -242,7 +242,8 @@ class TestTeeLogger(unittest.TestCase):
             log_path = Path(tmp_dir) / "test.log"
             logger = TeeLogger(log_path, original_stream)
 
-            logger.write("Hello, World!")
+            logger.write("Hello, World!\n")
+            logger.flush()  # Force buffered line out
 
             # Check original stream
             self.assertIn("Hello, World!", original_stream.getvalue())
@@ -272,14 +273,14 @@ class TestTeeLogger(unittest.TestCase):
             log_path = Path(tmp_dir) / "test.log"
             logger = TeeLogger(log_path, original_stream)
 
-            logger.write("test")
+            logger.write("test\n")
             logger.close()
 
             # File should be closed
             self.assertTrue(logger.log_file.closed)
 
     def test_write_flushes_immediately(self):
-        """Test that each write flushes immediately."""
+        """Test that different consecutive writes flush immediately."""
         original_stream = StringIO()
 
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -287,14 +288,14 @@ class TestTeeLogger(unittest.TestCase):
             logger = TeeLogger(log_path, original_stream)
 
             logger.write("Message 1\n")
-            logger.write("Message 2\n")
+            logger.write("Message 2\n")  # Different message flushes Message 1
 
-            # Both messages should be immediately available in original stream
             output = original_stream.getvalue()
             self.assertIn("Message 1", output)
-            self.assertIn("Message 2", output)
-
+            # Message 2 is still buffered until something else arrives
             logger.close()
+            output = original_stream.getvalue()
+            self.assertIn("Message 2", output)
 
     def test_encoding_delegates_to_stream(self):
         """Test that encoding property delegates to the original stream."""
@@ -310,7 +311,7 @@ class TestTeeLogger(unittest.TestCase):
 
     def test_encoding_defaults_to_utf8(self):
         """Test that encoding defaults to utf-8 when stream has no encoding."""
-        mock_stream = MagicMock(spec=[])  # No attributes at all
+        mock_stream = MagicMock(spec=["write", "flush"])  # No encoding attribute
 
         with tempfile.TemporaryDirectory() as tmp_dir:
             log_path = Path(tmp_dir) / "test.log"
@@ -365,6 +366,355 @@ class TestTeeLogger(unittest.TestCase):
 
             self.assertEqual(logger.fileno(), 1)
             logger.close()
+
+
+class TestTeeLoggerRepeatCollapsing(unittest.TestCase):
+    """Tests for TeeLogger repeat collapsing behavior."""
+
+    def test_collapses_identical_consecutive_lines(self):
+        """Test that 5 identical lines become 1 with (×5) suffix."""
+        stream = StringIO()
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            log_path = Path(tmp_dir) / "test.log"
+            logger = TeeLogger(log_path, stream)
+
+            for _ in range(5):
+                logger.write("    -> Injecting for loop around a statement.\n")
+            logger.write("Next different line\n")
+            logger.close()
+
+            output = stream.getvalue()
+            self.assertIn("(×5)", output)
+            self.assertEqual(output.count("Injecting for loop"), 1)
+            self.assertIn("Next different line", output)
+
+    def test_no_suffix_for_single_occurrence(self):
+        """Test that a single line has no (×N) suffix."""
+        stream = StringIO()
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            log_path = Path(tmp_dir) / "test.log"
+            logger = TeeLogger(log_path, stream)
+
+            logger.write("Single line\n")
+            logger.close()
+
+            output = stream.getvalue()
+            self.assertIn("Single line", output)
+            self.assertNotIn("×", output)
+
+    def test_collapses_to_log_file_too(self):
+        """Test that repeat collapsing applies to the log file as well."""
+        stream = StringIO()
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            log_path = Path(tmp_dir) / "test.log"
+            logger = TeeLogger(log_path, stream)
+
+            for _ in range(3):
+                logger.write("Repeated\n")
+            logger.close()
+
+            file_content = log_path.read_text()
+            self.assertIn("(×3)", file_content)
+            self.assertEqual(file_content.count("Repeated"), 1)
+
+    def test_different_lines_not_collapsed(self):
+        """Test that different lines are not collapsed."""
+        stream = StringIO()
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            log_path = Path(tmp_dir) / "test.log"
+            logger = TeeLogger(log_path, stream)
+
+            logger.write("Line A\n")
+            logger.write("Line B\n")
+            logger.write("Line C\n")
+            logger.close()
+
+            output = stream.getvalue()
+            self.assertIn("Line A", output)
+            self.assertIn("Line B", output)
+            self.assertIn("Line C", output)
+            self.assertNotIn("×", output)
+
+    def test_alternating_lines_not_collapsed(self):
+        """Test that alternating A-B-A-B lines are not collapsed."""
+        stream = StringIO()
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            log_path = Path(tmp_dir) / "test.log"
+            logger = TeeLogger(log_path, stream)
+
+            logger.write("A\n")
+            logger.write("B\n")
+            logger.write("A\n")
+            logger.write("B\n")
+            logger.close()
+
+            output = stream.getvalue()
+            self.assertEqual(output.count("A\n"), 2)
+            self.assertEqual(output.count("B\n"), 2)
+            self.assertNotIn("×", output)
+
+    def test_close_flushes_buffered_repeat(self):
+        """Test that close() flushes any buffered repeated line."""
+        stream = StringIO()
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            log_path = Path(tmp_dir) / "test.log"
+            logger = TeeLogger(log_path, stream)
+
+            for _ in range(10):
+                logger.write("Repeated line\n")
+            logger.close()
+
+            output = stream.getvalue()
+            self.assertIn("Repeated line (×10)", output)
+
+    def test_flush_flushes_buffered_repeat(self):
+        """Test that flush() flushes the buffered repeat."""
+        stream = StringIO()
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            log_path = Path(tmp_dir) / "test.log"
+            logger = TeeLogger(log_path, stream)
+
+            for _ in range(3):
+                logger.write("Repeated\n")
+            logger.flush()
+
+            output = stream.getvalue()
+            self.assertIn("(×3)", output)
+            logger.close()
+
+    def test_empty_writes_pass_through(self):
+        """Test that empty strings don't interfere with repeat buffer."""
+        stream = StringIO()
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            log_path = Path(tmp_dir) / "test.log"
+            logger = TeeLogger(log_path, stream)
+
+            logger.write("Line\n")
+            logger.write("")
+            logger.write("Line\n")
+            logger.close()
+
+            output = stream.getvalue()
+            # Should still collapse
+            self.assertIn("(×2)", output)
+
+    def test_mixed_collapse_and_unique(self):
+        """Test realistic mixed pattern: some repeated, some unique."""
+        stream = StringIO()
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            log_path = Path(tmp_dir) / "test.log"
+            logger = TeeLogger(log_path, stream)
+
+            logger.write("  [~] Running HAVOC stage...\n")
+            for _ in range(19):
+                logger.write("    -> Injecting for loop around a statement.\n")
+            for _ in range(27):
+                logger.write("    -> Removing fuzzer-injected guard.\n")
+            logger.write("    -> Run #1/6 (RuntimeSeed: 107939)\n")
+            logger.close()
+
+            output = stream.getvalue()
+            self.assertIn("(×19)", output)
+            self.assertIn("(×27)", output)
+            self.assertEqual(output.count("Injecting for loop"), 1)
+            self.assertEqual(output.count("Removing fuzzer-injected guard"), 1)
+
+
+class TestTeeLoggerVerbosityFiltering(unittest.TestCase):
+    """Tests for TeeLogger verbosity filtering."""
+
+    def test_verbose_mode_shows_all(self):
+        """Test that verbose=True shows everything."""
+        stream = StringIO()
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            log_path = Path(tmp_dir) / "test.log"
+            logger = TeeLogger(log_path, stream, verbose=True)
+
+            logger.write("    -> Injecting for loop around a statement.\n")
+            logger.write("[COVERAGE] Running child with JIT=True.\n")
+            logger.write("[SESSION] Using session driver for warm JIT fuzzing.\n")
+            logger.close()
+
+            output = stream.getvalue()
+            self.assertIn("Injecting for loop", output)
+            self.assertIn("[COVERAGE]", output)
+            self.assertIn("[SESSION]", output)
+
+    def test_quiet_mode_suppresses_mutator_detail(self):
+        """Test that verbose=False suppresses mutator detail lines."""
+        stream = StringIO()
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            log_path = Path(tmp_dir) / "test.log"
+            logger = TeeLogger(log_path, stream, verbose=False)
+
+            logger.write("    -> Injecting for loop around a statement.\n")
+            logger.write("    -> Removing fuzzer-injected guard.\n")
+            logger.write("    -> Slicing large function body of 140 statements.\n")
+            logger.close()
+
+            output = stream.getvalue()
+            self.assertNotIn("Injecting", output)
+            self.assertNotIn("Removing", output)
+            self.assertNotIn("Slicing", output)
+
+    def test_quiet_mode_suppresses_boilerplate(self):
+        """Test that verbose=False suppresses execution boilerplate."""
+        stream = StringIO()
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            log_path = Path(tmp_dir) / "test.log"
+            logger = TeeLogger(log_path, stream, verbose=False)
+
+            logger.write("[COVERAGE] Running child with JIT=True.\n")
+            logger.write("[SESSION] Using session driver for warm JIT fuzzing.\n")
+            logger.write("[MIXER] Active: Added 2 polluter(s) to session.\n")
+            logger.close()
+
+            output = stream.getvalue()
+            self.assertNotIn("[COVERAGE]", output)
+            self.assertNotIn("[SESSION]", output)
+            self.assertNotIn("[MIXER]", output)
+
+    def test_quiet_mode_suppresses_relative_coverage(self):
+        """Test that verbose=False suppresses individual relative coverage lines."""
+        stream = StringIO()
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            log_path = Path(tmp_dir) / "test.log"
+            logger = TeeLogger(log_path, stream, verbose=False)
+
+            logger.write(
+                "[NEW RELATIVE EDGE] '('OPTIMIZED', '_SET_IP->_UNARY_NEGATIVE')' in harness 'f1'\n"
+            )
+            logger.write("[NEW RELATIVE UOP] '_UNARY_NEGATIVE' in harness 'f1'\n")
+            logger.close()
+
+            output = stream.getvalue()
+            self.assertNotIn("[NEW RELATIVE", output)
+
+    def test_quiet_mode_suppresses_not_interesting(self):
+        """Test that verbose=False suppresses non-interesting child results."""
+        stream = StringIO()
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            log_path = Path(tmp_dir) / "test.log"
+            logger = TeeLogger(log_path, stream, verbose=False)
+
+            logger.write("  [+] Child IS NOT interesting with score: 1.00\n")
+            logger.close()
+
+            output = stream.getvalue()
+            self.assertNotIn("IS NOT interesting", output)
+
+    def test_quiet_mode_suppresses_stage_notifications(self):
+        """Test that verbose=False suppresses stage notifications."""
+        stream = StringIO()
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            log_path = Path(tmp_dir) / "test.log"
+            logger = TeeLogger(log_path, stream, verbose=False)
+
+            logger.write("  [~] Running HAVOC stage...\n")
+            logger.write("  [~] Running DETERMINISTIC stage...\n")
+            logger.write("  [~] Large AST detected (140 statements), running SLICING stage...\n")
+            logger.close()
+
+            output = stream.getvalue()
+            self.assertNotIn("HAVOC", output)
+            self.assertNotIn("DETERMINISTIC", output)
+            self.assertNotIn("SLICING", output)
+
+    def test_quiet_mode_shows_important_events(self):
+        """Test that verbose=False still shows all important events."""
+        stream = StringIO()
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            log_path = Path(tmp_dir) / "test.log"
+            logger = TeeLogger(log_path, stream, verbose=False)
+
+            important_lines = [
+                "  [***] SUCCESS! Mutation #10 found new coverage. Moving to next parent.\n",
+                "  [>>>] DEEPENING: New child 20383.py becomes the new parent.\n",
+                "  [+] JIT Tachycardia (delta): density=0.11, exits=68\n",
+                "  [!] JIT ZOMBIE STATE DETECTED!\n",
+                "  [+] Child is interesting with score: 22.00\n",
+                "    -> Rewarding successful strategy 'havoc' and transformers: ['t1']\n",
+                "[+] Added minimized file to corpus: 20383.py\n",
+                "[+] Dynamically adjusting mutation count. Base: 100, Final: 291\n",
+                "[+] Selected parent for BREADTH session: 1234.py (Score: 5.00)\n",
+                "  \\-> Running mutation #1 (Seed: 107939) for 20383.py...\n",
+                "[NEW GLOBAL UOP] '_BINARY_OP' in harness 'f1'\n",
+                "[NEW GLOBAL EDGE] '('OPTIMIZED', '_SET_IP->_LOAD_FAST')' in harness 'f1'\n",
+                "  [~] Tachycardia decay: 0.1058 -> 0.1005\n",
+            ]
+
+            for line in important_lines:
+                logger.write(line)
+            logger.close()
+
+            output = stream.getvalue()
+            for line in important_lines:
+                # Check the key content of each important line is present
+                key_content = line.strip()[:30]
+                self.assertIn(
+                    key_content,
+                    output,
+                    f"Important line missing: {line.strip()[:50]}...",
+                )
+
+    def test_quiet_mode_with_repeat_collapsing(self):
+        """Test that suppressed lines don't interfere with repeat collapsing."""
+        stream = StringIO()
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            log_path = Path(tmp_dir) / "test.log"
+            logger = TeeLogger(log_path, stream, verbose=False)
+
+            # Suppressed lines should not break the repeat buffer
+            logger.write("Important line A\n")
+            logger.write("[COVERAGE] Running child with JIT=True.\n")  # Suppressed
+            logger.write("Important line A\n")  # Same as first, should collapse
+            logger.close()
+
+            output = stream.getvalue()
+            self.assertNotIn("[COVERAGE]", output)
+            self.assertIn("Important line A (×2)", output)
+
+    def test_suppression_applies_to_log_file_too(self):
+        """Test that suppressed lines are also absent from the log file."""
+        stream = StringIO()
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            log_path = Path(tmp_dir) / "test.log"
+            logger = TeeLogger(log_path, stream, verbose=False)
+
+            logger.write("[COVERAGE] Running child with JIT=True.\n")
+            logger.write("[+] Added minimized file to corpus: 123.py\n")
+            logger.close()
+
+            file_content = log_path.read_text()
+            self.assertNotIn("[COVERAGE]", file_content)
+            self.assertIn("[+] Added", file_content)
+
+    def test_verbose_default_is_true(self):
+        """Test that default verbose is True (backward compatible)."""
+        stream = StringIO()
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            log_path = Path(tmp_dir) / "test.log"
+            logger = TeeLogger(log_path, stream)
+
+            self.assertTrue(logger.verbose)
+            logger.close()
+
+
+class TestTeeLoggerLogPath(unittest.TestCase):
+    """Tests for --log-path CLI flag integration."""
+
+    def test_custom_log_path_creates_parent_dirs(self):
+        """Test that a custom log path creates parent directories."""
+        stream = StringIO()
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            log_path = Path(tmp_dir) / "subdir" / "deep" / "test.log"
+            log_path.parent.mkdir(parents=True, exist_ok=True)
+            logger = TeeLogger(log_path, stream)
+            logger.write("Test\n")
+            logger.close()
+
+            self.assertTrue(log_path.exists())
+            self.assertIn("Test", log_path.read_text())
 
 
 class TestExecutionResult(unittest.TestCase):

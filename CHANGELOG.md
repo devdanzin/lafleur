@@ -38,6 +38,7 @@ All notable changes to this project should be documented in this file.
 
 ### Enhanced
 
+- **TeeLogger** with repeat collapsing (consecutive identical lines collapsed to `(×N)` suffix), verbosity filtering (`--verbose` flag controls detail-level messages vs quiet mode showing only important events), and configurable log path (`--log-path` flag), by @devdanzin.
 - `BuiltinNamespaceCorruptor` with test_optimizer.py-inspired attacks: direct `__builtins__["KEY"]` style modifications, `ModuleType` vs dict representation handling, and high-frequency builtin corruption (corrupting `len`, `isinstance`, and `type` simultaneously), by @devdanzin.
 - `BloomFilterSaturator` with probe-based saturation detection, strategic global modifications, and multi-phase attacks (warmup, saturation, exploitation, verification) to better exploit the JIT's global variable tracking bloom filter, by @devdanzin.
 - Legacy mode (non-session) crash handling now generates proper directory structure and `metadata.json` files, making legacy crashes visible to `lafleur-campaign` and `lafleur-triage` tools, by @devdanzin.

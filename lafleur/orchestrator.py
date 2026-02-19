@@ -1009,6 +1009,19 @@ def main():
         help="Disable ctypes-based JIT introspection in the driver. "
         "Use this for CPython builds older than 3.15 where the executor struct layout differs.",
     )
+    parser.add_argument(
+        "-v",
+        "--verbose",
+        action="store_true",
+        help="Show all log messages including individual mutator actions, per-run boilerplate, "
+        "and relative coverage discoveries. Default: quiet mode (important events only).",
+    )
+    parser.add_argument(
+        "--log-path",
+        type=str,
+        default=None,
+        help="Path for the orchestrator log file. Default: logs/deep_fuzzer_run_{timestamp}.log",
+    )
     args = parser.parse_args()
 
     LOGS_DIR.mkdir(exist_ok=True)
@@ -1016,15 +1029,23 @@ def main():
     run_start_time = datetime.now(timezone.utc)
     timestamp_iso = run_start_time.isoformat()
     safe_timestamp = timestamp_iso.replace(":", "-").replace("+", "Z")
-    orchestrator_log_path = LOGS_DIR / f"deep_fuzzer_run_{safe_timestamp}.log"
+    if args.log_path:
+        orchestrator_log_path = Path(args.log_path)
+        orchestrator_log_path.parent.mkdir(parents=True, exist_ok=True)
+    else:
+        orchestrator_log_path = LOGS_DIR / f"deep_fuzzer_run_{safe_timestamp}.log"
 
     original_stdout = sys.stdout
     original_stderr = sys.stderr
 
     # This initial print goes only to the console
-    print(f"[+] Starting deep fuzzer. Full log will be at: {orchestrator_log_path}")
+    verbose_label = "verbose" if args.verbose else "quiet"
+    print(
+        f"[+] Starting deep fuzzer ({verbose_label} mode). "
+        f"Full log will be at: {orchestrator_log_path}"
+    )
 
-    tee_logger = TeeLogger(orchestrator_log_path, original_stdout)
+    tee_logger = TeeLogger(orchestrator_log_path, original_stdout, verbose=args.verbose)
     sys.stdout = tee_logger
     sys.stderr = tee_logger
 

@@ -66,6 +66,7 @@ All notable changes to this project should be documented in this file.
 - `ConstantPerturbator` crash when encountering certain constant node types during mutation, found during code review, by @devdanzin.
 - Numerous mutator bugs across all modules found during systematic code review campaign: `TypeInstabilityInjector` scoping issues, `NumericMutator` `visit_Call` scoping bug, hardcoded variable names in three `scenarios_data` mutators, `ContainerChanger` probability distribution imbalance, `GuardInjector` over-wrapping, and others, by @devdanzin.
 - Unparseable corpus files could poison the corpus and waste mutation cycles; now validated with `ast.parse()` before saving and unparseable parents are marked sterile so the scheduler deprioritizes them, by @devdanzin.
+- Six mutator bugs causing sterile mutations and runtime errors: `PatternMatchingChaosMutator` referencing undefined `_chaos_side_effect`, `StressPatternInjector` injecting operations without try/except, `WeakRefCallbackChaos` local/global scope confusion, and `SideEffectInjector`/`FrameManipulator`/`ReentrantSideEffectMutator` catching only `TypeError` instead of also `NameError` for code injected before variable definitions, by @devdanzin.
 
 
 ### Documentation

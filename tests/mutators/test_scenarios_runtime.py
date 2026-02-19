@@ -83,7 +83,7 @@ class TestStressPatternInjector(unittest.TestCase):
         random.seed(42)
 
     def test_stress_pattern_injector(self):
-        """Test StressPatternInjector mutator."""
+        """Test StressPatternInjector wraps snippets in try/except."""
         code = dedent("""
             def uop_harness_test():
                 x = 1
@@ -97,11 +97,12 @@ class TestStressPatternInjector(unittest.TestCase):
                 mutator = StressPatternInjector()
                 mutated = mutator.visit(tree)
 
-        # Should have injected stress pattern
+        # Should have injected stress pattern wrapped in try/except
         func = mutated.body[0]
         self.assertIsInstance(func, ast.FunctionDef)
-        # Body should have more statements
-        self.assertGreater(len(func.body), 3)
+        # Find the Try node in the function body
+        try_nodes = [n for n in func.body if isinstance(n, ast.Try)]
+        self.assertGreater(len(try_nodes), 0, "Stress pattern should be wrapped in try/except")
 
     def test_stress_pattern_injector_no_vars(self):
         """Test StressPatternInjector with no local variables."""
@@ -147,6 +148,24 @@ class TestSideEffectInjector(unittest.TestCase):
             isinstance(stmt, ast.ClassDef) and "FrameModifier" in stmt.name for stmt in func.body
         )
         self.assertTrue(has_frame_modifier)
+
+    def test_side_effect_injector_catches_name_error(self):
+        """Test that the hot loop handles UnboundLocalError from early injection."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+                y = 2
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.1):
+            with patch("random.choice", side_effect=lambda x: x[0] if isinstance(x, list) else x):
+                mutator = SideEffectInjector()
+                mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # The except clause should catch NameError (for UnboundLocalError)
+        self.assertIn("NameError", result)
 
 
 class TestGlobalInvalidator(unittest.TestCase):
@@ -336,7 +355,24 @@ class TestFrameManipulator(unittest.TestCase):
         # Should try to use corrupted variable
         self.assertIn("try:", result)
         self.assertIn("_ = x + 1", result)
-        self.assertIn("except TypeError:", result)
+        self.assertIn("except (TypeError, NameError):", result)
+
+    def test_frame_manipulator_catches_name_error(self):
+        """Test that the attack scenario handles UnboundLocalError."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+                y = 2
+                z = 3
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.1):
+            mutator = FrameManipulator()
+            mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        self.assertIn("except (TypeError, NameError)", result)
 
     def test_skips_non_harness_functions(self):
         """Test that non-harness functions are not mutated."""
@@ -567,7 +603,7 @@ class TestWeakRefCallbackChaos(unittest.TestCase):
         self.assertIn("modified_by_gc", result)
 
     def test_creates_global_variable_and_weakref(self):
-        """Test that global variable and weakref are created."""
+        """Test that global variable and weakref are created with global declaration."""
         code = dedent("""
             def uop_harness_test():
                 x = 1
@@ -580,6 +616,8 @@ class TestWeakRefCallbackChaos(unittest.TestCase):
                 mutated = mutator.visit(tree)
 
         result = ast.unparse(mutated)
+        # Should declare the variable as global
+        self.assertIn("global gc_var_gc_2000", result)
         # Should create global variable
         self.assertIn("gc_var_gc_2000 = 100", result)
         # Should create weakref with callback

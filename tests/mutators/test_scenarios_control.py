@@ -1725,6 +1725,8 @@ class TestPatternMatchingChaosMutator(unittest.TestCase):
         result = ast.unparse(mutated)
         # Should still be valid Python with match
         self.assertIn("match x:", result)
+        # Should NOT reference the undefined _chaos_side_effect
+        self.assertNotIn("_chaos_side_effect", result)
         ast.parse(result)  # Ensure valid
 
     def test_transforms_existing_match_with_nested(self):

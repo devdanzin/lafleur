@@ -932,16 +932,16 @@ class ReentrantSideEffectMutator(ast.NodeTransformer):
             trigger_code = dedent(f"""
                 try:
                     _ = {class_name}() in {var_name}
-                except (IndexError, KeyError, RuntimeError, ValueError):
-                    pass  # Expected errors from rug pull
+                except (IndexError, KeyError, RuntimeError, ValueError, NameError):
+                    pass  # Expected errors from rug pull or insertion before definition
             """)
         else:
             # For sequences and dicts, use [] operator
             trigger_code = dedent(f"""
                 try:
                     _ = {var_name}[{class_name}()]
-                except (IndexError, KeyError, RuntimeError, ValueError):
-                    pass  # Expected errors from rug pull
+                except (IndexError, KeyError, RuntimeError, ValueError, NameError):
+                    pass  # Expected errors from rug pull or insertion before definition
             """)
 
         return ast.parse(trigger_code).body

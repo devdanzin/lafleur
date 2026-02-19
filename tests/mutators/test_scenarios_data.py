@@ -996,9 +996,10 @@ class TestReentrantSideEffectMutator(unittest.TestCase):
         # Should clear the target list
         self.assertIn("my_list.clear()", code_str)
 
-        # Should have try/except wrapper
+        # Should have try/except wrapper catching NameError
         self.assertIn("try:", code_str)
         self.assertIn("except", code_str)
+        self.assertIn("NameError", code_str)
 
         # Should have trigger statement using []
         self.assertIn("my_list[RugPuller_1234()]", code_str)
@@ -1033,9 +1034,10 @@ class TestReentrantSideEffectMutator(unittest.TestCase):
         # Should clear the target set
         self.assertIn("my_set.clear()", code_str)
 
-        # Should have try/except wrapper
+        # Should have try/except wrapper catching NameError
         self.assertIn("try:", code_str)
         self.assertIn("except", code_str)
+        self.assertIn("NameError", code_str)
 
         # Should use 'in' operator for sets
         self.assertIn("in my_set", code_str)

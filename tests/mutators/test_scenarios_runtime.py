@@ -19,6 +19,7 @@ from lafleur.mutators.scenarios_runtime import (
     GCInjector,
     GlobalInvalidator,
     RareEventStressTester,
+    RefcountEscapeHatchMutator,
     SideEffectInjector,
     StressPatternInjector,
     WeakRefCallbackChaos,
@@ -1532,6 +1533,239 @@ class TestRareEventStressTester(unittest.TestCase):
         # (it may appear inside event code, but not as a standalone cleanup)
         # Verify code is valid
         ast.parse(result)
+
+
+class TestRefcountEscapeHatchMutator(unittest.TestCase):
+    """Test RefcountEscapeHatchMutator mutator."""
+
+    def setUp(self):
+        """Set random seed for reproducible tests."""
+        random.seed(42)
+
+    def test_injects_del_last_ref(self):
+        """Test __del__ last reference attack vector."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.05):
+            with patch("random.choice", return_value="del_last_ref"):
+                with patch("random.randint", return_value=5000):
+                    mutator = RefcountEscapeHatchMutator()
+                    mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        self.assertIn("_Toxic_rcesc_5000", result)
+        self.assertIn("_ref_holder_rcesc_5000", result)
+        self.assertIn("__del__", result)
+
+    def test_injects_weakref_surprise(self):
+        """Test weakref callback surprise attack vector."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.05):
+            with patch("random.choice", return_value="weakref_surprise"):
+                with patch("random.randint", return_value=6000):
+                    mutator = RefcountEscapeHatchMutator()
+                    mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        self.assertIn("_Owner_rcesc_6000", result)
+        self.assertIn("weakref.ref", result)
+        self.assertIn("_evil_callback_rcesc_6000", result)
+
+    def test_injects_descriptor_refcount_drain(self):
+        """Test descriptor refcount drain attack vector."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.05):
+            with patch("random.choice", return_value="descriptor_refcount_drain"):
+                with patch("random.randint", return_value=7000):
+                    mutator = RefcountEscapeHatchMutator()
+                    mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        self.assertIn("_DrainDescriptor_rcesc_7000", result)
+        self.assertIn("_Victim_rcesc_7000", result)
+        self.assertIn("__get__", result)
+
+    def test_injects_reentrant_container_clear(self):
+        """Test reentrant container clear attack vector."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.05):
+            with patch("random.choice", return_value="reentrant_container_clear"):
+                with patch("random.randint", return_value=8000):
+                    mutator = RefcountEscapeHatchMutator()
+                    mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        self.assertIn("_ClearingDict_rcesc_8000", result)
+        self.assertIn("_ClearingList_rcesc_8000", result)
+        self.assertIn("__contains__", result)
+
+    def test_injects_store_fast_resurrection(self):
+        """Test store-fast resurrection via __del__ attack vector."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.05):
+            with patch("random.choice", return_value="store_fast_resurrection"):
+                with patch("random.randint", return_value=9000):
+                    mutator = RefcountEscapeHatchMutator()
+                    mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        self.assertIn("_Undead_rcesc_9000", result)
+        self.assertIn("_graveyard_rcesc_9000", result)
+        self.assertIn("__del__", result)
+        self.assertIn("gc.collect()", result)
+
+    def test_injects_custom_add_side_effect(self):
+        """Test custom __add__ with side effects attack vector."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.05):
+            with patch("random.choice", return_value="custom_add_side_effect"):
+                with patch("random.randint", return_value=1000):
+                    mutator = RefcountEscapeHatchMutator()
+                    mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        self.assertIn("_EvilAdder_rcesc_1000", result)
+        self.assertIn("__add__", result)
+        self.assertIn("_instances", result)
+
+    def test_injects_to_bool_ref_escape(self):
+        """Test TO_BOOL with ref-dropping __bool__ attack vector."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.05):
+            with patch("random.choice", return_value="to_bool_ref_escape"):
+                with patch("random.randint", return_value=2000):
+                    mutator = RefcountEscapeHatchMutator()
+                    mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        self.assertIn("_ToxicBool_rcesc_2000", result)
+        self.assertIn("_ToxicInt_rcesc_2000", result)
+        self.assertIn("_ToxicList_rcesc_2000", result)
+        self.assertIn("__bool__", result)
+
+    def test_injects_module_attr_volatile(self):
+        """Test module attribute volatility attack vector."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.05):
+            with patch("random.choice", return_value="module_attr_volatile"):
+                with patch("random.randint", return_value=3000):
+                    mutator = RefcountEscapeHatchMutator()
+                    mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        self.assertIn("math.pi", result)
+        self.assertIn("not_a_float", result)
+        self.assertIn("types.ModuleType", result)
+
+    def test_all_attack_scenarios_produce_valid_code(self):
+        """Test that all attack scenarios produce parseable Python."""
+        for attack in RefcountEscapeHatchMutator.ATTACK_SCENARIOS:
+            with self.subTest(attack=attack):
+                code = dedent("""
+                    def uop_harness_test():
+                        x = 1
+                        y = 2
+                """)
+                tree = ast.parse(code)
+
+                with patch("random.random", return_value=0.05):
+                    with patch("random.choice", return_value=attack):
+                        with patch("random.randint", return_value=4000):
+                            mutator = RefcountEscapeHatchMutator()
+                            mutated = mutator.visit(tree)
+
+                result = ast.unparse(mutated)
+                reparsed = ast.parse(result)
+                self.assertIsInstance(reparsed, ast.Module)
+
+    def test_skips_non_harness_functions(self):
+        """Test that non-harness functions are not mutated."""
+        code = dedent("""
+            def normal_function():
+                x = 1
+        """)
+        tree = ast.parse(code)
+        original = ast.unparse(tree)
+
+        with patch("random.random", return_value=0.05):
+            mutator = RefcountEscapeHatchMutator()
+            mutated = mutator.visit(tree)
+
+        self.assertEqual(original, ast.unparse(mutated))
+
+    def test_respects_probability_threshold(self):
+        """Test that mutation doesn't occur above probability threshold."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+        original = ast.unparse(tree)
+
+        with patch("random.random", return_value=0.9):
+            mutator = RefcountEscapeHatchMutator()
+            mutated = mutator.visit(tree)
+
+        self.assertEqual(original, ast.unparse(mutated))
+
+    def test_preserves_original_function_body(self):
+        """Test that original function statements are preserved."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+                y = 2
+                z = x + y
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.05):
+            with patch("random.choice", return_value="del_last_ref"):
+                mutator = RefcountEscapeHatchMutator()
+                mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        self.assertIn("x = 1", result)
+        self.assertIn("y = 2", result)
+        self.assertIn("z = x + y", result)
 
 
 if __name__ == "__main__":

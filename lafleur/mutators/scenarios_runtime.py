@@ -1266,3 +1266,533 @@ class RareEventStressTester(ast.NodeTransformer):
                 pass
         """)
         return ast.parse(attack_code).body
+
+
+class RefcountEscapeHatchMutator(ast.NodeTransformer):
+    """
+    Stress the JIT's refcount elimination optimization.
+
+    The JIT replaces _POP_TOP (decref) with _POP_TOP_NOP (no-op) when it
+    proves a value is borrowed or immortal. This mutator creates scenarios
+    where values appear to have stable refcounts during tracing but become
+    the sole reference at runtime, targeting the boundary where skipping
+    a decref would cause use-after-free.
+
+    Attack vectors:
+    1. del_last_ref: STORE_FAST where the old value's only other reference
+       is dropped by a __del__ callback, making the optimized-away decref
+       the one that should have freed the object.
+    2. weakref_surprise: LOAD_ATTR on an object whose only strong ref is
+       via a container that gets cleared by a weakref callback during GC,
+       leaving the JIT's "borrowed" reference dangling.
+    3. descriptor_refcount_drain: Attribute access triggers a descriptor
+       whose __get__ drops references to the owner object, making the
+       JIT's assumption about the owner's refcount incorrect.
+    4. reentrant_container_clear: CONTAINS_OP / STORE_SUBSCR on a container
+       whose __contains__/__setitem__ clears the container itself,
+       potentially freeing the value the JIT skipped decref on.
+    5. store_fast_resurrection: STORE_FAST to a local where the old value's
+       __del__ assigns itself back to a global (resurrection), but the JIT
+       already decided to skip the decref.
+    6. custom_add_side_effect: BINARY_OP on objects whose __add__ has side
+       effects that drop references to the operands, breaking the JIT's
+       refcount assumptions about _BINARY_OP.
+    7. to_bool_ref_escape: TO_BOOL on objects whose __bool__ drops the last
+       reference to the object being tested, via container mutation.
+    8. module_attr_volatile: LOAD_ATTR_MODULE where the module attribute
+       is replaced between accesses, testing whether the JIT's cached
+       borrowed reference becomes stale.
+    """
+
+    ATTACK_SCENARIOS = [
+        "del_last_ref",
+        "weakref_surprise",
+        "descriptor_refcount_drain",
+        "reentrant_container_clear",
+        "store_fast_resurrection",
+        "custom_add_side_effect",
+        "to_bool_ref_escape",
+        "module_attr_volatile",
+    ]
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> ast.FunctionDef:
+        self.generic_visit(node)
+
+        if not node.name.startswith("uop_harness") or not node.body:
+            return node
+
+        if random.random() < 0.10:  # 10% chance
+            attack = random.choice(self.ATTACK_SCENARIOS)
+            p_prefix = f"rcesc_{random.randint(1000, 9999)}"
+
+            print(
+                f"    -> Injecting refcount escape hatch attack ({attack}) "
+                f"with prefix '{p_prefix}'",
+                file=sys.stderr,
+            )
+
+            scenario_ast = getattr(self, f"_create_{attack}")(p_prefix)
+
+            injection_point = random.randint(0, len(node.body))
+            node.body[injection_point:injection_point] = scenario_ast
+            ast.fix_missing_locations(node)
+
+        return node
+
+    def _create_del_last_ref(self, prefix: str) -> list[ast.stmt]:
+        """
+        STORE_FAST where __del__ on the old value drops the last external ref.
+
+        The JIT sees `x = new_val` and decides the old x is a constant
+        (or has known refcount > 1), so it skips the decref. But the old
+        x's __del__ drops a reference held elsewhere, and the JIT's
+        skipped decref was actually the last real one.
+        """
+        code = dedent(f"""
+            _ref_holder_{prefix} = []
+
+            class _Toxic_{prefix}:
+                def __init__(self, val):
+                    self.val = val
+                    _ref_holder_{prefix}.append(self)
+
+                def __del__(self):
+                    # Drop the external reference on destruction
+                    try:
+                        _ref_holder_{prefix}.clear()
+                    except Exception:
+                        pass
+
+                def __add__(self, other):
+                    return _Toxic_{prefix}(self.val + other)
+
+            # Phase 1: Warm up — JIT traces STORE_FAST, sees _Toxic has refcount > 1
+            # (one in local, one in _ref_holder)
+            _x_{prefix} = _Toxic_{prefix}(0)
+            for _i_{prefix} in range(200):
+                # STORE_FAST: old _x_{prefix} replaced. JIT may skip decref
+                # because it saw refcount > 1 during tracing.
+                _x_{prefix} = _Toxic_{prefix}(_i_{prefix})
+
+            # Phase 2: Clear the holder so the local is the ONLY reference
+            _ref_holder_{prefix}.clear()
+            _x_{prefix} = _Toxic_{prefix}(999)
+
+            # Phase 3: Continue the hot loop — now STORE_FAST's decref skip is wrong
+            for _j_{prefix} in range(100):
+                _x_{prefix} = _Toxic_{prefix}(_j_{prefix})
+
+            # Phase 4: Force GC to find any leaked objects
+            import gc
+            gc.collect()
+        """)
+        return ast.parse(code).body
+
+    def _create_weakref_surprise(self, prefix: str) -> list[ast.stmt]:
+        """
+        LOAD_ATTR where a weakref callback drops the owner's strong reference.
+
+        The JIT traces LOAD_ATTR_INSTANCE_VALUE and decides _POP_TOP_NOP
+        is safe because the object is alive. A weakref callback fires
+        (from GC of an unrelated object) and clears the container holding
+        the strong reference, leaving the JIT's borrowed ref dangling.
+        """
+        code = dedent(f"""
+            import weakref
+            import gc
+
+            class _Owner_{prefix}:
+                __slots__ = ('x', 'y')
+                def __init__(self, x, y):
+                    self.x = x
+                    self.y = y
+
+            # Container holding the only strong reference
+            _container_{prefix} = {{}}
+
+            def _evil_callback_{prefix}(ref):
+                # When the weak referent dies, clear the container
+                _container_{prefix}.clear()
+
+            # Create owner and stash it
+            _owner_{prefix} = _Owner_{prefix}(42, 3.14)
+            _container_{prefix}['obj'] = _owner_{prefix}
+
+            # Create a weak reference to a DIFFERENT object with evil callback
+            class _Trigger_{prefix}:
+                pass
+
+            _trigger_{prefix} = _Trigger_{prefix}()
+            _wref_{prefix} = weakref.ref(_trigger_{prefix}, _evil_callback_{prefix})
+
+            # Phase 1: Warm up — JIT traces LOAD_ATTR_SLOT, marks _POP_TOP_NOP
+            for _i_{prefix} in range(200):
+                _val_{prefix} = _owner_{prefix}.x + _owner_{prefix}.y
+
+            # Phase 2: Kill trigger to fire callback (clears container)
+            del _trigger_{prefix}
+            gc.collect()
+
+            # Phase 3: Try to use the owner — container no longer holds strong ref
+            # The only ref is the local variable _owner_{prefix}
+            try:
+                for _j_{prefix} in range(50):
+                    _val_{prefix} = _owner_{prefix}.x + _owner_{prefix}.y
+            except (AttributeError, ReferenceError):
+                pass
+        """)
+        return ast.parse(code).body
+
+    def _create_descriptor_refcount_drain(self, prefix: str) -> list[ast.stmt]:
+        """
+        Property/descriptor whose __get__ drops references to the owner.
+
+        The JIT traces LOAD_ATTR and decides the owner's refcount is stable.
+        The descriptor's __get__ deletes the owner from a container, making
+        the next access use a potentially-freed object.
+        """
+        code = dedent(f"""
+            _instances_{prefix} = {{}}
+
+            class _DrainDescriptor_{prefix}:
+                def __get__(self, obj, objtype=None):
+                    if obj is None:
+                        return self
+                    # Side effect: remove owner from global dict
+                    _instances_{prefix}.pop(id(obj), None)
+                    return 42
+
+                def __set__(self, obj, value):
+                    pass
+
+            class _Victim_{prefix}:
+                drain = _DrainDescriptor_{prefix}()
+
+                def __init__(self, val):
+                    self.val = val
+                    _instances_{prefix}[id(self)] = self
+
+            # Phase 1: Warm up — JIT traces .drain access, sees _POP_TOP_NOP safe
+            _v_{prefix} = _Victim_{prefix}(100)
+            _instances_{prefix}[id(_v_{prefix})] = _v_{prefix}
+            for _i_{prefix} in range(200):
+                _r_{prefix} = _v_{prefix}.drain
+                _r_{prefix} = _v_{prefix}.val  # Uses val after drain dropped ref
+
+            # Phase 2: Create many victims and access drain in hot loop
+            for _j_{prefix} in range(50):
+                _v2_{prefix} = _Victim_{prefix}(_j_{prefix})
+                try:
+                    for _k_{prefix} in range(20):
+                        _ = _v2_{prefix}.drain
+                        _ = _v2_{prefix}.val
+                except (AttributeError, TypeError):
+                    pass
+        """)
+        return ast.parse(code).body
+
+    def _create_reentrant_container_clear(self, prefix: str) -> list[ast.stmt]:
+        """
+        CONTAINS_OP/STORE_SUBSCR on containers with self-clearing dunders.
+
+        The JIT sees `x in container` and eliminates the refcount on x
+        (since it's still on the stack). But __contains__ clears the
+        container and may trigger cascading destruction.
+        """
+        code = dedent(f"""
+            class _ClearingDict_{prefix}(dict):
+                def __init__(self, *args, **kwargs):
+                    super().__init__(*args, **kwargs)
+                    self._clear_count = 0
+
+                def __contains__(self, key):
+                    self._clear_count += 1
+                    result = super().__contains__(key)
+                    # Every 50th check, clear everything
+                    if self._clear_count % 50 == 0:
+                        saved = dict(self)  # save before clearing
+                        self.clear()
+                        self.update(saved)  # restore
+                    return result
+
+                def __setitem__(self, key, value):
+                    super().__setitem__(key, value)
+                    # Every 30th set, rebuild the dict
+                    if len(self) > 30:
+                        items = list(self.items())[-10:]
+                        self.clear()
+                        for k, v in items:
+                            super().__setitem__(k, v)
+
+            class _ClearingList_{prefix}(list):
+                def __contains__(self, item):
+                    result = super().__contains__(item)
+                    # Periodically clear and rebuild
+                    if len(self) > 20:
+                        saved = list(self)[-5:]
+                        self.clear()
+                        self.extend(saved)
+                    return result
+
+            # Phase 1: Warm up — JIT traces CONTAINS_OP_DICT, marks _POP_TOP_NOP
+            _cd_{prefix} = _ClearingDict_{prefix}({{i: i * 2 for i in range(20)}})
+            for _i_{prefix} in range(200):
+                _ = _i_{prefix} % 20 in _cd_{prefix}
+
+            # Phase 2: Heavy containment checks triggering clears
+            for _j_{prefix} in range(300):
+                _ = _j_{prefix} % 100 in _cd_{prefix}
+                _cd_{prefix}[_j_{prefix} % 100] = _j_{prefix}
+
+            # Phase 3: Same for CONTAINS_OP (list)
+            _cl_{prefix} = _ClearingList_{prefix}(list(range(30)))
+            for _k_{prefix} in range(200):
+                _ = _k_{prefix} % 30 in _cl_{prefix}
+
+            # Phase 4: STORE_SUBSCR_LIST_INT with clearing
+            _sl_{prefix} = _ClearingList_{prefix}(list(range(20)))
+            for _m_{prefix} in range(200):
+                try:
+                    _sl_{prefix}[_m_{prefix} % len(_sl_{prefix})] = _m_{prefix}
+                except (IndexError, ZeroDivisionError):
+                    _sl_{prefix} = _ClearingList_{prefix}(list(range(20)))
+        """)
+        return ast.parse(code).body
+
+    def _create_store_fast_resurrection(self, prefix: str) -> list[ast.stmt]:
+        """
+        STORE_FAST where the old value's __del__ resurrects it.
+
+        The JIT eliminates the decref on STORE_FAST because it "knows"
+        the old value has another reference. The old value's __del__
+        resurrects the object by assigning it to a global.
+        """
+        code = dedent(f"""
+            import gc
+
+            _graveyard_{prefix} = []
+
+            class _Undead_{prefix}:
+                def __init__(self, val):
+                    self.val = val
+                    self.alive = True
+
+                def __del__(self):
+                    # Resurrect: add self back to a global list
+                    if self.alive:
+                        self.alive = False
+                        _graveyard_{prefix}.append(self)
+
+                def __add__(self, other):
+                    return _Undead_{prefix}(self.val + other)
+
+            # Phase 1: Warm up — JIT traces STORE_FAST, learns refcount pattern
+            _u_{prefix} = _Undead_{prefix}(0)
+            for _i_{prefix} in range(200):
+                _u_{prefix} = _Undead_{prefix}(_i_{prefix})
+
+            # Phase 2: Force GC to process __del__ calls
+            gc.collect()
+
+            # Phase 3: Use resurrected objects — these were "freed" by JIT
+            for _dead_{prefix} in _graveyard_{prefix}:
+                try:
+                    _ = _dead_{prefix}.val + 1
+                except (TypeError, AttributeError):
+                    pass
+
+            # Phase 4: Continue hot loop with interleaved GC
+            _graveyard_{prefix}.clear()
+            for _j_{prefix} in range(100):
+                _u_{prefix} = _Undead_{prefix}(_j_{prefix})
+                if _j_{prefix} % 20 == 0:
+                    gc.collect()
+
+            # Phase 5: Final resurrection check
+            gc.collect()
+            gc.collect()
+            for _dead2_{prefix} in _graveyard_{prefix}:
+                try:
+                    _ = _dead2_{prefix}.val + 1
+                except (TypeError, AttributeError):
+                    pass
+        """)
+        return ast.parse(code).body
+
+    def _create_custom_add_side_effect(self, prefix: str) -> list[ast.stmt]:
+        """
+        BINARY_OP on objects whose __add__ drops references to operands.
+
+        Since commit 4e10fa99, the JIT eliminates refcounts for generic
+        _BINARY_OP (custom __add__). This attack creates objects whose
+        __add__ has side effects that weaken the operand references.
+        """
+        code = dedent(f"""
+            _side_effect_log_{prefix} = []
+
+            class _EvilAdder_{prefix}:
+                _instances = []
+
+                def __init__(self, val):
+                    self.val = val
+                    _EvilAdder_{prefix}._instances.append(self)
+
+                def __add__(self, other):
+                    # Side effect: clear the class-level instance list
+                    # This drops references to ALL EvilAdder instances
+                    if len(_EvilAdder_{prefix}._instances) > 50:
+                        _EvilAdder_{prefix}._instances.clear()
+                    result = _EvilAdder_{prefix}(self.val + other.val)
+                    _side_effect_log_{prefix}.append(result.val)
+                    return result
+
+            # Phase 1: Warm up — JIT traces _BINARY_OP, marks _POP_TOP_NOP
+            _a_{prefix} = _EvilAdder_{prefix}(1)
+            _b_{prefix} = _EvilAdder_{prefix}(2)
+            for _i_{prefix} in range(200):
+                _res_{prefix} = _a_{prefix} + _b_{prefix}
+
+            # Phase 2: Heavy add operations that trigger instance clearing
+            for _j_{prefix} in range(200):
+                _c_{prefix} = _EvilAdder_{prefix}(_j_{prefix})
+                _d_{prefix} = _EvilAdder_{prefix}(_j_{prefix} + 1)
+                try:
+                    _res_{prefix} = _c_{prefix} + _d_{prefix}
+                except (TypeError, AttributeError):
+                    pass
+
+            # Phase 3: Chain of adds (right-associative to stress stack)
+            _chain_{prefix} = _EvilAdder_{prefix}(0)
+            for _k_{prefix} in range(100):
+                try:
+                    _chain_{prefix} = _chain_{prefix} + _EvilAdder_{prefix}(1)
+                except (TypeError, AttributeError):
+                    _chain_{prefix} = _EvilAdder_{prefix}(0)
+        """)
+        return ast.parse(code).body
+
+    def _create_to_bool_ref_escape(self, prefix: str) -> list[ast.stmt]:
+        """
+        TO_BOOL on objects whose __bool__ mutates external state.
+
+        The JIT eliminates refcounts for TO_BOOL_INT, TO_BOOL_LIST,
+        TO_BOOL_STR, and TO_BOOL_ALWAYS_TRUE. This creates objects
+        whose __bool__ drops references via container mutation.
+        """
+        code = dedent(f"""
+            _bool_refs_{prefix} = {{}}
+
+            class _ToxicBool_{prefix}:
+                def __init__(self, val, key):
+                    self.val = val
+                    self.key = key
+                    _bool_refs_{prefix}[key] = self
+
+                def __bool__(self):
+                    # Side effect: remove self from global dict
+                    _bool_refs_{prefix}.pop(self.key, None)
+                    return bool(self.val)
+
+            # Phase 1: Warm up with regular TO_BOOL_ALWAYS_TRUE pattern
+            # (class instances are always truthy unless __bool__ returns False)
+            _tb_{prefix} = _ToxicBool_{prefix}(1, "main")
+            _count_{prefix} = 0
+            for _i_{prefix} in range(200):
+                if _tb_{prefix}:  # TO_BOOL_ALWAYS_TRUE, refcount eliminated
+                    _count_{prefix} += 1
+
+            # Phase 2: Create many objects and test truthiness in hot loop
+            for _j_{prefix} in range(100):
+                _obj_{prefix} = _ToxicBool_{prefix}(_j_{prefix}, f"obj_{{_j_{prefix}}}")
+                try:
+                    if _obj_{prefix}:  # __bool__ removes from dict
+                        _count_{prefix} += 1
+                except (KeyError, RuntimeError):
+                    pass
+
+            # Phase 3: TO_BOOL_INT pattern — int subclass with evil __bool__
+            class _ToxicInt_{prefix}(int):
+                def __bool__(self):
+                    # Clear the refs dict during TO_BOOL_INT
+                    if len(_bool_refs_{prefix}) > 10:
+                        _bool_refs_{prefix}.clear()
+                    return int.__bool__(self)
+
+            for _k_{prefix} in range(200):
+                _ti_{prefix} = _ToxicInt_{prefix}(_k_{prefix})
+                _bool_refs_{prefix}[f"int_{{_k_{prefix}}}"] = _ti_{prefix}
+                if _ti_{prefix}:  # TO_BOOL_INT with side-effecting __bool__
+                    _count_{prefix} += 1
+
+            # Phase 4: TO_BOOL_LIST pattern — list subclass
+            class _ToxicList_{prefix}(list):
+                def __bool__(self):
+                    # self.clear() during truthiness check
+                    result = len(self) > 0
+                    if len(self) > 5:
+                        self.clear()
+                    return result
+
+            _tl_{prefix} = _ToxicList_{prefix}(range(20))
+            for _m_{prefix} in range(200):
+                if _tl_{prefix}:  # TO_BOOL_LIST with self-clearing
+                    _tl_{prefix}.append(_m_{prefix})
+        """)
+        return ast.parse(code).body
+
+    def _create_module_attr_volatile(self, prefix: str) -> list[ast.stmt]:
+        """
+        LOAD_ATTR_MODULE where the module attribute changes between accesses.
+
+        Since commit 6e55337f, the JIT eliminates refcounts for
+        LOAD_ATTR_MODULE. This creates a module-like object whose
+        attributes are volatile, testing the JIT's cached reference.
+        """
+        code = dedent(f"""
+            import types
+            import math
+
+            # Phase 1: Warm up — JIT traces LOAD_ATTR_MODULE on math.pi
+            _sum_{prefix} = 0.0
+            for _i_{prefix} in range(200):
+                _val_{prefix} = math.pi
+                if _val_{prefix}:
+                    _sum_{prefix} += 1.0
+
+            # Phase 2: Replace math.pi mid-loop
+            _orig_pi_{prefix} = math.pi
+            for _j_{prefix} in range(200):
+                _val_{prefix} = math.pi  # LOAD_ATTR_MODULE, refcount eliminated
+                if _j_{prefix} == 100:
+                    # Swap pi to a completely different type
+                    math.pi = "not_a_float"
+                try:
+                    _sum_{prefix} += float(_val_{prefix})
+                except (TypeError, ValueError):
+                    pass
+            math.pi = _orig_pi_{prefix}  # Restore
+
+            # Phase 3: Create a fake module with volatile attributes
+            _mod_{prefix} = types.ModuleType(f"_volatile_mod_{prefix}")
+            _mod_{prefix}.value = 42
+            _mod_{prefix}.counter = 0
+
+            import sys
+            sys.modules[f"_volatile_mod_{prefix}"] = _mod_{prefix}
+
+            for _k_{prefix} in range(200):
+                try:
+                    _v_{prefix} = _mod_{prefix}.value
+                    _mod_{prefix}.counter += 1
+                    # Every 50 iterations, change the attribute type
+                    if _mod_{prefix}.counter % 50 == 0:
+                        _mod_{prefix}.value = str(_mod_{prefix}.value)
+                    elif _mod_{prefix}.counter % 50 == 25:
+                        _mod_{prefix}.value = float(_v_{prefix}) if isinstance(_v_{prefix}, (int, str)) else 42
+                except (TypeError, ValueError, AttributeError):
+                    _mod_{prefix}.value = 42
+
+            # Cleanup
+            sys.modules.pop(f"_volatile_mod_{prefix}", None)
+        """)
+        return ast.parse(code).body

@@ -141,7 +141,13 @@ class SniperMutator(ast.NodeTransformer):
         return self._snipe_loop(node)
 
     def _snipe_loop(self, node: _LoopT) -> _LoopT:
-        """Injects invalidation logic into the loop body."""
+        """Injects delayed invalidation logic into the loop body.
+
+        The invalidation is gated behind an iteration counter so the JIT
+        has time to compile the hot path before it's invalidated. Without
+        this delay, the sniper fires on iteration 0 and the JIT never
+        traces the code we want to deoptimize.
+        """
         # Prioritize helper targets (injected by HelperFunctionInjector)
         # Fall back to generic watched keys if no helpers found
         targets_pool = self.helper_targets if self.helper_targets else self.watched_keys
@@ -157,14 +163,65 @@ class SniperMutator(ast.NodeTransformer):
         num_keys = random.randint(1, min(2, len(targets_pool)))
         targets = random.sample(targets_pool, num_keys)
 
-        invalidation_code = []
+        invalidation_code: list[ast.stmt] = []
         for key in targets:
             stmts = self._create_invalidation_stmt(key)
             invalidation_code.extend(stmts)
 
-        if invalidation_code:
-            # Insert at the start of the loop body
-            node.body = invalidation_code + node.body
-            ast.fix_missing_locations(node)
+        if not invalidation_code:
+            return node
+
+        # Gate invalidation behind an iteration counter.
+        # The JIT needs ~50-100 iterations to compile a trace, so we delay
+        # the sniper shot until after warmup to ensure we actually trigger
+        # deoptimization rather than just crashing pre-JIT.
+        counter_name = f"_sniper_ctr_{random.randint(1000, 9999)}"
+        trigger_iteration = random.randint(50, 100)
+
+        # Build the counter increment with lazy initialization:
+        #   try:
+        #       _sniper_ctr_XXXX += 1
+        #   except NameError:
+        #       _sniper_ctr_XXXX = 1
+        counter_increment = ast.Try(
+            body=[
+                ast.AugAssign(
+                    target=ast.Name(id=counter_name, ctx=ast.Store()),
+                    op=ast.Add(),
+                    value=ast.Constant(value=1),
+                )
+            ],
+            handlers=[
+                ast.ExceptHandler(
+                    type=ast.Name(id="NameError", ctx=ast.Load()),
+                    name=None,
+                    body=[
+                        ast.Assign(
+                            targets=[ast.Name(id=counter_name, ctx=ast.Store())],
+                            value=ast.Constant(value=1),
+                        )
+                    ],
+                )
+            ],
+            orelse=[],
+            finalbody=[],
+        )
+
+        # Build the guarded invalidation:
+        #   if _sniper_ctr_XXXX == trigger_iteration:
+        #       <invalidation_code>
+        guarded_invalidation = ast.If(
+            test=ast.Compare(
+                left=ast.Name(id=counter_name, ctx=ast.Load()),
+                ops=[ast.Eq()],
+                comparators=[ast.Constant(value=trigger_iteration)],
+            ),
+            body=invalidation_code,
+            orelse=[],
+        )
+
+        # Prepend counter + guarded invalidation, then original loop body
+        node.body = [counter_increment, guarded_invalidation] + node.body
+        ast.fix_missing_locations(node)
 
         return node

@@ -18,6 +18,7 @@ from lafleur.mutators.scenarios_control import (
     DeepCallMutator,
     ExceptionHandlerMaze,
     ExitStresser,
+    GeneratorFrameInliningMutator,
     GuardExhaustionGenerator,
     MaxOperandMutator,
     PatternMatchingChaosMutator,
@@ -1901,6 +1902,202 @@ class TestPatternMatchingChaosMutator(unittest.TestCase):
         # Should have match statement — inside harness
         self.assertIn("match x:", result)
         self.assertIn("case int():", result)
+
+
+class TestGeneratorFrameInliningMutator(unittest.TestCase):
+    """Test GeneratorFrameInliningMutator mutator."""
+
+    def setUp(self):
+        """Set random seed for reproducible tests."""
+        random.seed(42)
+
+    def test_injects_gi_frame_corruption(self):
+        """Test gi_frame corruption attack vector."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.05):
+            with patch("random.choice", return_value="gi_frame_corruption"):
+                with patch("random.randint", return_value=5000):
+                    mutator = GeneratorFrameInliningMutator()
+                    mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        self.assertIn("_gen_victim_geninl_5000", result)
+        self.assertIn("gi_frame", result)
+        self.assertIn("f_locals", result)
+        self.assertIn("type_corrupted", result)
+
+    def test_injects_send_type_confusion(self):
+        """Test send type confusion attack vector."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.05):
+            with patch("random.choice", return_value="send_type_confusion"):
+                with patch("random.randint", return_value=6000):
+                    mutator = GeneratorFrameInliningMutator()
+                    mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        self.assertIn("_send_gen_geninl_6000", result)
+        self.assertIn(".send(", result)
+        self.assertIn("string_poison", result)
+
+    def test_injects_throw_at_optimized(self):
+        """Test throw at optimized points attack vector."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.05):
+            with patch("random.choice", return_value="throw_at_optimized"):
+                with patch("random.randint", return_value=7000):
+                    mutator = GeneratorFrameInliningMutator()
+                    mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        self.assertIn("_throw_gen_geninl_7000", result)
+        self.assertIn(".throw(", result)
+        self.assertIn("GeneratorExit", result)
+
+    def test_injects_yield_from_swap(self):
+        """Test yield-from delegation corruption attack vector."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.05):
+            with patch("random.choice", return_value="yield_from_swap"):
+                with patch("random.randint", return_value=8000):
+                    mutator = GeneratorFrameInliningMutator()
+                    mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        self.assertIn("_inner_gen_geninl_8000", result)
+        self.assertIn("_outer_gen_geninl_8000", result)
+        self.assertIn("yield from", result)
+        self.assertIn("gi_yieldfrom", result)
+
+    def test_injects_generator_resurrection(self):
+        """Test generator resurrection via __del__ attack vector."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.05):
+            with patch("random.choice", return_value="generator_resurrection"):
+                with patch("random.randint", return_value=9000):
+                    mutator = GeneratorFrameInliningMutator()
+                    mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        self.assertIn("_GenHolder_geninl_9000", result)
+        self.assertIn("_resurrected_geninl_9000", result)
+        self.assertIn("__del__", result)
+        self.assertIn("gc.collect()", result)
+
+    def test_injects_concurrent_exhaustion(self):
+        """Test concurrent exhaustion from two call sites."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.05):
+            with patch("random.choice", return_value="concurrent_exhaustion"):
+                with patch("random.randint", return_value=1000):
+                    mutator = GeneratorFrameInliningMutator()
+                    mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        self.assertIn("_shared_gen_geninl_1000", result)
+        self.assertIn("_consumer_a_geninl_1000", result)
+        self.assertIn("_consumer_b_geninl_1000", result)
+
+    def test_all_attack_scenarios_produce_valid_code(self):
+        """Test that all attack scenarios produce parseable Python."""
+        for attack in GeneratorFrameInliningMutator.ATTACK_SCENARIOS:
+            with self.subTest(attack=attack):
+                code = dedent("""
+                    def uop_harness_test():
+                        x = 1
+                        y = 2
+                """)
+                tree = ast.parse(code)
+
+                with patch("random.random", return_value=0.05):
+                    with patch("random.choice", return_value=attack):
+                        with patch("random.randint", return_value=4000):
+                            mutator = GeneratorFrameInliningMutator()
+                            mutated = mutator.visit(tree)
+
+                result = ast.unparse(mutated)
+                reparsed = ast.parse(result)
+                self.assertIsInstance(reparsed, ast.Module)
+
+    def test_skips_non_harness_functions(self):
+        """Test that non-harness functions are not mutated."""
+        code = dedent("""
+            def normal_function():
+                x = 1
+        """)
+        tree = ast.parse(code)
+        original = ast.unparse(tree)
+
+        with patch("random.random", return_value=0.05):
+            mutator = GeneratorFrameInliningMutator()
+            mutated = mutator.visit(tree)
+
+        self.assertEqual(original, ast.unparse(mutated))
+
+    def test_respects_probability_threshold(self):
+        """Test that mutation doesn't occur above probability threshold."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+        original = ast.unparse(tree)
+
+        with patch("random.random", return_value=0.9):
+            mutator = GeneratorFrameInliningMutator()
+            mutated = mutator.visit(tree)
+
+        self.assertEqual(original, ast.unparse(mutated))
+
+    def test_preserves_original_function_body(self):
+        """Test that original function statements are preserved."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+                y = 2
+                z = x + y
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.05):
+            with patch("random.choice", return_value="gi_frame_corruption"):
+                mutator = GeneratorFrameInliningMutator()
+                mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        self.assertIn("x = 1", result)
+        self.assertIn("y = 2", result)
+        self.assertIn("z = x + y", result)
 
 
 if __name__ == "__main__":

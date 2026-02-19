@@ -1545,3 +1545,378 @@ class PatternMatchingChaosMutator(ast.NodeTransformer):
             node.body = scenario_nodes + node.body
         except SyntaxError:
             pass
+
+
+class GeneratorFrameInliningMutator(ast.NodeTransformer):
+    """
+    Attack the JIT's generator frame inlining optimization.
+
+    Since Jan 2025, CPython's JIT traces into generator frames via
+    _FOR_ITER_GEN_FRAME and _SEND_GEN_FRAME, performing optimizations
+    (refcount elimination, type narrowing, constant propagation) across
+    yield boundaries. This mutator creates generators the JIT will inline,
+    then corrupts their state between yields through multiple vectors:
+
+    1. gi_frame corruption: Modify generator locals via gi_frame.f_locals
+       between next() calls, violating JIT type assumptions.
+    2. send() type confusion: Train generator on int sends, then send a
+       string, breaking type-specialized operations after yield.
+    3. throw() at optimized points: Throw exceptions where the JIT has
+       eliminated error checks, testing unwinding from inlined frames.
+    4. yield_from swap: Replace the inner iterator of a yield-from chain
+       mid-iteration, corrupting the delegation target.
+    5. generator resurrection: Create generators whose __del__ re-adds
+       them to a global list, then consume them after GC, testing the
+       JIT's handling of resurrected generator frames.
+    6. concurrent exhaustion: Create a generator consumed by two for-loops
+       interleaved (via explicit next() calls), testing whether the JIT's
+       inlined frame handles shared generator state correctly.
+    """
+
+    ATTACK_SCENARIOS = [
+        "gi_frame_corruption",
+        "send_type_confusion",
+        "throw_at_optimized",
+        "yield_from_swap",
+        "generator_resurrection",
+        "concurrent_exhaustion",
+    ]
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> ast.FunctionDef:
+        self.generic_visit(node)
+
+        if not node.name.startswith("uop_harness") or not node.body:
+            return node
+
+        if random.random() < 0.12:  # 12% chance
+            attack = random.choice(self.ATTACK_SCENARIOS)
+            p_prefix = f"geninl_{random.randint(1000, 9999)}"
+
+            print(
+                f"    -> Injecting generator frame inlining attack ({attack}) "
+                f"with prefix '{p_prefix}'",
+                file=sys.stderr,
+            )
+
+            scenario_ast = getattr(self, f"_create_{attack}")(p_prefix)
+
+            injection_point = random.randint(0, len(node.body))
+            node.body[injection_point:injection_point] = scenario_ast
+            ast.fix_missing_locations(node)
+
+        return node
+
+    def _create_gi_frame_corruption(self, prefix: str) -> list[ast.stmt]:
+        """
+        Modify generator locals via gi_frame.f_locals between next() calls.
+
+        Creates a simple counting generator that yields integers. The JIT
+        traces into it and specializes on int types. Between yields, we
+        use gi_frame.f_locals to change a local variable to a string,
+        violating the JIT's type assumption when the generator resumes.
+        """
+        code = dedent(f"""
+            import sys
+
+            def _gen_victim_{prefix}():
+                x = 0
+                total = 0
+                for i in range(200):
+                    x = i + 1
+                    total = total + x
+                    yield total
+
+            # Phase 1: Warm up — let the JIT trace into the generator
+            _g_{prefix} = _gen_victim_{prefix}()
+            for _warmup_{prefix} in range(150):
+                next(_g_{prefix})
+
+            # Phase 2: Corrupt via gi_frame between yields
+            try:
+                _frame_{prefix} = _g_{prefix}.gi_frame
+                if _frame_{prefix} is not None:
+                    _frame_{prefix}.f_locals['x'] = "type_corrupted"
+                    # Also try corrupting 'total' to a float
+                    _frame_{prefix}.f_locals['total'] = 3.14
+            except (AttributeError, TypeError, ValueError):
+                pass
+
+            # Phase 3: Resume — JIT assumes x is int, total is int
+            try:
+                for _post_{prefix} in range(50):
+                    next(_g_{prefix})
+            except (TypeError, StopIteration):
+                pass
+        """)
+        return ast.parse(code).body
+
+    def _create_send_type_confusion(self, prefix: str) -> list[ast.stmt]:
+        """
+        Train generator on int sends, then send a string.
+
+        The generator uses the value from yield in arithmetic. The JIT
+        sees int sends during tracing and specializes. Sending a string
+        breaks the specialized _BINARY_OP_ADD_INT after resume.
+        """
+        code = dedent(f"""
+            def _send_gen_{prefix}():
+                total = 0
+                while True:
+                    received = yield total
+                    if received is None:
+                        received = 1
+                    # JIT specializes this to _BINARY_OP_ADD_INT
+                    total = total + received
+                    # Secondary operation also specialized
+                    _ = total * 2
+
+            _sg_{prefix} = _send_gen_{prefix}()
+            next(_sg_{prefix})  # Prime the generator
+
+            # Phase 1: Warm up with ints — JIT traces and specializes
+            for _i_{prefix} in range(200):
+                _sg_{prefix}.send(_i_{prefix} % 10)
+
+            # Phase 2: Send wrong types to break specialization
+            _poison_values_{prefix} = [
+                "string_poison",   # str breaks _BINARY_OP_ADD_INT
+                3.14,              # float breaks _BINARY_OP_ADD_INT
+                None,              # None hits the fallback path
+                True,              # bool is int subclass — subtle
+                [],                # list breaks everything
+            ]
+            for _pv_{prefix} in _poison_values_{prefix}:
+                try:
+                    _sg_{prefix}.send(_pv_{prefix})
+                except (TypeError, StopIteration):
+                    # Restart generator if it dies
+                    _sg_{prefix} = _send_gen_{prefix}()
+                    next(_sg_{prefix})
+        """)
+        return ast.parse(code).body
+
+    def _create_throw_at_optimized(self, prefix: str) -> list[ast.stmt]:
+        """
+        Throw exceptions at points where the JIT has eliminated error checks.
+
+        Creates a generator with multiple yield points. After the JIT traces
+        and optimizes (eliminating checks), we throw exceptions at each
+        yield point to test unwinding from inlined generator frames.
+        """
+        code = dedent(f"""
+            def _throw_gen_{prefix}():
+                a = 0
+                b = 0.0
+                c = "hello"
+                for i in range(500):
+                    a = a + i          # _BINARY_OP_ADD_INT — refcount eliminated
+                    yield a
+                    b = b + float(i)   # _BINARY_OP_ADD_FLOAT — refcount eliminated
+                    yield b
+                    c = c + str(i)[-1] # _BINARY_OP_ADD_UNICODE — refcount eliminated
+                    yield c
+
+            # Phase 1: Warm up
+            _tg_{prefix} = _throw_gen_{prefix}()
+            for _w_{prefix} in range(300):
+                next(_tg_{prefix})
+
+            # Phase 2: Throw at different yield points
+            _exceptions_{prefix} = [
+                ValueError("throw_test"),
+                TypeError("throw_test"),
+                RuntimeError("throw_test"),
+                StopIteration("throw_test"),
+                GeneratorExit(),
+            ]
+            for _exc_{prefix} in _exceptions_{prefix}:
+                _tg2_{prefix} = _throw_gen_{prefix}()
+                # Warm this one up too
+                for _w2_{prefix} in range(200):
+                    try:
+                        next(_tg2_{prefix})
+                    except StopIteration:
+                        break
+                # Now throw
+                try:
+                    _tg2_{prefix}.throw(type(_exc_{prefix}), _exc_{prefix})
+                except (StopIteration, RuntimeError, ValueError, TypeError, GeneratorExit):
+                    pass
+        """)
+        return ast.parse(code).body
+
+    def _create_yield_from_swap(self, prefix: str) -> list[ast.stmt]:
+        """
+        Replace the inner iterator of a yield-from chain mid-iteration.
+
+        Creates a delegating generator using yield-from. After the JIT
+        traces into both the outer and inner frames (_SEND_GEN_FRAME),
+        we modify the inner generator's state or swap the iterable.
+        """
+        code = dedent(f"""
+            def _inner_gen_{prefix}(n):
+                total = 0
+                for i in range(n):
+                    total += i
+                    yield total
+
+            def _outer_gen_{prefix}(n):
+                # JIT traces through yield-from into _inner_gen
+                yield from _inner_gen_{prefix}(n)
+
+            # A different inner generator with incompatible types
+            def _inner_gen_str_{prefix}(n):
+                for i in range(n):
+                    yield "str_" + str(i)
+
+            # Phase 1: Warm up yield-from chain
+            _og_{prefix} = _outer_gen_{prefix}(500)
+            _results_{prefix} = []
+            for _w_{prefix} in range(200):
+                _results_{prefix}.append(next(_og_{prefix}))
+
+            # Phase 2: Try to corrupt the delegation target
+            # Attack 2a: Modify inner generator's gi_frame
+            try:
+                # Walk the yield-from chain to find the inner generator
+                _inner_{prefix} = _og_{prefix}.gi_yieldfrom
+                if _inner_{prefix} is not None and hasattr(_inner_{prefix}, 'gi_frame'):
+                    _frame_{prefix} = _inner_{prefix}.gi_frame
+                    if _frame_{prefix} is not None:
+                        _frame_{prefix}.f_locals['total'] = "type_corrupted"
+            except (AttributeError, TypeError, ValueError):
+                pass
+
+            # Phase 3: Continue consuming — JIT's inlined inner frame
+            # now operates on corrupted state
+            try:
+                for _post_{prefix} in range(100):
+                    next(_og_{prefix})
+            except (TypeError, StopIteration):
+                pass
+
+            # Attack 2b: Fresh chain where we close inner mid-yield-from
+            _og2_{prefix} = _outer_gen_{prefix}(500)
+            for _w2_{prefix} in range(200):
+                next(_og2_{prefix})
+            try:
+                _inner2_{prefix} = _og2_{prefix}.gi_yieldfrom
+                if _inner2_{prefix} is not None:
+                    _inner2_{prefix}.close()
+            except (AttributeError, RuntimeError):
+                pass
+            try:
+                next(_og2_{prefix})
+            except (StopIteration, RuntimeError, ValueError):
+                pass
+        """)
+        return ast.parse(code).body
+
+    def _create_generator_resurrection(self, prefix: str) -> list[ast.stmt]:
+        """
+        Create generators whose __del__ resurrects them, then consume post-GC.
+
+        The JIT may cache frame pointers or refcount assumptions about a
+        generator. If the generator is collected, resurrected by __del__,
+        and then consumed again, the JIT's cached state may be stale.
+        """
+        code = dedent(f"""
+            import gc
+
+            _resurrected_{prefix} = []
+
+            class _GenHolder_{prefix}:
+                def __init__(self, gen):
+                    self.gen = gen
+                def __del__(self):
+                    # Resurrect the generator by adding it to a global list
+                    _resurrected_{prefix}.append(self.gen)
+
+            def _res_gen_{prefix}():
+                x = 0
+                for i in range(500):
+                    x = x + i
+                    yield x
+
+            # Phase 1: Create generator and let JIT trace into it
+            _g_{prefix} = _res_gen_{prefix}()
+            _holder_{prefix} = _GenHolder_{prefix}(_g_{prefix})
+
+            for _w_{prefix} in range(200):
+                next(_g_{prefix})
+
+            # Phase 2: Drop all references except the one __del__ will save
+            del _holder_{prefix}
+            del _g_{prefix}
+            gc.collect()
+            gc.collect()
+
+            # Phase 3: Consume the resurrected generator
+            if _resurrected_{prefix}:
+                _rg_{prefix} = _resurrected_{prefix}[0]
+                try:
+                    for _post_{prefix} in range(100):
+                        next(_rg_{prefix})
+                except (StopIteration, RuntimeError):
+                    pass
+        """)
+        return ast.parse(code).body
+
+    def _create_concurrent_exhaustion(self, prefix: str) -> list[ast.stmt]:
+        """
+        Consume one generator from two interleaved call sites.
+
+        The JIT traces into the generator frame from call site A and
+        optimizes based on A's calling pattern. When call site B also
+        drives the same generator, the JIT's per-call-site assumptions
+        about the generator's state (locals, instruction pointer) may
+        be violated.
+        """
+        code = dedent(f"""
+            def _shared_gen_{prefix}():
+                total = 0
+                for i in range(1000):
+                    total = total + i
+                    yield total
+
+            def _consumer_a_{prefix}(gen):
+                results = []
+                for _ in range(100):
+                    try:
+                        results.append(next(gen))
+                    except StopIteration:
+                        break
+                return results
+
+            def _consumer_b_{prefix}(gen):
+                results = []
+                for _ in range(100):
+                    try:
+                        val = next(gen)
+                        results.append(val * 2)  # Different operation on same value
+                    except StopIteration:
+                        break
+                return results
+
+            # Shared generator instance
+            _sg_{prefix} = _shared_gen_{prefix}()
+
+            # Phase 1: Let consumer A warm up the JIT
+            _consumer_a_{prefix}(_sg_{prefix})
+
+            # Phase 2: Interleave A and B on the SAME generator
+            for _round_{prefix} in range(10):
+                _consumer_a_{prefix}(_sg_{prefix})  # JIT sees pattern A
+                _consumer_b_{prefix}(_sg_{prefix})  # JIT sees pattern B on same frame
+
+            # Phase 3: Create a list comprehension consuming the generator
+            # (comprehensions have their own frame, another call site)
+            _sg2_{prefix} = _shared_gen_{prefix}()
+            for _w_{prefix} in range(200):
+                next(_sg2_{prefix})
+            try:
+                _lc_{prefix} = [x + 1 for x in _sg2_{prefix}]
+            except (TypeError, StopIteration):
+                pass
+        """)
+        return ast.parse(code).body

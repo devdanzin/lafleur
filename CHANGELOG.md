@@ -26,6 +26,7 @@ All notable changes to this project should be documented in this file.
 - A **crash-attribution feedback system** with two-tier rewards: direct attribution (5× reward) for mutators in the crashing mutation and lineage attribution (2× reward) for mutators in the ancestry chain, giving the learning system a signal tied to actual bug discovery rather than just coverage, by @devdanzin.
 - A **CRASH ATTRIBUTION section** in the instance report showing per-instance crash-productive mutators and lineage depth statistics, by @devdanzin.
 - A **CRASH-PRODUCTIVE MUTATORS section** in the campaign report showing fleet-aggregated crash attribution rankings with combined scores matching the learning system's internal weighting, by @devdanzin.
+- A `GeneratorFrameInliningMutator` that attacks the JIT's generator frame inlining optimization (`_FOR_ITER_GEN_FRAME`, `_SEND_GEN_FRAME`) by corrupting generator state across yield boundaries through six vectors: gi_frame local modification, send() type confusion, throw() at optimized points, yield-from delegation target corruption, generator resurrection via __del__, and concurrent exhaustion from multiple call sites, by @devdanzin.
 - CLI argument plumbing tests verifying that all CLI options are correctly threaded through to their respective manager classes, by @devdanzin.
 - A directory column in the campaign instance leaderboard for identifying instance paths, by @devdanzin.
 

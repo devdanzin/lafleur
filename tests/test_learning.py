@@ -3,9 +3,10 @@
 Unit tests for lafleur/learning.py
 """
 
+import io
 import json
 import unittest
-from unittest.mock import mock_open, patch
+from unittest.mock import MagicMock, mock_open, patch
 
 from lafleur.learning import MutatorScoreTracker
 
@@ -287,6 +288,113 @@ class TestMutatorScoreTracker(unittest.TestCase):
         # Should have fresh/empty state, not crash
         self.assertEqual(dict(tracker.scores), {})
         self.assertEqual(dict(tracker.attempts), {})
+
+
+class TestRecordCrashAttribution(unittest.TestCase):
+    """Test crash attribution reward system."""
+
+    @patch("lafleur.learning.MUTATOR_SCORES_FILE")
+    def setUp(self, mock_file_path):
+        mock_file_path.is_file.return_value = False
+        self.transformers = [MagicMock(__name__="T1"), MagicMock(__name__="T2")]
+        self.tracker = MutatorScoreTracker(self.transformers)
+
+    def test_direct_reward_applied(self):
+        """Direct strategy and transformers receive CRASH_DIRECT_MULTIPLIER reward."""
+        with patch("lafleur.learning.CRASH_ATTRIBUTION_LOG"):
+            with patch("builtins.open", mock_open()):
+                with patch("sys.stderr", new_callable=io.StringIO):
+                    self.tracker.record_crash_attribution(
+                        direct_strategy="havoc",
+                        direct_transformers=["TypeInstabilityInjector", "OperatorSwapper"],
+                        lineage_mutations=[],
+                    )
+
+        expected_reward = self.tracker.REWARD_INCREMENT * self.tracker.CRASH_DIRECT_MULTIPLIER
+        self.assertEqual(self.tracker.scores["havoc"], expected_reward)
+        self.assertEqual(self.tracker.scores["TypeInstabilityInjector"], expected_reward)
+        self.assertEqual(self.tracker.scores["OperatorSwapper"], expected_reward)
+
+    def test_lineage_reward_applied(self):
+        """Ancestor mutations receive CRASH_LINEAGE_MULTIPLIER reward."""
+        lineage = [
+            {"strategy": "deterministic", "transformers": ["ConstantPerturbator"]},
+            {"strategy": "spam", "transformers": ["ForLoopInjector", "ForLoopInjector"]},
+        ]
+        with patch("lafleur.learning.CRASH_ATTRIBUTION_LOG"):
+            with patch("builtins.open", mock_open()):
+                with patch("sys.stderr", new_callable=io.StringIO):
+                    self.tracker.record_crash_attribution(
+                        direct_strategy="havoc",
+                        direct_transformers=["T1"],
+                        lineage_mutations=lineage,
+                    )
+
+        lineage_reward = self.tracker.REWARD_INCREMENT * self.tracker.CRASH_LINEAGE_MULTIPLIER
+        self.assertEqual(self.tracker.scores["deterministic"], lineage_reward)
+        self.assertEqual(self.tracker.scores["ConstantPerturbator"], lineage_reward)
+        self.assertEqual(self.tracker.scores["spam"], lineage_reward)
+        # ForLoopInjector appears twice in lineage — should get 2x lineage reward
+        self.assertEqual(self.tracker.scores["ForLoopInjector"], lineage_reward * 2)
+
+    def test_direct_and_lineage_rewards_stack(self):
+        """A strategy appearing in both direct and lineage gets both rewards."""
+        lineage = [
+            {"strategy": "havoc", "transformers": ["T1"]},
+        ]
+        with patch("lafleur.learning.CRASH_ATTRIBUTION_LOG"):
+            with patch("builtins.open", mock_open()):
+                with patch("sys.stderr", new_callable=io.StringIO):
+                    self.tracker.record_crash_attribution(
+                        direct_strategy="havoc",
+                        direct_transformers=["T1"],
+                        lineage_mutations=lineage,
+                    )
+
+        direct_reward = self.tracker.REWARD_INCREMENT * self.tracker.CRASH_DIRECT_MULTIPLIER
+        lineage_reward = self.tracker.REWARD_INCREMENT * self.tracker.CRASH_LINEAGE_MULTIPLIER
+        self.assertEqual(self.tracker.scores["havoc"], direct_reward + lineage_reward)
+        self.assertEqual(self.tracker.scores["T1"], direct_reward + lineage_reward)
+
+    def test_empty_strategy_skipped(self):
+        """Empty direct_strategy doesn't add score to empty string key."""
+        with patch("lafleur.learning.CRASH_ATTRIBUTION_LOG"):
+            with patch("builtins.open", mock_open()):
+                with patch("sys.stderr", new_callable=io.StringIO):
+                    self.tracker.record_crash_attribution(
+                        direct_strategy="",
+                        direct_transformers=[],
+                        lineage_mutations=[],
+                    )
+
+        self.assertEqual(self.tracker.scores[""], 0.0)
+
+    def test_log_entry_written(self):
+        """Crash attribution JSONL log is written."""
+        mock_file = mock_open()
+        with patch("lafleur.learning.CRASH_ATTRIBUTION_LOG") as mock_log_path:
+            mock_log_path.parent.mkdir = MagicMock()
+            with patch("builtins.open", mock_file):
+                with patch("sys.stderr", new_callable=io.StringIO):
+                    self.tracker.record_crash_attribution(
+                        direct_strategy="havoc",
+                        direct_transformers=["T1"],
+                        lineage_mutations=[{"strategy": "spam", "transformers": ["T2"]}],
+                        fingerprint="ASSERT:test",
+                        parent_id="42.py",
+                    )
+
+        # Verify file was written to
+        mock_file.assert_called()
+        written = mock_file().write.call_args[0][0]
+        entry = json.loads(written.strip())
+        self.assertEqual(entry["fingerprint"], "ASSERT:test")
+        self.assertEqual(entry["parent_id"], "42.py")
+        self.assertEqual(entry["direct"]["strategy"], "havoc")
+        self.assertEqual(entry["direct"]["transformers"], ["T1"])
+        self.assertEqual(entry["lineage_depth"], 1)
+        self.assertEqual(entry["lineage_strategies"], ["spam"])
+        self.assertEqual(entry["lineage_transformers"], ["T2"])
 
 
 if __name__ == "__main__":

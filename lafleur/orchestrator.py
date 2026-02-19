@@ -104,6 +104,8 @@ class LafleurOrchestrator:
     for new coverage.
     """
 
+    MAX_LINEAGE_DEPTH = 20  # Safety bound for lineage walking
+
     def __init__(
         self,
         fusil_path: str,
@@ -405,6 +407,43 @@ class LafleurOrchestrator:
             return FlowControl.BREAK, "divergence"
         elif status == "CRASH":
             self.run_stats["crashes_found"] = self.run_stats.get("crashes_found", 0) + 1
+
+            # --- Crash attribution ---
+            mutation_info = analysis_data.get("mutation_info", {})
+            crash_strategy = mutation_info.get("strategy", "")
+            crash_transformers = mutation_info.get("transformers", [])
+
+            if crash_strategy or crash_transformers:
+                hygiene_names = {cls.__name__ for cls, _ in MutationController.HYGIENE_MUTATORS}
+                filtered_transformers = [t for t in crash_transformers if t not in hygiene_names]
+
+                # Walk lineage from the parent
+                crash_parent_id = analysis_data.get("parent_id")
+                lineage_mutations = self._walk_crash_lineage(crash_parent_id)
+
+                # Filter hygiene from lineage too
+                filtered_lineage = []
+                for ancestor in lineage_mutations:
+                    filtered_lineage.append(
+                        {
+                            "strategy": ancestor.get("strategy", ""),
+                            "transformers": [
+                                t
+                                for t in ancestor.get("transformers", [])
+                                if t not in hygiene_names
+                            ],
+                        }
+                    )
+
+                fingerprint = analysis_data.get("fingerprint", "")
+                self.score_tracker.record_crash_attribution(
+                    direct_strategy=crash_strategy,
+                    direct_transformers=filtered_transformers,
+                    lineage_mutations=filtered_lineage,
+                    fingerprint=fingerprint,
+                    parent_id=crash_parent_id or "",
+                )
+
             return FlowControl.CONTINUE, None
         elif status == "NEW_COVERAGE":
             print(f"  [***] SUCCESS! Mutation #{i + 1} found new coverage. Moving to next parent.")
@@ -436,6 +475,38 @@ class LafleurOrchestrator:
                         mutations_since_last_find=parent_metadata["mutations_since_last_find"],
                     )
             return FlowControl.NONE, None
+
+    def _walk_crash_lineage(self, parent_id: str | None) -> list[dict]:
+        """Walk the ancestry of a corpus file, collecting mutation info.
+
+        Follows the parent_id chain in per_file_coverage, collecting each
+        ancestor's discovery_mutation until reaching a seed file (parent_id
+        is None) or the depth limit.
+
+        Args:
+            parent_id: Starting corpus filename to trace back from.
+
+        Returns:
+            List of mutation info dicts, ordered parent -> grandparent -> ...
+        """
+        per_file = self.coverage_manager.state.get("per_file_coverage", {})
+        lineage: list[dict] = []
+        current_id = parent_id
+
+        for _ in range(self.MAX_LINEAGE_DEPTH):
+            if current_id is None:
+                break
+            metadata = per_file.get(current_id)
+            if metadata is None:
+                break
+
+            discovery_mutation = metadata.get("discovery_mutation")
+            if discovery_mutation and isinstance(discovery_mutation, dict):
+                lineage.append(discovery_mutation)
+
+            current_id = metadata.get("parent_id")
+
+        return lineage
 
     def _check_timing_regression(
         self,

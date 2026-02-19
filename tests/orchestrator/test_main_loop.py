@@ -2080,5 +2080,159 @@ class TestMainCLIPlumbing(unittest.TestCase):
             self.assertEqual(args_namespace.instance_name, "my-instance")
 
 
+class TestWalkCrashLineage(unittest.TestCase):
+    """Test _walk_crash_lineage method."""
+
+    def setUp(self):
+        self.orchestrator = LafleurOrchestrator.__new__(LafleurOrchestrator)
+        self.orchestrator.coverage_manager = MagicMock()
+
+    def test_walks_simple_lineage(self):
+        """Traces parent -> grandparent -> seed."""
+        self.orchestrator.coverage_manager.state = {
+            "per_file_coverage": {
+                "3.py": {
+                    "parent_id": "2.py",
+                    "discovery_mutation": {"strategy": "havoc", "transformers": ["T1"]},
+                },
+                "2.py": {
+                    "parent_id": "1.py",
+                    "discovery_mutation": {"strategy": "spam", "transformers": ["T2", "T2"]},
+                },
+                "1.py": {
+                    "parent_id": None,
+                    "discovery_mutation": {"strategy": "seed"},
+                },
+            }
+        }
+
+        lineage = self.orchestrator._walk_crash_lineage("3.py")
+
+        self.assertEqual(len(lineage), 3)
+        self.assertEqual(lineage[0]["strategy"], "havoc")
+        self.assertEqual(lineage[1]["strategy"], "spam")
+        self.assertEqual(lineage[2]["strategy"], "seed")
+
+    def test_stops_at_none_parent(self):
+        """Stops when parent_id is None (seed file)."""
+        self.orchestrator.coverage_manager.state = {
+            "per_file_coverage": {
+                "1.py": {
+                    "parent_id": None,
+                    "discovery_mutation": {"strategy": "seed"},
+                },
+            }
+        }
+
+        lineage = self.orchestrator._walk_crash_lineage("1.py")
+        self.assertEqual(len(lineage), 1)
+
+    def test_stops_at_missing_file(self):
+        """Stops when parent_id references a file not in corpus (pruned)."""
+        self.orchestrator.coverage_manager.state = {
+            "per_file_coverage": {
+                "5.py": {
+                    "parent_id": "pruned.py",
+                    "discovery_mutation": {"strategy": "havoc", "transformers": ["T1"]},
+                },
+            }
+        }
+
+        lineage = self.orchestrator._walk_crash_lineage("5.py")
+        self.assertEqual(len(lineage), 1)
+
+    def test_respects_max_depth(self):
+        """Stops at MAX_LINEAGE_DEPTH even if chain is longer."""
+        per_file = {}
+        for i in range(30):
+            per_file[f"{i}.py"] = {
+                "parent_id": f"{i - 1}.py" if i > 0 else None,
+                "discovery_mutation": {"strategy": "havoc", "transformers": ["T1"]},
+            }
+        self.orchestrator.coverage_manager.state = {"per_file_coverage": per_file}
+
+        lineage = self.orchestrator._walk_crash_lineage("29.py")
+        self.assertEqual(len(lineage), self.orchestrator.MAX_LINEAGE_DEPTH)
+
+    def test_returns_empty_for_none_parent(self):
+        """Returns empty list when starting parent_id is None."""
+        self.orchestrator.coverage_manager.state = {"per_file_coverage": {}}
+
+        lineage = self.orchestrator._walk_crash_lineage(None)
+        self.assertEqual(lineage, [])
+
+    def test_handles_missing_discovery_mutation(self):
+        """Files without discovery_mutation are skipped in lineage."""
+        self.orchestrator.coverage_manager.state = {
+            "per_file_coverage": {
+                "2.py": {
+                    "parent_id": "1.py",
+                },
+                "1.py": {
+                    "parent_id": None,
+                    "discovery_mutation": {"strategy": "seed"},
+                },
+            }
+        }
+
+        lineage = self.orchestrator._walk_crash_lineage("2.py")
+        self.assertEqual(len(lineage), 1)
+        self.assertEqual(lineage[0]["strategy"], "seed")
+
+
+class TestHandleAnalysisDataCrashAttribution(unittest.TestCase):
+    """Test that _handle_analysis_data triggers crash attribution."""
+
+    def setUp(self):
+        self.orchestrator = LafleurOrchestrator.__new__(LafleurOrchestrator)
+        self.orchestrator.run_stats = {}
+        self.orchestrator.mutations_since_last_find = 0
+        self.orchestrator.corpus_manager = MagicMock()
+        self.orchestrator.scoring_manager = MagicMock()
+        self.orchestrator.artifact_manager = MagicMock()
+        self.orchestrator.score_tracker = MagicMock()
+        self.orchestrator.coverage_manager = MagicMock()
+        self.orchestrator.coverage_manager.state = {"per_file_coverage": {}}
+        self.orchestrator.timing_fuzz = False
+        self.orchestrator.health_monitor = MagicMock()
+
+    def test_crash_triggers_attribution(self):
+        """CRASH status calls record_crash_attribution on score_tracker."""
+        analysis_data = {
+            "status": "CRASH",
+            "mutation_info": {"strategy": "havoc", "transformers": ["T1", "T2"]},
+            "parent_id": "42.py",
+        }
+
+        self.orchestrator._handle_analysis_data(analysis_data, 0, {}, None)
+
+        self.orchestrator.score_tracker.record_crash_attribution.assert_called_once()
+        call_kwargs = self.orchestrator.score_tracker.record_crash_attribution.call_args.kwargs
+        self.assertEqual(call_kwargs["direct_strategy"], "havoc")
+
+    def test_crash_without_mutation_info_skips_attribution(self):
+        """CRASH with empty mutation_info doesn't crash."""
+        analysis_data = {
+            "status": "CRASH",
+            "mutation_info": {},
+        }
+
+        self.orchestrator._handle_analysis_data(analysis_data, 0, {}, None)
+
+        self.orchestrator.score_tracker.record_crash_attribution.assert_not_called()
+
+    def test_crash_increments_stat(self):
+        """CRASH still increments crashes_found regardless of attribution."""
+        analysis_data = {
+            "status": "CRASH",
+            "mutation_info": {"strategy": "havoc", "transformers": ["T1"]},
+            "parent_id": "1.py",
+        }
+
+        self.orchestrator._handle_analysis_data(analysis_data, 0, {}, None)
+
+        self.assertEqual(self.orchestrator.run_stats["crashes_found"], 1)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

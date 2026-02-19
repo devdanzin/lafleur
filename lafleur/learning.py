@@ -19,10 +19,12 @@ import sys
 from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 # Define paths for the new state and log files
 MUTATOR_SCORES_FILE = Path("coverage/mutator_scores.json")
 MUTATOR_TELEMETRY_LOG = Path("logs/mutator_effectiveness.jsonl")
+CRASH_ATTRIBUTION_LOG = Path("logs/crash_attribution.jsonl")
 
 
 class MutatorScoreTracker:
@@ -46,6 +48,8 @@ class MutatorScoreTracker:
     WEIGHT_FLOOR = 0.05  # Minimum weight to ensure all mutators get some chance
     DEFAULT_EPSILON = 0.1  # Probability of random exploration vs exploitation
     DECAY_INTERVAL = 50  # Apply decay every N attempts
+    CRASH_DIRECT_MULTIPLIER = 5.0  # Reward multiplier for the crashing mutation
+    CRASH_LINEAGE_MULTIPLIER = 2.0  # Reward multiplier for ancestry mutations
 
     DEFAULT_STRATEGIES = ["deterministic", "havoc", "spam"]
 
@@ -140,6 +144,101 @@ class MutatorScoreTracker:
                 weights.append(max(self.WEIGHT_FLOOR, score))
 
         return weights
+
+    def record_crash_attribution(
+        self,
+        direct_strategy: str,
+        direct_transformers: list[str],
+        lineage_mutations: list[dict[str, Any]],
+        fingerprint: str = "",
+        parent_id: str = "",
+    ) -> None:
+        """Reward mutators involved in a crash discovery.
+
+        Applies a large reward to the direct (crashing) mutation's strategy
+        and transformers, and a smaller reward to each mutation in the
+        lineage chain that led to the crashing file.
+
+        Args:
+            direct_strategy: Strategy used in the crashing mutation.
+            direct_transformers: Transformers used in the crashing mutation.
+            lineage_mutations: List of dicts with 'strategy' and 'transformers'
+                keys, one per ancestor in the lineage (parent -> grandparent -> ...).
+            fingerprint: Crash fingerprint for logging.
+            parent_id: Parent corpus file ID for logging.
+        """
+        # Direct reward
+        direct_reward = self.REWARD_INCREMENT * self.CRASH_DIRECT_MULTIPLIER
+        if direct_strategy:
+            self.scores[direct_strategy] += direct_reward
+        for t_name in direct_transformers:
+            self.scores[t_name] += direct_reward
+
+        # Lineage reward
+        lineage_reward = self.REWARD_INCREMENT * self.CRASH_LINEAGE_MULTIPLIER
+        lineage_strategies: list[str] = []
+        lineage_transformers_flat: list[str] = []
+
+        for ancestor_mutation in lineage_mutations:
+            strategy = ancestor_mutation.get("strategy", "")
+            transformers = ancestor_mutation.get("transformers", [])
+            if strategy:
+                self.scores[strategy] += lineage_reward
+                lineage_strategies.append(strategy)
+            for t_name in transformers:
+                self.scores[t_name] += lineage_reward
+                lineage_transformers_flat.append(t_name)
+
+        # Log attribution event
+        self._log_crash_attribution(
+            fingerprint=fingerprint,
+            parent_id=parent_id,
+            direct_strategy=direct_strategy,
+            direct_transformers=direct_transformers,
+            lineage_strategies=lineage_strategies,
+            lineage_transformers=lineage_transformers_flat,
+            lineage_depth=len(lineage_mutations),
+        )
+
+        print(
+            f"    -> Crash attribution: direct reward ({direct_reward:.1f}) to "
+            f"'{direct_strategy}' + {len(direct_transformers)} transformers, "
+            f"lineage reward ({lineage_reward:.1f}) to {len(lineage_mutations)} ancestors",
+            file=sys.stderr,
+        )
+
+    def _log_crash_attribution(
+        self,
+        fingerprint: str,
+        parent_id: str,
+        direct_strategy: str,
+        direct_transformers: list[str],
+        lineage_strategies: list[str],
+        lineage_transformers: list[str],
+        lineage_depth: int,
+    ) -> None:
+        """Append a crash attribution event to the JSONL log."""
+        CRASH_ATTRIBUTION_LOG.parent.mkdir(parents=True, exist_ok=True)
+        entry = {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "fingerprint": fingerprint,
+            "parent_id": parent_id,
+            "direct": {
+                "strategy": direct_strategy,
+                "transformers": direct_transformers,
+            },
+            "lineage_depth": lineage_depth,
+            "lineage_strategies": lineage_strategies,
+            "lineage_transformers": lineage_transformers,
+        }
+        try:
+            with open(CRASH_ATTRIBUTION_LOG, "a", encoding="utf-8") as f:
+                f.write(json.dumps(entry) + "\n")
+        except IOError as e:
+            print(
+                f"[!] Warning: Could not write crash attribution log: {e}",
+                file=sys.stderr,
+            )
 
     def save_telemetry(self):
         """Save a snapshot of the current effectiveness metrics to a log."""

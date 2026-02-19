@@ -95,6 +95,7 @@ class ArtifactManager:
         self.max_crash_log_bytes = max_crash_log_bytes
         self.session_fuzz = session_fuzz
         self.health_monitor = health_monitor
+        self.last_crash_fingerprint: str = ""
 
         # Ensure directories exist
         self.crashes_dir.mkdir(parents=True, exist_ok=True)
@@ -577,6 +578,7 @@ class ArtifactManager:
 
         # 3. Save Artifacts if Crash Detected
         if crash_reason:
+            self.last_crash_fingerprint = crash_reason
             print(f"  [!!!] CRASH DETECTED! ({crash_reason}). Saving...", file=sys.stderr)
 
             # Process the log (truncate/compress) using the crash-specific limit

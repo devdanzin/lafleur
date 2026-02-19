@@ -613,7 +613,12 @@ class ScoringManager:
             parent_id=parent_id,
             mutation_info=mutation_info,
         ):
-            return {"status": "CRASH"}
+            return {
+                "status": "CRASH",
+                "mutation_info": mutation_info or {},
+                "parent_id": parent_id,
+                "fingerprint": self.artifact_manager.last_crash_fingerprint,
+            }
 
         child_coverage = parse_log_for_edge_coverage(exec_result.log_path, self.coverage_manager)
 

@@ -344,6 +344,129 @@ class TestGenerateReport(unittest.TestCase):
         report = generate_report(self.root)
         self.assertIn("LAFLEUR FUZZING INSTANCE REPORT", report)
 
+    def _write_health_events(self, events):
+        """Write health events to the instance's health log."""
+        logs_dir = self.root / "logs"
+        logs_dir.mkdir(exist_ok=True)
+        health_path = logs_dir / "health_events.jsonl"
+        health_path.write_text(
+            "\n".join(json.dumps(e) for e in events),
+            encoding="utf-8",
+        )
+
+    def test_generate_report_with_health_events(self):
+        """Test that HEALTH section appears with health events."""
+        self._create_minimal_instance()
+        self._write_health_events(
+            [
+                {
+                    "ts": "2026-01-01T00:00:00Z",
+                    "cat": "mutation_pipeline",
+                    "event": "parent_parse_failure",
+                    "parent_id": "42.py",
+                },
+                {
+                    "ts": "2026-01-01T00:00:01Z",
+                    "cat": "mutation_pipeline",
+                    "event": "parent_parse_failure",
+                    "parent_id": "42.py",
+                },
+                {
+                    "ts": "2026-01-01T00:00:02Z",
+                    "cat": "execution",
+                    "event": "ignored_crash",
+                    "reason": "PYTHON:TypeError",
+                },
+                {
+                    "ts": "2026-01-01T00:00:03Z",
+                    "cat": "execution",
+                    "event": "ignored_crash",
+                    "reason": "PYTHON:TypeError",
+                },
+                {
+                    "ts": "2026-01-01T00:00:04Z",
+                    "cat": "execution",
+                    "event": "ignored_crash",
+                    "reason": "SyntaxError",
+                },
+            ]
+        )
+
+        report = generate_report(self.root)
+
+        # Section header
+        self.assertIn("HEALTH", report)
+
+        # Grade and waste rate (2 waste events / 1000 total = 0.20%)
+        self.assertIn("Healthy", report)
+
+        # Event breakdown
+        self.assertIn("parent parse failure", report)
+
+        # Top offender
+        self.assertIn("42.py", report)
+
+        # Crash profile
+        self.assertIn("PYTHON:TypeError", report)
+
+    def test_generate_report_no_health_log(self):
+        """Test HEALTH section with no health log shows placeholder."""
+        self._create_minimal_instance()
+
+        report = generate_report(self.root)
+
+        self.assertIn("HEALTH", report)
+        self.assertIn("No health events recorded", report)
+
+    def test_generate_report_empty_health_log(self):
+        """Test HEALTH section with empty health log shows placeholder."""
+        self._create_minimal_instance()
+        self._write_health_events([])
+
+        report = generate_report(self.root)
+
+        self.assertIn("HEALTH", report)
+        self.assertIn("No health events recorded", report)
+
+    def test_health_section_shows_waste_rate(self):
+        """Test that waste rate is calculated and displayed."""
+        self._create_minimal_instance()
+        # Create 100 waste events against 1000 total_mutations = 10%
+        events = [
+            {
+                "ts": "...",
+                "cat": "mutation_pipeline",
+                "event": "child_script_none",
+                "parent_id": f"{i}.py",
+            }
+            for i in range(100)
+        ]
+        self._write_health_events(events)
+
+        report = generate_report(self.root)
+
+        self.assertIn("Unhealthy", report)
+        self.assertIn("10.00%", report)
+
+    def test_health_degraded_grade(self):
+        """Test that degraded grade appears at 2-10% waste."""
+        self._create_minimal_instance()
+        # 50 waste events / 1000 total = 5%
+        events = [
+            {
+                "ts": "...",
+                "cat": "mutation_pipeline",
+                "event": "child_script_none",
+                "parent_id": "x.py",
+            }
+            for _ in range(50)
+        ]
+        self._write_health_events(events)
+
+        report = generate_report(self.root)
+
+        self.assertIn("Degraded", report)
+
 
 if __name__ == "__main__":
     unittest.main()

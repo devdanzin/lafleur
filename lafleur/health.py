@@ -19,6 +19,43 @@ CONSECUTIVE_TIMEOUT_THRESHOLD = 5
 FILE_SIZE_WARNING_THRESHOLD = 100_000  # 100KB
 
 
+def extract_error_excerpt(log_content: str | None, max_length: int = 200) -> str | None:
+    """Extract the last meaningful error line from log content.
+
+    Searches backwards for common Python error patterns (exception lines,
+    "Error:" lines), falling back to the last non-empty line. Returns
+    None if the log is empty.
+
+    Args:
+        log_content: Full log content string.
+        max_length: Maximum length of the returned excerpt.
+
+    Returns:
+        A truncated error excerpt, or None if no content found.
+    """
+    if not log_content or not log_content.strip():
+        return None
+
+    lines = log_content.strip().splitlines()
+
+    # Search backwards for the most informative line
+    for line in reversed(lines):
+        stripped = line.strip()
+        if not stripped:
+            continue
+        # Python exception lines: "ValueError: some message"
+        if "Error:" in stripped or "Error(" in stripped:
+            return stripped[:max_length]
+
+    # Fallback: last non-empty line
+    for line in reversed(lines):
+        stripped = line.strip()
+        if stripped:
+            return stripped[:max_length]
+
+    return None
+
+
 class HealthMonitor:
     """Track and record adverse fuzzing events for observability.
 
@@ -95,23 +132,29 @@ class HealthMonitor:
             parent_id=parent_id,
         )
 
-    def record_child_script_none(self, parent_id: str, mutation_seed: int) -> None:
+    def record_child_script_none(
+        self, parent_id: str, mutation_seed: int, strategy: str | None = None
+    ) -> None:
         """Record a mutation that produced no usable child script."""
-        self._write_event(
-            "mutation_pipeline",
-            "child_script_none",
-            parent_id=parent_id,
-            mutation_seed=mutation_seed,
-        )
+        kwargs: dict[str, Any] = {
+            "parent_id": parent_id,
+            "mutation_seed": mutation_seed,
+        }
+        if strategy:
+            kwargs["strategy"] = strategy
+        self._write_event("mutation_pipeline", "child_script_none", **kwargs)
 
-    def record_core_code_syntax_error(self, parent_id: str | None, error: str) -> None:
+    def record_core_code_syntax_error(
+        self, parent_id: str | None, error: str, strategy: str | None = None
+    ) -> None:
         """Record core code that failed ast.parse() validation before saving."""
-        self._write_event(
-            "mutation_pipeline",
-            "core_code_syntax_error",
-            parent_id=parent_id or "seed",
-            error=error,
-        )
+        kwargs: dict[str, Any] = {
+            "parent_id": parent_id or "seed",
+            "error": error,
+        }
+        if strategy:
+            kwargs["strategy"] = strategy
+        self._write_event("mutation_pipeline", "core_code_syntax_error", **kwargs)
 
     # =========================================================================
     # Execution Events
@@ -142,14 +185,34 @@ class HealthMonitor:
         self._timeout_streak = 0
         self._timeout_parent = None
 
-    def record_ignored_crash(self, reason: str, returncode: int) -> None:
-        """Record a crash that was detected but filtered out."""
-        self._write_event(
-            "execution",
-            "ignored_crash",
-            reason=reason,
-            returncode=returncode,
-        )
+    def record_ignored_crash(
+        self,
+        reason: str,
+        returncode: int,
+        parent_id: str | None = None,
+        strategy: str | None = None,
+        error_excerpt: str | None = None,
+    ) -> None:
+        """Record a crash that was detected but filtered out.
+
+        Args:
+            reason: Crash fingerprint or filter reason.
+            returncode: Process exit code.
+            parent_id: Parent corpus file that was being mutated.
+            strategy: Mutation strategy in use (e.g. "havoc", "sniper").
+            error_excerpt: Last meaningful line(s) from the log, truncated.
+        """
+        kwargs: dict[str, Any] = {
+            "reason": reason,
+            "returncode": returncode,
+        }
+        if parent_id:
+            kwargs["parent_id"] = parent_id
+        if strategy:
+            kwargs["strategy"] = strategy
+        if error_excerpt:
+            kwargs["error_excerpt"] = error_excerpt
+        self._write_event("execution", "ignored_crash", **kwargs)
 
     def record_deepening_sterility(
         self, parent_id: str, depth: int, mutations_attempted: int

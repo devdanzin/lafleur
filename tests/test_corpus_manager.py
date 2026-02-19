@@ -1149,5 +1149,78 @@ class TestCorpusSchedulerEdgeCases(unittest.TestCase):
         self.assertGreaterEqual(scores["slow.py"], 1.0)
 
 
+class TestSelectParentSterileFiltering(unittest.TestCase):
+    """Test that select_parent skips sterile files."""
+
+    def setUp(self):
+        self.state = {
+            "global_coverage": {"edges": {}, "uops": {}, "rare_events": {}},
+            "per_file_coverage": {},
+        }
+        self.coverage_manager = CoverageManager(self.state)
+        self.run_stats = {"corpus_file_counter": 0}
+
+        with patch("lafleur.corpus_manager.CORPUS_DIR"), patch("lafleur.corpus_manager.TMP_DIR"):
+            self.corpus_manager = CorpusManager(
+                coverage_state=self.coverage_manager,
+                run_stats=self.run_stats,
+                fusil_path="",
+                get_boilerplate_func=lambda: "",
+                execution_timeout=10,
+            )
+
+    def test_skips_sterile_files(self):
+        """Sterile files are excluded from parent selection."""
+        self.state["per_file_coverage"]["sterile.py"] = {
+            "is_sterile": True,
+            "baseline_coverage": {},
+            "execution_time_ms": 50,
+            "file_size_bytes": 500,
+            "total_finds": 0,
+            "lineage_depth": 1,
+        }
+        self.state["per_file_coverage"]["fertile.py"] = {
+            "is_sterile": False,
+            "baseline_coverage": {},
+            "execution_time_ms": 50,
+            "file_size_bytes": 500,
+            "total_finds": 0,
+            "lineage_depth": 1,
+        }
+
+        with patch("lafleur.corpus_manager.CORPUS_DIR", Path("/mock")):
+            # Run selection many times — should never pick sterile.py
+            selections = set()
+            for _ in range(20):
+                result = self.corpus_manager.select_parent()
+                if result:
+                    selections.add(result[0].name)
+
+            self.assertIn("fertile.py", selections)
+            self.assertNotIn("sterile.py", selections)
+
+    def test_falls_back_to_all_if_everything_sterile(self):
+        """If all files are sterile, falls back to selecting from all files."""
+        self.state["per_file_coverage"]["only.py"] = {
+            "is_sterile": True,
+            "baseline_coverage": {},
+            "execution_time_ms": 50,
+            "file_size_bytes": 500,
+            "total_finds": 0,
+            "lineage_depth": 1,
+        }
+
+        with patch("lafleur.corpus_manager.CORPUS_DIR", Path("/mock")):
+            result = self.corpus_manager.select_parent()
+
+        # Should still return something rather than None
+        self.assertIsNotNone(result)
+
+    def test_returns_none_when_corpus_empty(self):
+        """Returns None when corpus is completely empty."""
+        result = self.corpus_manager.select_parent()
+        self.assertIsNone(result)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

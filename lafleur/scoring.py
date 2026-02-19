@@ -610,6 +610,8 @@ class ScoringManager:
             exec_result.log_path,
             exec_result.parent_path,
             exec_result.session_files,
+            parent_id=parent_id,
+            mutation_info=mutation_info,
         ):
             return {"status": "CRASH"}
 
@@ -680,7 +682,11 @@ class ScoringManager:
                 file=sys.stderr,
             )
             if self.health_monitor:
-                self.health_monitor.record_core_code_syntax_error(parent_id, str(e))
+                self.health_monitor.record_core_code_syntax_error(
+                    parent_id,
+                    str(e),
+                    strategy=mutation_info.get("strategy") if mutation_info else None,
+                )
             return {"status": "NO_CHANGE"}
 
         content_hash = hashlib.sha256(core_code_to_save.encode("utf-8")).hexdigest()

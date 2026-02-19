@@ -425,11 +425,13 @@ class LafleurOrchestrator:
                 parent_metadata.get("mutations_since_last_find", 0) + 1
             )
             if parent_metadata["mutations_since_last_find"] > CORPUS_STERILITY_LIMIT:
-                parent_metadata["is_sterile"] = True
-                self.health_monitor.record_corpus_sterility(
-                    parent_id=parent_id,
-                    mutations_since_last_find=parent_metadata["mutations_since_last_find"],
-                )
+                if not parent_metadata.get("is_sterile", False):
+                    # Fire the health event only on the False→True transition
+                    parent_metadata["is_sterile"] = True
+                    self.health_monitor.record_corpus_sterility(
+                        parent_id=parent_id,
+                        mutations_since_last_find=parent_metadata["mutations_since_last_find"],
+                    )
             return FlowControl.NONE, None
 
     def _check_timing_regression(
@@ -607,7 +609,11 @@ class LafleurOrchestrator:
                     runtime_seed,
                 )
                 if not child_source:
-                    self.health_monitor.record_child_script_none(ctx.parent_id, mutation_seed)
+                    self.health_monitor.record_child_script_none(
+                        ctx.parent_id,
+                        mutation_seed,
+                        strategy=mutation_info.get("strategy") if mutation_info else None,
+                    )
                     continue
 
                 exec_result, stat_key = self.execution_manager.execute_child(

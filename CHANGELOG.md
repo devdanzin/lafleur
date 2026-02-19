@@ -16,15 +16,55 @@ All notable changes to this project should be documented in this file.
 - A `BasesRewriteMutator` that creatively manipulates `__bases__` tuples (removal, builtin injection, inheritance toggling, complete replacement) to attack MRO caching assumptions, targeting the `set_bases` rare event, by @devdanzin.
 - A `TypeVersionInvalidator` that targets `_GUARD_TYPE_VERSION` by modifying class attributes at runtime (method injection, method replacement, attribute injection, dict modification) to invalidate JIT type caches, by @devdanzin.
 - A `RareEventStressTester` meta-mutator that chains multiple JIT rare events (`set_class`, `set_bases`, `set_eval_frame_func`, `builtin_dict`, `func_modification`) in sequence to stress the JIT's ability to handle multiple invalidations, by @devdanzin.
+- A `--no-ekg` CLI flag to disable JIT introspection (`_Py_GetJitEntries`) for CPython builds that lack it, enabling fuzzing on stock or older JIT builds, by @devdanzin.
+- A **heartbeat mechanism** for campaign instance status detection using a file-based heartbeat written every 60 seconds, replacing the unreliable timestamp-age heuristic, by @devdanzin.
+- A **HealthMonitor** observability system that logs adverse fuzzing events (parse failures, timeout streaks, corpus degradation, ignored crashes) to a structured JSONL log (`health_events.jsonl`) for diagnostic analysis, by @devdanzin.
+- **Campaign-level health aggregation** with waste rate metrics, fleet health grading (Healthy/Degraded/Unhealthy), per-instance health in the leaderboard, and top-offender identification in both text and HTML reports, by @devdanzin.
+- A **HEALTH section** in the instance report (`lafleur-report`) showing waste rate, event breakdown by category, top offender files, and ignored crash profile, by @devdanzin.
+- A **hygiene mutator system** — a post-processing layer that applies mutators at fixed probabilities independent of the learning system, preventing feedback loops where corpus-maintenance mutators accumulate misleading rewards, by @devdanzin.
+- An `ImportPrunerMutator` that removes accumulated import statements (both bare imports and try/except import blocks) to counteract import bloat from ImportChaosMutator, by @devdanzin.
+- A **crash-attribution feedback system** with two-tier rewards: direct attribution (5× reward) for mutators in the crashing mutation and lineage attribution (2× reward) for mutators in the ancestry chain, giving the learning system a signal tied to actual bug discovery rather than just coverage, by @devdanzin.
+- A **CRASH ATTRIBUTION section** in the instance report showing per-instance crash-productive mutators and lineage depth statistics, by @devdanzin.
+- A **CRASH-PRODUCTIVE MUTATORS section** in the campaign report showing fleet-aggregated crash attribution rankings with combined scores matching the learning system's internal weighting, by @devdanzin.
+- CLI argument plumbing tests verifying that all CLI options are correctly threaded through to their respective manager classes, by @devdanzin.
+- A directory column in the campaign instance leaderboard for identifying instance paths, by @devdanzin.
+
 
 ### Enhanced
 
 - `BuiltinNamespaceCorruptor` with test_optimizer.py-inspired attacks: direct `__builtins__["KEY"]` style modifications, `ModuleType` vs dict representation handling, and high-frequency builtin corruption (corrupting `len`, `isinstance`, and `type` simultaneously), by @devdanzin.
 - `BloomFilterSaturator` with probe-based saturation detection, strategic global modifications, and multi-phase attacks (warmup, saturation, exploitation, verification) to better exploit the JIT's global variable tracking bloom filter, by @devdanzin.
+- Legacy mode (non-session) crash handling now generates proper directory structure and `metadata.json` files, making legacy crashes visible to `lafleur-campaign` and `lafleur-triage` tools, by @devdanzin.
+- `ImportChaosMutator` moved from the weighted learning pool to the hygiene layer at 15% fixed probability, preventing a runaway feedback loop where trivially novel import edges led to over-selection and corpus bloat, by @devdanzin.
+- `RedundantStatementSanitizer` moved from the weighted learning pool to the hygiene layer at 5% fixed probability, ensuring consistent statement cleanup regardless of learning-system scoring, by @devdanzin.
+- `StatementDuplicator` uncommented and added to the hygiene layer at 8% fixed probability, providing controlled JIT warming pressure through statement duplication without the unbounded growth that caused it to be disabled, by @devdanzin.
+- Learning system now filters hygiene mutators from `record_success()` calls, preventing corpus-maintenance operations from accumulating misleading reward signals, by @devdanzin.
+- Health event logging enriched with `parent_id`, mutation strategy, error excerpts, and sterile-file filtering in parent selection, by @devdanzin.
+
 
 ### Fixed
 
 - Filter SyntaxError/IndentationError crashes from invalid mutations, by @devdanzin.
+- Delta tachycardia scoring applied an eternal reward because `parent_jit_stats` used a different key name than what `_prepare_new_coverage_result` stored, causing every child to appear to have higher density than its parent, by @devdanzin.
+- Delta tachycardia density threshold used a fixed minimum instead of a parent-relative calculation, making the bonus trivially easy to earn for any file above baseline, by @devdanzin.
+- `SlicingMutator` mis-attributed coverage discoveries to the wrong transformers in the learning system because the slicing pipeline replaced the transformer list without preserving the original selection, by @devdanzin.
+- JIT-induced `ast.unparse()` corruption could produce silently malformed Python source, now detected and handled gracefully with a re-parse verification step, by @devdanzin.
+- `SyntaxError` false-positive filter was too broad, rejecting valid crashes whose log output happened to contain "SyntaxError" as a substring (e.g., in tracebacks about SyntaxError handling), causing instances to become stuck, by @devdanzin.
+- Campaign report crashed when generating reports for instances with null JIT stats (e.g., from `--no-ekg` runs), by @devdanzin.
+- Exit code 1 could fall through crash detection without being properly classified when the fingerprinter returned a non-`PYTHON_UNCAUGHT` type, by @devdanzin.
+- File descriptor leak in the test suite caused by `MagicMock.__index__` returning 1, which led `shutil.copy` to interpret the mock as fd 1 (stdout) and close it during garbage collection, by @devdanzin.
+- `ConstantPerturbator` crash when encountering certain constant node types during mutation, found during code review, by @devdanzin.
+- Numerous mutator bugs across all modules found during systematic code review campaign: `TypeInstabilityInjector` scoping issues, `NumericMutator` `visit_Call` scoping bug, hardcoded variable names in three `scenarios_data` mutators, `ContainerChanger` probability distribution imbalance, `GuardInjector` over-wrapping, and others, by @devdanzin.
+- Unparseable corpus files could poison the corpus and waste mutation cycles; now validated with `ast.parse()` before saving and unparseable parents are marked sterile so the scheduler deprioritizes them, by @devdanzin.
+
+
+### Documentation
+
+- Complete rewrite of **README.md** with proper project description, architecture overview, quick start guide, and campaign workflow documentation, by @devdanzin.
+- Enriched **CREDITS.md** with detailed contributor attributions and contribution descriptions, by @devdanzin.
+- Updated **CONTRIBUTING.md** with quality-gate checklist, AI-assisted development guidance, and changelog/credits update instructions, by @devdanzin.
+- Complete rewrite of all eight **developer documentation** chapters (01–08) covering architecture, the evolutionary loop, coverage and feedback, the mutation engine, state formats, getting started, extending lafleur, and testing, by @devdanzin.
+
 
 
 ## [0.1.0] - 2026-01-11

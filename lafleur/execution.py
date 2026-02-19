@@ -634,7 +634,7 @@ class ExecutionManager:
                     Troubleshooting:
                     1. Ensure you built CPython with: ./configure --with-pydebug --enable-experimental-jit
                     2. Ensure you ran: make -j$(nproc)
-                    3. Ensure the environment variables PYTHON_JIT=1, PYTHON_LLTRACE=4, and PYTHON_OPT_DEBUG=4 are respected.
+                    3. Ensure the environment variables PYTHON_JIT=1, PYTHON_LLTRACE=2, and PYTHON_OPT_DEBUG=4 are respected.
 
                     Output received from target (stderr +  stdout):
                     {output}

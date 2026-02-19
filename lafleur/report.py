@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from lafleur.campaign import load_health_summary
+from lafleur.campaign import load_crash_attribution_summary, load_health_summary
 
 
 def load_json_file(path: Path) -> dict[str, Any] | None:
@@ -518,6 +518,44 @@ def generate_report(instance_dir: Path) -> str:
             lines.append(f"Crash Profile:  {', '.join(profile_strs)}")
     else:
         lines.append("No health events recorded.")
+
+    lines.append("")
+
+    # ========== CRASH ATTRIBUTION ==========
+    crash_attribution = load_crash_attribution_summary(
+        instance_dir / "logs" / "crash_attribution.jsonl"
+    )
+
+    lines.append("-" * 80)
+    lines.append("CRASH ATTRIBUTION")
+    lines.append("-" * 80)
+
+    if crash_attribution:
+        ca = crash_attribution
+        lines.append(
+            f"Attributed Crashes: {ca['total_attributed_crashes']:,} "
+            f"({ca['unique_fingerprints']:,} unique fingerprints)"
+        )
+        lines.append(f"Avg Lineage Depth:  {ca['avg_lineage_depth']:.1f}")
+        lines.append("")
+
+        # Top strategies
+        top_strategies = ca["combined_strategy_scores"].most_common(5)
+        if top_strategies:
+            strat_strs = [f"{name} (score: {score:,})" for name, score in top_strategies]
+            lines.append(f"Top Strategies:  {', '.join(strat_strs)}")
+            lines.append("")
+
+        # Top mutators — single column, top 5 (instance view is more compact)
+        top_mutators = ca["combined_transformer_scores"].most_common(5)
+        if top_mutators:
+            lines.append("Top Mutators:")
+            max_name_len = max(len(name) for name, _ in top_mutators)
+            pad = max(max_name_len + 2, 30)
+            for name, score in top_mutators:
+                lines.append(f"  {name} {'.' * (pad - len(name) - 2)} {score:,}")
+    else:
+        lines.append("No crash attribution data recorded.")
 
     lines.append("")
 

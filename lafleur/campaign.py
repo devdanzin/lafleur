@@ -42,6 +42,25 @@ class HealthSummary(TypedDict):
     parent_offenders: Counter[str]
 
 
+class CrashAttributionSummary(TypedDict):
+    """Summary of crash attribution data from a JSONL log."""
+
+    total_attributed_crashes: int
+    unique_fingerprints: int
+    avg_lineage_depth: float
+    direct_strategy_counter: Counter[str]
+    direct_transformer_counter: Counter[str]
+    lineage_strategy_counter: Counter[str]
+    lineage_transformer_counter: Counter[str]
+    combined_transformer_scores: Counter[str]
+    combined_strategy_scores: Counter[str]
+
+
+# Constants matching the learning system multipliers
+CRASH_DIRECT_WEIGHT = 5
+CRASH_LINEAGE_WEIGHT = 2
+
+
 WASTE_EVENT_TYPES: frozenset[str] = frozenset(
     {
         "parent_parse_failure",
@@ -122,6 +141,91 @@ def load_health_summary(health_log_path: Path) -> HealthSummary | None:
         "crash_profile": crash_profile,
         "parent_offenders": parent_offenders,
     }
+
+
+def load_crash_attribution_summary(log_path: Path) -> CrashAttributionSummary | None:
+    """Parse crash_attribution.jsonl and return aggregated summary.
+
+    Args:
+        log_path: Path to the crash_attribution.jsonl file.
+
+    Returns:
+        CrashAttributionSummary dict, or None if no data exists.
+    """
+    if not log_path.is_file():
+        return None
+
+    total_crashes = 0
+    fingerprints: set[str] = set()
+    total_lineage_depth = 0
+
+    direct_strategy: Counter[str] = Counter()
+    direct_transformer: Counter[str] = Counter()
+    lineage_strategy: Counter[str] = Counter()
+    lineage_transformer: Counter[str] = Counter()
+
+    try:
+        with open(log_path, encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    entry = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+
+                total_crashes += 1
+                fp = entry.get("fingerprint", "")
+                if fp:
+                    fingerprints.add(fp)
+                total_lineage_depth += entry.get("lineage_depth", 0)
+
+                # Direct attribution
+                direct = entry.get("direct", {})
+                ds = direct.get("strategy", "")
+                if ds:
+                    direct_strategy[ds] += 1
+                for t in direct.get("transformers", []):
+                    direct_transformer[t] += 1
+
+                # Lineage attribution
+                for s in entry.get("lineage_strategies", []):
+                    if s:
+                        lineage_strategy[s] += 1
+                for t in entry.get("lineage_transformers", []):
+                    lineage_transformer[t] += 1
+
+    except OSError:
+        return None
+
+    if total_crashes == 0:
+        return None
+
+    # Compute combined scores using learning system multipliers
+    combined_transformer: Counter[str] = Counter()
+    for t, count in direct_transformer.items():
+        combined_transformer[t] += count * CRASH_DIRECT_WEIGHT
+    for t, count in lineage_transformer.items():
+        combined_transformer[t] += count * CRASH_LINEAGE_WEIGHT
+
+    combined_strategy: Counter[str] = Counter()
+    for s, count in direct_strategy.items():
+        combined_strategy[s] += count * CRASH_DIRECT_WEIGHT
+    for s, count in lineage_strategy.items():
+        combined_strategy[s] += count * CRASH_LINEAGE_WEIGHT
+
+    return CrashAttributionSummary(
+        total_attributed_crashes=total_crashes,
+        unique_fingerprints=len(fingerprints),
+        avg_lineage_depth=total_lineage_depth / total_crashes,
+        direct_strategy_counter=direct_strategy,
+        direct_transformer_counter=direct_transformer,
+        lineage_strategy_counter=lineage_strategy,
+        lineage_transformer_counter=lineage_transformer,
+        combined_transformer_scores=combined_transformer,
+        combined_strategy_scores=combined_strategy,
+    )
 
 
 def parse_timestamp(timestamp_str: str | None) -> datetime | None:
@@ -231,6 +335,7 @@ class CampaignAggregator:
             "crash_profile": Counter(),
             "top_offenders": Counter(),
         }
+        self.fleet_crash_attribution: CrashAttributionSummary | None = None
 
     def load_instances(self) -> None:
         """Load and validate all instance directories."""
@@ -342,6 +447,7 @@ class CampaignAggregator:
             self._aggregate_corpus(instance)
             self._aggregate_performance(instance)
             self._aggregate_health(instance)
+        self._aggregate_crash_attribution()
 
     def _aggregate_crashes(self, instance: InstanceData) -> None:
         """Aggregate crash data from an instance."""
@@ -455,6 +561,75 @@ class CampaignAggregator:
         # Prefix parent_ids with instance name for fleet-wide tracking
         for parent_id, count in hs["parent_offenders"].items():
             self.global_health["top_offenders"][f"{instance.name}:{parent_id}"] += count
+
+    def _aggregate_crash_attribution(self) -> None:
+        """Aggregate crash attribution data across all instances."""
+        merged_total = 0
+        merged_fingerprints: set[str] = set()
+        merged_depth_sum = 0.0
+        merged_direct_strategy: Counter[str] = Counter()
+        merged_direct_transformer: Counter[str] = Counter()
+        merged_lineage_strategy: Counter[str] = Counter()
+        merged_lineage_transformer: Counter[str] = Counter()
+
+        for instance in self.instances:
+            log_path = instance.path / "logs" / "crash_attribution.jsonl"
+            summary = load_crash_attribution_summary(log_path)
+            if summary is None:
+                continue
+
+            merged_total += summary["total_attributed_crashes"]
+            merged_depth_sum += summary["avg_lineage_depth"] * summary["total_attributed_crashes"]
+            merged_direct_strategy += summary["direct_strategy_counter"]
+            merged_direct_transformer += summary["direct_transformer_counter"]
+            merged_lineage_strategy += summary["lineage_strategy_counter"]
+            merged_lineage_transformer += summary["lineage_transformer_counter"]
+
+            # Re-parse to get exact fingerprints for fleet-wide dedup
+            try:
+                with open(log_path, encoding="utf-8") as f:
+                    for line in f:
+                        line = line.strip()
+                        if not line:
+                            continue
+                        try:
+                            entry = json.loads(line)
+                            fp = entry.get("fingerprint", "")
+                            if fp:
+                                merged_fingerprints.add(fp)
+                        except json.JSONDecodeError:
+                            continue
+            except OSError:
+                pass
+
+        if merged_total == 0:
+            self.fleet_crash_attribution = None
+            return
+
+        # Compute combined scores
+        combined_transformer: Counter[str] = Counter()
+        for t, count in merged_direct_transformer.items():
+            combined_transformer[t] += count * CRASH_DIRECT_WEIGHT
+        for t, count in merged_lineage_transformer.items():
+            combined_transformer[t] += count * CRASH_LINEAGE_WEIGHT
+
+        combined_strategy: Counter[str] = Counter()
+        for s, count in merged_direct_strategy.items():
+            combined_strategy[s] += count * CRASH_DIRECT_WEIGHT
+        for s, count in merged_lineage_strategy.items():
+            combined_strategy[s] += count * CRASH_LINEAGE_WEIGHT
+
+        self.fleet_crash_attribution = CrashAttributionSummary(
+            total_attributed_crashes=merged_total,
+            unique_fingerprints=len(merged_fingerprints),
+            avg_lineage_depth=merged_depth_sum / merged_total,
+            direct_strategy_counter=merged_direct_strategy,
+            direct_transformer_counter=merged_direct_transformer,
+            lineage_strategy_counter=merged_lineage_strategy,
+            lineage_transformer_counter=merged_lineage_transformer,
+            combined_transformer_scores=combined_transformer,
+            combined_strategy_scores=combined_strategy,
+        )
 
     def get_fleet_speed(self) -> float:
         """Calculate aggregate fleet execution speed."""
@@ -711,6 +886,53 @@ class CampaignAggregator:
 
         lines.append("")
 
+        # ========== CRASH-PRODUCTIVE MUTATORS ==========
+        if self.fleet_crash_attribution:
+            ca = self.fleet_crash_attribution
+            lines.append("-" * 90)
+            lines.append("CRASH-PRODUCTIVE MUTATORS")
+            lines.append("-" * 90)
+
+            lines.append(
+                f"Attributed Crashes: {ca['total_attributed_crashes']:,} "
+                f"({ca['unique_fingerprints']:,} unique fingerprints)"
+            )
+            lines.append(f"Avg Lineage Depth:  {ca['avg_lineage_depth']:.1f}")
+            lines.append("")
+
+            # Top strategies by combined score
+            top_strategies = ca["combined_strategy_scores"].most_common(5)
+            if top_strategies:
+                strat_strs = [f"{name} (score: {score:,})" for name, score in top_strategies]
+                lines.append(f"Top Crash Strategies: {', '.join(strat_strs)}")
+                lines.append("")
+
+            # Top mutators by combined score — two-column layout, top 10
+            top_mutators = ca["combined_transformer_scores"].most_common(10)
+            if top_mutators:
+                lines.append("Top Crash Mutators (by attribution score):")
+
+                # Calculate padding for alignment
+                max_name_len = max(len(name) for name, _ in top_mutators)
+                pad = max(max_name_len + 2, 30)
+
+                # Two-column layout
+                half = (len(top_mutators) + 1) // 2
+                for i in range(half):
+                    left_name, left_score = top_mutators[i]
+                    left_str = f"  {left_name} {'.' * (pad - len(left_name) - 2)} {left_score:,}"
+
+                    if i + half < len(top_mutators):
+                        right_name, right_score = top_mutators[i + half]
+                        right_str = (
+                            f"  {right_name} {'.' * (pad - len(right_name) - 2)} {right_score:,}"
+                        )
+                        lines.append(f"{left_str}    {right_str}")
+                    else:
+                        lines.append(left_str)
+
+            lines.append("")
+
         # ========== FLEET CORPUS SUMMARY ==========
         lines.append("-" * 90)
         lines.append("FLEET CORPUS SUMMARY")
@@ -918,6 +1140,50 @@ def generate_html_report(aggregator: CampaignAggregator) -> str:
         else "None"
     )
 
+    # Crash-Productive Mutators card
+    crash_attribution_html = ""
+    if aggregator.fleet_crash_attribution:
+        ca = aggregator.fleet_crash_attribution
+        top_mutators = ca["combined_transformer_scores"].most_common(10)
+        max_mut_score = top_mutators[0][1] if top_mutators else 1
+
+        mutator_rows_html = []
+        for name, score in top_mutators:
+            pct = (score / max_mut_score) * 100 if max_mut_score else 0
+            direct_count = ca["direct_transformer_counter"].get(name, 0)
+            lineage_count = ca["lineage_transformer_counter"].get(name, 0)
+            name_escaped = html.escape(name)
+            mutator_rows_html.append(
+                f"        <tr>\n"
+                f"          <td>{name_escaped}</td>\n"
+                f'          <td data-sort="{score}">'
+                f'<div class="bar-container">'
+                f'<div class="bar-fill speed" style="width:{pct:.1f}%"></div>'
+                f'<span class="bar-text">{score:,}</span></div></td>\n'
+                f"          <td>{direct_count}</td>\n"
+                f"          <td>{lineage_count}</td>\n"
+                f"        </tr>"
+            )
+
+        crash_attribution_html = (
+            f'\n  <div class="summary">\n'
+            f'    <h2 style="margin-top:0;border:none;">Crash-Productive Mutators</h2>\n'
+            f"    <p><strong>Attributed Crashes:</strong> "
+            f"{ca['total_attributed_crashes']:,}</p>\n"
+            f"    <p><strong>Unique Fingerprints:</strong> "
+            f"{ca['unique_fingerprints']:,}</p>\n"
+            f"    <p><strong>Avg Lineage Depth:</strong> "
+            f"{ca['avg_lineage_depth']:.1f}</p>\n"
+            f"    <table>\n"
+            f"      <thead><tr>"
+            f"<th>Mutator</th><th>Score</th><th>Direct</th><th>Lineage</th>"
+            f"</tr></thead>\n"
+            f"      <tbody>\n" + "\n".join(mutator_rows_html) + "\n"
+            "      </tbody>\n"
+            "    </table>\n"
+            "  </div>"
+        )
+
     return f"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -1114,7 +1380,7 @@ def generate_html_report(aggregator: CampaignAggregator) -> str:
 {chr(10).join(crash_rows)}
     </tbody>
   </table>
-
+{crash_attribution_html}
   <div class="summary">
     <h2 style="margin-top:0;border:none;">Fleet Corpus Summary</h2>
     <p><strong>Total Files:</strong> {aggregator.global_corpus["total_files"]:,}</p>

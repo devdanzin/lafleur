@@ -13,6 +13,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from lafleur.campaign import load_health_summary
+
 
 def load_json_file(path: Path) -> dict[str, Any] | None:
     """Load a JSON file, returning None if it doesn't exist or is invalid."""
@@ -262,6 +264,7 @@ def generate_report(instance_dir: Path) -> str:
     duration_seconds, duration_source = calculate_duration(metadata, stats, instance_dir)
     total_mutations = stats.get("total_mutations", 0) if stats else 0
     speed = total_mutations / duration_seconds if duration_seconds > 0 else 0.0
+    health_summary = load_health_summary(instance_dir / "logs" / "health_events.jsonl")
 
     # ========== HEADER ==========
     lines.append("=" * 80)
@@ -435,6 +438,86 @@ def generate_report(instance_dir: Path) -> str:
             lines.append("Top Mutators:   N/A")
     else:
         lines.append("No corpus statistics available.")
+
+    lines.append("")
+
+    # ========== HEALTH ==========
+    lines.append("-" * 80)
+    lines.append("HEALTH")
+    lines.append("-" * 80)
+
+    if health_summary and health_summary["total_events"] > 0:
+        waste_count = health_summary["waste_event_count"]
+        wr = waste_count / total_mutations if total_mutations > 0 else 0.0
+        if wr < 0.02:
+            grade = "Healthy"
+        elif wr < 0.10:
+            grade = "Degraded"
+        else:
+            grade = "Unhealthy"
+
+        lines.append(f"Grade:          {grade} ({wr:.2%} waste rate)")
+        lines.append(f"Total Events:   {health_summary['total_events']:,} ({waste_count:,} waste)")
+
+        # Event breakdown by category — only non-zero
+        by_evt = health_summary["by_event"]
+
+        # Pipeline failures
+        pipeline_parts = []
+        for evt in [
+            "parent_parse_failure",
+            "mutation_recursion_error",
+            "unparse_recursion_error",
+            "child_script_none",
+            "core_code_syntax_error",
+        ]:
+            count = by_evt.get(evt, 0)
+            if count:
+                label = evt.replace("_", " ")
+                pipeline_parts.append(f"{count:,} {label}")
+        if pipeline_parts:
+            lines.append(f"Pipeline:       {', '.join(pipeline_parts)}")
+
+        # Execution anomalies
+        exec_parts = []
+        for evt, label in [
+            ("consecutive_timeouts", "timeout streaks"),
+            ("ignored_crash", "ignored crashes"),
+            ("deepening_sterility", "deepening sterilities"),
+        ]:
+            count = by_evt.get(evt, 0)
+            if count:
+                exec_parts.append(f"{count:,} {label}")
+        if exec_parts:
+            lines.append(f"Execution:      {', '.join(exec_parts)}")
+
+        # Corpus health
+        corpus_parts = []
+        for evt, label in [
+            ("file_size_warning", "size warnings"),
+            ("duplicate_rejected", "duplicates rejected"),
+            ("corpus_sterility_reached", "sterility events"),
+        ]:
+            count = by_evt.get(evt, 0)
+            if count:
+                corpus_parts.append(f"{count:,} {label}")
+        if corpus_parts:
+            lines.append(f"Corpus:         {', '.join(corpus_parts)}")
+
+        # Top offenders
+        offenders = health_summary["parent_offenders"].most_common(5)
+        if offenders:
+            offender_strs = [f"{pid} ({count:,})" for pid, count in offenders]
+            lines.append(f"Top Offenders:  {', '.join(offender_strs)}")
+
+        # Ignored crash profile
+        crash_prof = health_summary["crash_profile"]
+        if crash_prof:
+            profile_items = crash_prof.most_common(5)
+            profile_strs = [f"{reason} \u00d7{count:,}" for reason, count in profile_items]
+            lines.append(f"Crash Profile:  {', '.join(profile_strs)}")
+    else:
+        lines.append("No health events recorded.")
 
     lines.append("")
 

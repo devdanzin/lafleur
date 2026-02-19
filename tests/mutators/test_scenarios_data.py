@@ -19,6 +19,7 @@ from lafleur.mutators.scenarios_data import (
     BuiltinNamespaceCorruptor,
     CodeObjectHotSwapper,
     ComprehensionBomb,
+    ConstantNarrowingPoisonMutator,
     DictPolluter,
     GlobalOptimizationInvalidator,
     IterableMutator,
@@ -2919,6 +2920,114 @@ class TestUnpackingChaosMutator(unittest.TestCase):
         self.assertIn("self._call_count", result)
         self.assertIn("self._call_count += 1", result)
         self.assertIn("self._call_count > self._trigger_count", result)
+
+
+class TestConstantNarrowingPoisonMutator(unittest.TestCase):
+    """Test ConstantNarrowingPoisonMutator mutator."""
+
+    def setUp(self):
+        random.seed(42)
+
+    def test_injects_lying_eq(self):
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+        with patch("random.random", return_value=0.05):
+            with patch("random.choice", return_value="lying_eq"):
+                with patch("random.randint", return_value=5000):
+                    mutator = ConstantNarrowingPoisonMutator()
+                    mutated = mutator.visit(tree)
+        result = ast.unparse(mutated)
+        self.assertIn("_LyingInt_cnarrow_5000", result)
+        self.assertIn("__eq__", result)
+
+    def test_injects_int_subclass_extra_state(self):
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+        with patch("random.random", return_value=0.05):
+            with patch("random.choice", return_value="int_subclass_extra_state"):
+                with patch("random.randint", return_value=6000):
+                    mutator = ConstantNarrowingPoisonMutator()
+                    mutated = mutator.visit(tree)
+        result = ast.unparse(mutated)
+        self.assertIn("_RichInt_cnarrow_6000", result)
+        self.assertIn("tag", result)
+
+    def test_injects_float_nan_paradox(self):
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+        with patch("random.random", return_value=0.05):
+            with patch("random.choice", return_value="float_nan_paradox"):
+                with patch("random.randint", return_value=7000):
+                    mutator = ConstantNarrowingPoisonMutator()
+                    mutated = mutator.visit(tree)
+        result = ast.unparse(mutated)
+        self.assertIn("nan", result)
+        self.assertIn("inf", result)
+        self.assertIn("copysign", result)
+
+    def test_injects_mutable_constant(self):
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+        with patch("random.random", return_value=0.05):
+            with patch("random.choice", return_value="mutable_constant"):
+                with patch("random.randint", return_value=8000):
+                    mutator = ConstantNarrowingPoisonMutator()
+                    mutated = mutator.visit(tree)
+        result = ast.unparse(mutated)
+        self.assertIn("_Shifty_cnarrow_8000", result)
+        self.assertIn("_cmp_count", result)
+
+    def test_all_attacks_produce_valid_code(self):
+        for attack in ConstantNarrowingPoisonMutator.ATTACK_SCENARIOS:
+            with self.subTest(attack=attack):
+                code = dedent("""
+                    def uop_harness_test():
+                        x = 1
+                """)
+                tree = ast.parse(code)
+                with patch("random.random", return_value=0.05):
+                    with patch("random.choice", return_value=attack):
+                        with patch("random.randint", return_value=4000):
+                            mutator = ConstantNarrowingPoisonMutator()
+                            mutated = mutator.visit(tree)
+                result = ast.unparse(mutated)
+                ast.parse(result)
+
+    def test_skips_non_harness(self):
+        code = dedent("""
+            def normal_function():
+                x = 1
+        """)
+        tree = ast.parse(code)
+        original = ast.unparse(tree)
+        with patch("random.random", return_value=0.05):
+            mutator = ConstantNarrowingPoisonMutator()
+            mutated = mutator.visit(tree)
+        self.assertEqual(original, ast.unparse(mutated))
+
+    def test_respects_probability(self):
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+        original = ast.unparse(tree)
+        with patch("random.random", return_value=0.9):
+            mutator = ConstantNarrowingPoisonMutator()
+            mutated = mutator.visit(tree)
+        self.assertEqual(original, ast.unparse(mutated))
 
 
 if __name__ == "__main__":

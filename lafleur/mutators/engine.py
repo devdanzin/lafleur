@@ -60,6 +60,7 @@ from lafleur.mutators.scenarios_data import (
     BuiltinNamespaceCorruptor,
     CodeObjectHotSwapper,
     ComprehensionBomb,
+    ConstantNarrowingPoisonMutator,
     DictPolluter,
     GlobalOptimizationInvalidator,
     IterableMutator,
@@ -92,6 +93,7 @@ from lafleur.mutators.scenarios_types import (
     DynamicClassSwapper,
     FunctionPatcher,
     InlineCachePolluter,
+    InlinedFrameCorruptionMutator,
     LoadAttrPolluter,
     ManyVarsInjector,
     MROShuffler,
@@ -229,6 +231,8 @@ class ASTMutator:
             ExceptionGroupMutator,
             AsyncConstructMutator,
             SysMonitoringMutator,
+            ConstantNarrowingPoisonMutator,
+            InlinedFrameCorruptionMutator,
         ]
         # Note: SniperMutator is NOT in this list - it's applied separately
         # via orchestrator._run_sniper_stage() with Bloom-detected watched_keys

@@ -2298,3 +2298,333 @@ class TypeVersionInvalidator(ast.NodeTransformer):
                     pass
         """)
         return ast.parse(attack_code).body
+
+
+class InlinedFrameCorruptionMutator(ast.NodeTransformer):
+    """
+    Attack the JIT's inlined frame optimization for @property and __getitem__.
+
+    Since Jan 2025, the optimizer traces into @property getters
+    (_LOAD_ATTR_PROPERTY_FRAME) and __getitem__ methods
+    (_BINARY_OP_SUBSCR_INIT_CALL), creating inline frames and applying
+    optimizations inside them. This mutator creates classes with simple,
+    JIT-traceable properties/getitem, lets the JIT inline them, then
+    corrupts the underlying methods mid-loop.
+
+    Attack vectors:
+    1. property_swap: Replace a @property descriptor with a different
+       function mid-loop, after the JIT has inlined the original getter.
+    2. getitem_class_change: Change __class__ on an object whose
+       __getitem__ has been inlined, pointing to a class with a different
+       __getitem__.
+    3. property_to_data: Convert a @property (non-data descriptor) to a
+       plain attribute (data takes precedence), or vice versa, invalidating
+       the inlined frame.
+    4. getitem_side_effect: __getitem__ that modifies the class itself
+       (adding/removing methods) while the JIT is executing the inlined
+       frame.
+    5. descriptor_chain: Property getter that accesses ANOTHER property
+       on self, creating a chain of inlined frames. Corrupt one link
+       in the chain.
+    6. property_inheritance_swap: Modify __bases__ so the property is
+       inherited from a different class, changing which getter the JIT
+       should inline.
+    """
+
+    ATTACK_SCENARIOS = [
+        "property_swap",
+        "getitem_class_change",
+        "property_to_data",
+        "getitem_side_effect",
+        "descriptor_chain",
+        "property_inheritance_swap",
+    ]
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> ast.FunctionDef:
+        self.generic_visit(node)
+
+        if not node.name.startswith("uop_harness") or not node.body:
+            return node
+
+        if random.random() < 0.12:  # 12% chance
+            attack = random.choice(self.ATTACK_SCENARIOS)
+            p_prefix = f"ifrm_{random.randint(1000, 9999)}"
+
+            print(
+                f"    -> Injecting inlined frame corruption ({attack}) with prefix '{p_prefix}'",
+                file=sys.stderr,
+            )
+
+            scenario_ast = getattr(self, f"_create_{attack}")(p_prefix)
+
+            injection_point = random.randint(0, len(node.body))
+            node.body[injection_point:injection_point] = scenario_ast
+            ast.fix_missing_locations(node)
+
+        return node
+
+    def _create_property_swap(self, prefix: str) -> list[ast.stmt]:
+        """Replace a @property descriptor mid-loop after JIT has inlined it."""
+        code = dedent(f"""
+            class _PropTarget_{prefix}:
+                def __init__(self, val):
+                    self._val = val
+
+                @property
+                def value(self):
+                    return self._val + 1
+
+            _pt_{prefix} = _PropTarget_{prefix}(10)
+
+            # Phase 1: Warm up — JIT traces into property getter, inlines it
+            _sum_{prefix} = 0
+            for _i_{prefix} in range(200):
+                _sum_{prefix} += _pt_{prefix}.value  # Inlined: return self._val + 1
+
+            # Phase 2: Swap the property to a different function
+            def _evil_getter_{prefix}(self):
+                return "not_an_int"
+
+            _PropTarget_{prefix}.value = property(_evil_getter_{prefix})
+
+            # Phase 3: Continue using — JIT's inlined frame is stale
+            for _j_{prefix} in range(100):
+                try:
+                    _sum_{prefix} += _pt_{prefix}.value  # Now returns "not_an_int"
+                except TypeError:
+                    pass
+
+            # Phase 4: Swap back and forth rapidly
+            _orig_prop_{prefix} = property(lambda self: self._val + 1)
+            _evil_prop_{prefix} = property(_evil_getter_{prefix})
+            for _k_{prefix} in range(200):
+                if _k_{prefix} % 2 == 0:
+                    _PropTarget_{prefix}.value = _orig_prop_{prefix}
+                else:
+                    _PropTarget_{prefix}.value = _evil_prop_{prefix}
+                try:
+                    _ = _pt_{prefix}.value
+                except TypeError:
+                    pass
+        """)
+        return ast.parse(code).body
+
+    def _create_getitem_class_change(self, prefix: str) -> list[ast.stmt]:
+        """Change __class__ on an object whose __getitem__ has been inlined."""
+        code = dedent(f"""
+            class _IndexableA_{prefix}:
+                def __getitem__(self, key):
+                    return key + 1
+
+            class _IndexableB_{prefix}:
+                def __getitem__(self, key):
+                    return "wrong_type_" + str(key)
+
+            _ia_{prefix} = _IndexableA_{prefix}()
+
+            # Phase 1: Warm up — JIT inlines _IndexableA.__getitem__
+            for _i_{prefix} in range(200):
+                _r_{prefix} = _ia_{prefix}[_i_{prefix}]  # Inlined: return key + 1
+
+            # Phase 2: Swap __class__ to B
+            try:
+                _ia_{prefix}.__class__ = _IndexableB_{prefix}
+            except TypeError:
+                pass
+
+            # Phase 3: Use the same object — JIT's inlined frame is for A's getitem
+            for _j_{prefix} in range(100):
+                try:
+                    _r_{prefix} = _ia_{prefix}[_j_{prefix}]  # Now B's getitem
+                except TypeError:
+                    pass
+
+            # Phase 4: Rapid class flipping
+            for _k_{prefix} in range(200):
+                try:
+                    _ia_{prefix}.__class__ = _IndexableA_{prefix} if _k_{prefix} % 2 == 0 else _IndexableB_{prefix}
+                    _r_{prefix} = _ia_{prefix}[42]
+                except TypeError:
+                    pass
+        """)
+        return ast.parse(code).body
+
+    def _create_property_to_data(self, prefix: str) -> list[ast.stmt]:
+        """
+        Convert @property to plain attribute or vice versa.
+
+        The JIT inlines the property getter. Replacing the descriptor
+        with a plain value means LOAD_ATTR should return the value
+        directly, not call a getter — but the JIT's inlined frame
+        still expects a callable.
+        """
+        code = dedent(f"""
+            class _FlipProp_{prefix}:
+                def __init__(self, val):
+                    self._val = val
+
+                @property
+                def attr(self):
+                    return self._val * 2
+
+            _fp_{prefix} = _FlipProp_{prefix}(5)
+
+            # Phase 1: Warm up property access — JIT inlines getter
+            for _i_{prefix} in range(200):
+                _ = _fp_{prefix}.attr  # Inlined: return self._val * 2
+
+            # Phase 2: Replace property with plain class attribute
+            _FlipProp_{prefix}.attr = 999  # Now a data attribute, not property
+
+            # Phase 3: Access — should get 999, not call getter
+            for _j_{prefix} in range(100):
+                try:
+                    _v_{prefix} = _fp_{prefix}.attr
+                except (TypeError, AttributeError):
+                    pass
+
+            # Phase 4: Flip back to property
+            _FlipProp_{prefix}.attr = property(lambda self: self._val * 3)
+            for _k_{prefix} in range(100):
+                try:
+                    _ = _fp_{prefix}.attr
+                except (TypeError, AttributeError):
+                    pass
+
+            # Phase 5: Set instance attribute that shadows class property
+            _fp2_{prefix} = _FlipProp_{prefix}(7)
+            for _m_{prefix} in range(200):
+                _ = _fp2_{prefix}.attr  # Property getter
+            _fp2_{prefix}.__dict__['attr'] = "instance_shadow"
+            for _n_{prefix} in range(100):
+                _ = _fp2_{prefix}.attr  # Should return "instance_shadow"
+        """)
+        return ast.parse(code).body
+
+    def _create_getitem_side_effect(self, prefix: str) -> list[ast.stmt]:
+        """__getitem__ modifies the class while the JIT executes the inlined frame."""
+        code = dedent(f"""
+            class _Chameleon_{prefix}:
+                _call_count = 0
+
+                def __getitem__(self, key):
+                    _Chameleon_{prefix}._call_count += 1
+                    # Every 50 calls, modify the class itself
+                    if _Chameleon_{prefix}._call_count % 50 == 0:
+                        # Add a new method
+                        _Chameleon_{prefix}.new_method = lambda self: "injected"
+                    if _Chameleon_{prefix}._call_count % 75 == 0:
+                        # Replace __getitem__ with a different one
+                        def _replacement(self, k):
+                            return "replaced_" + str(k)
+                        _Chameleon_{prefix}.__getitem__ = _replacement
+                    return key + 1
+
+            _ch_{prefix} = _Chameleon_{prefix}()
+
+            # Phase 1: Warm up — JIT inlines __getitem__
+            for _i_{prefix} in range(200):
+                try:
+                    _r_{prefix} = _ch_{prefix}[_i_{prefix}]
+                except TypeError:
+                    pass
+
+            # Phase 2: Continue — __getitem__ modifies class during execution
+            for _j_{prefix} in range(300):
+                try:
+                    _r_{prefix} = _ch_{prefix}[_j_{prefix}]
+                except TypeError:
+                    break  # __getitem__ was replaced with string-returning version
+        """)
+        return ast.parse(code).body
+
+    def _create_descriptor_chain(self, prefix: str) -> list[ast.stmt]:
+        """
+        Property getter accesses another property, creating nested inlined frames.
+        Corrupt one link in the chain.
+        """
+        code = dedent(f"""
+            class _Chained_{prefix}:
+                def __init__(self, val):
+                    self._val = val
+
+                @property
+                def outer(self):
+                    # Accesses inner property — nested inlined frame
+                    return self.inner + 10
+
+                @property
+                def inner(self):
+                    return self._val * 2
+
+            _cc_{prefix} = _Chained_{prefix}(5)
+
+            # Phase 1: Warm up — JIT inlines both outer and inner
+            for _i_{prefix} in range(200):
+                _r_{prefix} = _cc_{prefix}.outer  # outer calls inner
+
+            # Phase 2: Corrupt the INNER property
+            _Chained_{prefix}.inner = property(lambda self: "not_a_number")
+
+            # Phase 3: Access outer — it calls corrupted inner
+            for _j_{prefix} in range(100):
+                try:
+                    _r_{prefix} = _cc_{prefix}.outer  # "not_a_number" + 10 → TypeError
+                except TypeError:
+                    pass
+
+            # Phase 4: Restore inner, corrupt outer instead
+            _Chained_{prefix}.inner = property(lambda self: self._val * 2)
+            _Chained_{prefix}.outer = property(lambda self: str(self.inner))
+            for _k_{prefix} in range(100):
+                try:
+                    _r_{prefix} = _cc_{prefix}.outer
+                except (TypeError, AttributeError):
+                    pass
+        """)
+        return ast.parse(code).body
+
+    def _create_property_inheritance_swap(self, prefix: str) -> list[ast.stmt]:
+        """Modify __bases__ so a property is inherited from a different parent."""
+        code = dedent(f"""
+            class _BaseA_{prefix}:
+                @property
+                def prop(self):
+                    return 42
+
+            class _BaseB_{prefix}:
+                @property
+                def prop(self):
+                    return "not_42"
+
+            class _Child_{prefix}(_BaseA_{prefix}):
+                pass
+
+            _child_{prefix} = _Child_{prefix}()
+
+            # Phase 1: Warm up — JIT inlines BaseA's property getter
+            for _i_{prefix} in range(200):
+                _r_{prefix} = _child_{prefix}.prop  # Inlined: return 42
+
+            # Phase 2: Swap bases so property comes from BaseB
+            try:
+                _Child_{prefix}.__bases__ = (_BaseB_{prefix},)
+            except TypeError:
+                pass
+
+            # Phase 3: Access — JIT's inlined frame points to BaseA's getter
+            for _j_{prefix} in range(100):
+                try:
+                    _r_{prefix} = _child_{prefix}.prop  # Should be "not_42" now
+                except (TypeError, AttributeError):
+                    pass
+
+            # Phase 4: Rapid base swapping
+            for _k_{prefix} in range(200):
+                try:
+                    _Child_{prefix}.__bases__ = (_BaseA_{prefix},) if _k_{prefix} % 2 == 0 else (_BaseB_{prefix},)
+                    _ = _child_{prefix}.prop
+                except (TypeError, AttributeError):
+                    pass
+        """)
+        return ast.parse(code).body

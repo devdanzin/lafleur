@@ -288,10 +288,32 @@ class RecursionWrappingMutator(ast.NodeTransformer):
             )
 
             # 6. Replace the original block with the new function and the try block.
+            # Wrap the remainder in try/except because variables assigned in
+            # the wrapped block are now local to the nested function — any
+            # reference to them in the remaining code would cause UnboundLocalError.
+            remainder = node.body[start_index + self.BLOCK_SIZE :]
+            if remainder:
+                wrapped_remainder = [
+                    ast.Try(
+                        body=remainder,
+                        handlers=[
+                            ast.ExceptHandler(
+                                type=ast.Name(id="Exception", ctx=ast.Load()),
+                                name=None,
+                                body=[ast.Pass()],
+                            )
+                        ],
+                        orelse=[],
+                        finalbody=[],
+                    )
+                ]
+            else:
+                wrapped_remainder = []
+
             node.body = (
                 node.body[:start_index]
                 + [recursive_func_def, initial_call_try_block]
-                + node.body[start_index + self.BLOCK_SIZE :]
+                + wrapped_remainder
             )
 
             ast.fix_missing_locations(node)

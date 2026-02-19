@@ -90,18 +90,36 @@ def _mutate_for_loop_iter(func_node: ast.FunctionDef) -> bool:
     This is a shared helper used by MagicMethodMutator and IterableMutator.
     Returns True if a mutation was performed, False otherwise.
     """
-    for stmt in func_node.body:
+    for i, stmt in enumerate(func_node.body):
         if isinstance(stmt, ast.For):
             print(f"    -> Mutating for loop iterator in '{func_node.name}'", file=sys.stderr)
             prefix = f"iter_{random.randint(1000, 9999)}"
             class_def_str = genStatefulIterObject(prefix)
             class_def_node = cast(ast.ClassDef, ast.parse(class_def_str).body[0])
             func_node.body.insert(0, class_def_node)
+            # Adjust index since we inserted a class def at position 0
+            stmt_index = i + 1
             stmt.iter = ast.Call(
                 func=ast.Name(id=class_def_node.name, ctx=ast.Load()),
                 args=[],
                 keywords=[],
             )
+            # Wrap the modified for loop in try/except to handle type
+            # mismatches when the original loop did tuple unpacking or
+            # expected specific types from the original iterable.
+            wrapped_for = ast.Try(
+                body=[stmt],
+                handlers=[
+                    ast.ExceptHandler(
+                        type=ast.Name(id="Exception", ctx=ast.Load()),
+                        name=None,
+                        body=[ast.Pass()],
+                    )
+                ],
+                orelse=[],
+                finalbody=[],
+            )
+            func_node.body[stmt_index] = wrapped_for
             return True
     return False
 
@@ -1073,13 +1091,55 @@ class LatticeSurfingMutator(ast.NodeTransformer):
                 def __add__(self, other):
                     self.__class__ = _SurferB
                     return self.val + other
+                def __radd__(self, other):
+                    self.__class__ = _SurferB
+                    return other + self.val
+                def __sub__(self, other):
+                    self.__class__ = _SurferB
+                    return self.val - other
+                def __rsub__(self, other):
+                    self.__class__ = _SurferB
+                    return other - self.val
+                def __mul__(self, other):
+                    self.__class__ = _SurferB
+                    return self.val * other
+                def __rmul__(self, other):
+                    self.__class__ = _SurferB
+                    return other * self.val
+                def __mod__(self, other):
+                    self.__class__ = _SurferB
+                    return self.val % other
+                def __lt__(self, other):
+                    self.__class__ = _SurferB
+                    return self.val < other
+                def __le__(self, other):
+                    self.__class__ = _SurferB
+                    return self.val <= other
+                def __gt__(self, other):
+                    self.__class__ = _SurferB
+                    return self.val > other
+                def __ge__(self, other):
+                    self.__class__ = _SurferB
+                    return self.val >= other
+                def __eq__(self, other):
+                    self.__class__ = _SurferB
+                    return self.val == other
+                def __ne__(self, other):
+                    self.__class__ = _SurferB
+                    return self.val != other
+                def __hash__(self):
+                    self.__class__ = _SurferB
+                    return hash(self.val)
+                def __repr__(self):
+                    self.__class__ = _SurferB
+                    return repr(self.val)
 
-            class _SurferB:  # Mirror image
+            class _SurferB:
                 def __init__(self, val):
                     self.val = val
                 def __bool__(self):
                     self.__class__ = _SurferA
-                    return False  # Return opposite boolean to confuse control flow
+                    return False
                 def __int__(self):
                     self.__class__ = _SurferA
                     return int(self.val)
@@ -1089,6 +1149,48 @@ class LatticeSurfingMutator(ast.NodeTransformer):
                 def __add__(self, other):
                     self.__class__ = _SurferA
                     return self.val + other
+                def __radd__(self, other):
+                    self.__class__ = _SurferA
+                    return other + self.val
+                def __sub__(self, other):
+                    self.__class__ = _SurferA
+                    return self.val - other
+                def __rsub__(self, other):
+                    self.__class__ = _SurferA
+                    return other - self.val
+                def __mul__(self, other):
+                    self.__class__ = _SurferA
+                    return self.val * other
+                def __rmul__(self, other):
+                    self.__class__ = _SurferA
+                    return other * self.val
+                def __mod__(self, other):
+                    self.__class__ = _SurferA
+                    return self.val % other
+                def __lt__(self, other):
+                    self.__class__ = _SurferA
+                    return self.val < other
+                def __le__(self, other):
+                    self.__class__ = _SurferA
+                    return self.val <= other
+                def __gt__(self, other):
+                    self.__class__ = _SurferA
+                    return self.val > other
+                def __ge__(self, other):
+                    self.__class__ = _SurferA
+                    return self.val >= other
+                def __eq__(self, other):
+                    self.__class__ = _SurferA
+                    return self.val == other
+                def __ne__(self, other):
+                    self.__class__ = _SurferA
+                    return self.val != other
+                def __hash__(self):
+                    self.__class__ = _SurferA
+                    return hash(self.val)
+                def __repr__(self):
+                    self.__class__ = _SurferA
+                    return repr(self.val)
         """)
         return ast.parse(surfer_code).body
 

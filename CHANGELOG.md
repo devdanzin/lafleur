@@ -67,6 +67,12 @@ All notable changes to this project should be documented in this file.
 - Numerous mutator bugs across all modules found during systematic code review campaign: `TypeInstabilityInjector` scoping issues, `NumericMutator` `visit_Call` scoping bug, hardcoded variable names in three `scenarios_data` mutators, `ContainerChanger` probability distribution imbalance, `GuardInjector` over-wrapping, and others, by @devdanzin.
 - Unparseable corpus files could poison the corpus and waste mutation cycles; now validated with `ast.parse()` before saving and unparseable parents are marked sterile so the scheduler deprioritizes them, by @devdanzin.
 - Six mutator bugs causing sterile mutations and runtime errors: `PatternMatchingChaosMutator` referencing undefined `_chaos_side_effect`, `StressPatternInjector` injecting operations without try/except, `WeakRefCallbackChaos` local/global scope confusion, and `SideEffectInjector`/`FrameManipulator`/`ReentrantSideEffectMutator` catching only `TypeError` instead of also `NameError` for code injected before variable definitions, by @devdanzin.
+- `RecursionWrappingMutator`: Remainder of function body after the wrapped block is now protected by try/except to handle `UnboundLocalError` from variables that moved into the nested scope, by @devdanzin.
+- `_mutate_for_loop_iter`: Replaced for loop is now wrapped in try/except to handle tuple-unpacking and type mismatch errors from the stateful iterator replacement, by @devdanzin.
+- `TypeInstabilityInjector`: Widened except clause from `TypeError` to `(TypeError, AttributeError)` to handle method calls on corrupted string values, by @devdanzin.
+- `LatticeSurfingMutator`: Added `__radd__`, `__sub__`, `__rsub__`, `__mul__`, `__rmul__`, `__mod__`, `__lt__`, `__le__`, `__gt__`, `__ge__`, `__eq__`, `__ne__`, `__hash__`, and `__repr__` to both `_SurferA` and `_SurferB` classes. Each method performs the class-flip before delegating, increasing the attack surface, by @devdanzin.
+- `SuperResolutionAttacker`: Widened Phase 3 stress loop from `except AttributeError` to `except Exception`, by @devdanzin.
+- `CodeObjectSwapper`: Widened post-swap stress loop from `except TypeError` to `except Exception`, by @devdanzin.
 
 
 ### Documentation

@@ -20,6 +20,7 @@ from lafleur.mutators.scenarios_types import (
     DynamicClassSwapper,
     FunctionPatcher,
     InlineCachePolluter,
+    InlinedFrameCorruptionMutator,
     LoadAttrPolluter,
     MROShuffler,
     ManyVarsInjector,
@@ -2434,6 +2435,117 @@ class TestTypeVersionInvalidator(unittest.TestCase):
         warmup_pos = result.find("range(300)")
         modify_pos = result.find("new_method")
         self.assertLess(warmup_pos, modify_pos)
+
+
+class TestInlinedFrameCorruptionMutator(unittest.TestCase):
+    """Test InlinedFrameCorruptionMutator mutator."""
+
+    def setUp(self):
+        random.seed(42)
+
+    def test_injects_property_swap(self):
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+        with patch("random.random", return_value=0.05):
+            with patch("random.choice", return_value="property_swap"):
+                with patch("random.randint", return_value=5000):
+                    mutator = InlinedFrameCorruptionMutator()
+                    mutated = mutator.visit(tree)
+        result = ast.unparse(mutated)
+        self.assertIn("_PropTarget_ifrm_5000", result)
+        self.assertIn("@property", result)
+        self.assertIn("_evil_getter_ifrm_5000", result)
+
+    def test_injects_getitem_class_change(self):
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+        with patch("random.random", return_value=0.05):
+            with patch("random.choice", return_value="getitem_class_change"):
+                with patch("random.randint", return_value=6000):
+                    mutator = InlinedFrameCorruptionMutator()
+                    mutated = mutator.visit(tree)
+        result = ast.unparse(mutated)
+        self.assertIn("_IndexableA_ifrm_6000", result)
+        self.assertIn("_IndexableB_ifrm_6000", result)
+        self.assertIn("__class__", result)
+
+    def test_injects_descriptor_chain(self):
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+        with patch("random.random", return_value=0.05):
+            with patch("random.choice", return_value="descriptor_chain"):
+                with patch("random.randint", return_value=7000):
+                    mutator = InlinedFrameCorruptionMutator()
+                    mutated = mutator.visit(tree)
+        result = ast.unparse(mutated)
+        self.assertIn("_Chained_ifrm_7000", result)
+        self.assertIn("outer", result)
+        self.assertIn("inner", result)
+
+    def test_injects_property_inheritance_swap(self):
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+        with patch("random.random", return_value=0.05):
+            with patch("random.choice", return_value="property_inheritance_swap"):
+                with patch("random.randint", return_value=8000):
+                    mutator = InlinedFrameCorruptionMutator()
+                    mutated = mutator.visit(tree)
+        result = ast.unparse(mutated)
+        self.assertIn("_BaseA_ifrm_8000", result)
+        self.assertIn("_BaseB_ifrm_8000", result)
+        self.assertIn("__bases__", result)
+
+    def test_all_attacks_produce_valid_code(self):
+        for attack in InlinedFrameCorruptionMutator.ATTACK_SCENARIOS:
+            with self.subTest(attack=attack):
+                code = dedent("""
+                    def uop_harness_test():
+                        x = 1
+                """)
+                tree = ast.parse(code)
+                with patch("random.random", return_value=0.05):
+                    with patch("random.choice", return_value=attack):
+                        with patch("random.randint", return_value=4000):
+                            mutator = InlinedFrameCorruptionMutator()
+                            mutated = mutator.visit(tree)
+                result = ast.unparse(mutated)
+                ast.parse(result)
+
+    def test_skips_non_harness(self):
+        code = dedent("""
+            def normal_function():
+                x = 1
+        """)
+        tree = ast.parse(code)
+        original = ast.unparse(tree)
+        with patch("random.random", return_value=0.05):
+            mutator = InlinedFrameCorruptionMutator()
+            mutated = mutator.visit(tree)
+        self.assertEqual(original, ast.unparse(mutated))
+
+    def test_respects_probability(self):
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+        original = ast.unparse(tree)
+        with patch("random.random", return_value=0.9):
+            mutator = InlinedFrameCorruptionMutator()
+            mutated = mutator.visit(tree)
+        self.assertEqual(original, ast.unparse(mutated))
 
 
 if __name__ == "__main__":

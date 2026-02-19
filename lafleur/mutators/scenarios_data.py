@@ -2056,3 +2056,446 @@ class UnpackingChaosMutator(ast.NodeTransformer):
             ast.fix_missing_locations(node)
 
         return node
+
+
+class ConstantNarrowingPoisonMutator(ast.NodeTransformer):
+    """
+    Attack the JIT's constant narrowing optimization.
+
+    After `if v == 1:`, the optimizer narrows `v` to the constant `1`
+    and folds subsequent operations. This mutator creates scenarios where
+    the narrowing assumption is violated.
+
+    Attack vectors:
+    1. lying_eq: Custom __eq__ that returns True for non-matching values,
+       tricking the optimizer into narrowing to a wrong constant.
+    2. int_subclass_extra_state: Int subclass where `x == 1` is True
+       (inherited __eq__), but `x` has additional attributes the optimizer
+       doesn't track.
+    3. float_nan_paradox: Exploit NaN != NaN. The `!=` comparison's
+       else-branch implies equality, but NaN is never equal to itself.
+    4. str_identity_vs_equality: Exploit interning differences.
+       `v == "hello"` can succeed for non-interned copies, but the
+       optimizer may assume identity (same pointer).
+    5. mutable_constant: Objects that compare equal to a constant but
+       mutate between the comparison and the folded operation.
+    6. hash_collision_confusion: Objects with __hash__/__eq__ that make
+       dict lookups believe they're a constant when they're not.
+    """
+
+    ATTACK_SCENARIOS = [
+        "lying_eq",
+        "int_subclass_extra_state",
+        "float_nan_paradox",
+        "str_identity_vs_equality",
+        "mutable_constant",
+        "hash_collision_confusion",
+    ]
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> ast.FunctionDef:
+        self.generic_visit(node)
+
+        if not node.name.startswith("uop_harness") or not node.body:
+            return node
+
+        if random.random() < 0.12:  # 12% chance
+            attack = random.choice(self.ATTACK_SCENARIOS)
+            p_prefix = f"cnarrow_{random.randint(1000, 9999)}"
+
+            print(
+                f"    -> Injecting constant narrowing poison ({attack}) with prefix '{p_prefix}'",
+                file=sys.stderr,
+            )
+
+            scenario_ast = getattr(self, f"_create_{attack}")(p_prefix)
+
+            injection_point = random.randint(0, len(node.body))
+            node.body[injection_point:injection_point] = scenario_ast
+            ast.fix_missing_locations(node)
+
+        return node
+
+    def _create_lying_eq(self, prefix: str) -> list[ast.stmt]:
+        """
+        Custom __eq__ that returns True for non-matching values.
+
+        The optimizer sees `v == 1` return True and narrows v to constant 1.
+        But v is actually a LyingInt with value 999. Subsequent operations
+        folded under the assumption v==1 produce wrong results.
+        """
+        code = dedent(f"""
+            class _LyingInt_{prefix}:
+                def __init__(self, real_val):
+                    self.real_val = real_val
+
+                def __eq__(self, other):
+                    # Always claim equality with small ints
+                    if isinstance(other, int) and -5 <= other <= 256:
+                        return True
+                    return self.real_val == other
+
+                def __hash__(self):
+                    return hash(1)  # Consistent with lying __eq__
+
+                def __add__(self, other):
+                    return self.real_val + other
+
+                def __radd__(self, other):
+                    return other + self.real_val
+
+                def __mul__(self, other):
+                    return self.real_val * other
+
+                def __bool__(self):
+                    return bool(self.real_val)
+
+            def _get_val_{prefix}():
+                return _LyingInt_{prefix}(999)
+
+            # Phase 1: Warm up — JIT traces comparison, narrows to constant 1
+            _v_{prefix} = _get_val_{prefix}()
+            _hits_{prefix} = 0
+            for _i_{prefix} in range(200):
+                if _v_{prefix} == 1:
+                    # Optimizer thinks v is 1, folds v + 1 to 2
+                    # But v.real_val is 999, so v + 1 should be 1000
+                    _hits_{prefix} += _v_{prefix} + 1
+
+            # Phase 2: Vary the comparison constant
+            for _c_{prefix} in [0, 1, 2, 42, 100, 255, 256]:
+                _v2_{prefix} = _get_val_{prefix}()
+                try:
+                    for _j_{prefix} in range(100):
+                        if _v2_{prefix} == _c_{prefix}:
+                            _ = _v2_{prefix} + _c_{prefix}
+                            _ = _v2_{prefix} * 2
+                except TypeError:
+                    pass
+
+            # Phase 3: Chain narrowing — nested comparisons
+            _v3_{prefix} = _get_val_{prefix}()
+            for _k_{prefix} in range(200):
+                if _v3_{prefix} == 1:
+                    if _v3_{prefix} == 1:
+                        # Double narrowing — optimizer may fold both
+                        try:
+                            _ = _v3_{prefix} + _v3_{prefix}
+                        except TypeError:
+                            pass
+        """)
+        return ast.parse(code).body
+
+    def _create_int_subclass_extra_state(self, prefix: str) -> list[ast.stmt]:
+        """
+        Int subclass that compares equal to constants but has extra state.
+
+        x == 1 is True (inherited from int), but x carries additional
+        attributes. The optimizer narrows to constant 1, losing the extra
+        state. Operations that depend on the extra state break.
+        """
+        code = dedent(f"""
+            class _RichInt_{prefix}(int):
+                def __new__(cls, val, tag="default"):
+                    obj = super().__new__(cls, val)
+                    obj.tag = tag
+                    obj.access_count = 0
+                    return obj
+
+                def __add__(self, other):
+                    self.access_count += 1
+                    result = super().__add__(other)
+                    if isinstance(result, int) and not isinstance(result, _RichInt_{prefix}):
+                        return _RichInt_{prefix}(result, self.tag)
+                    return result
+
+                def __mul__(self, other):
+                    self.access_count += 1
+                    return _RichInt_{prefix}(super().__mul__(other), self.tag)
+
+            def _get_rich_{prefix}():
+                return _RichInt_{prefix}(1, "secret")
+
+            # Phase 1: Warm up — optimizer narrows to constant 1
+            _rv_{prefix} = _get_rich_{prefix}()
+            _total_{prefix} = 0
+            for _i_{prefix} in range(200):
+                if _rv_{prefix} == 1:
+                    # Optimizer thinks rv is constant 1, may fold rv + 1 = 2
+                    # But rv is _RichInt with tag and access_count
+                    _total_{prefix} = _rv_{prefix} + 1
+
+            # Phase 2: Test that extra state survives narrowing
+            _rv2_{prefix} = _get_rich_{prefix}()
+            for _j_{prefix} in range(200):
+                if _rv2_{prefix} == 1:
+                    _ = _rv2_{prefix} * 2
+                    # After narrowing, does the result still have .tag?
+                    try:
+                        _result_{prefix} = _rv2_{prefix} + _j_{prefix}
+                        _t_{prefix} = _result_{prefix}.tag  # Would fail if folded to plain int
+                    except AttributeError:
+                        pass
+
+            # Phase 3: != narrowing path
+            _rv3_{prefix} = _get_rich_{prefix}()
+            for _k_{prefix} in range(200):
+                if _rv3_{prefix} != 1:
+                    pass  # Should never enter — int value IS 1
+                else:
+                    # Optimizer narrows to constant 1 in else branch
+                    try:
+                        _ = _rv3_{prefix} + _rv3_{prefix}
+                    except TypeError:
+                        pass
+        """)
+        return ast.parse(code).body
+
+    def _create_float_nan_paradox(self, prefix: str) -> list[ast.stmt]:
+        """
+        Exploit NaN != NaN paradox in constant narrowing.
+
+        After `if v != NaN:`, the else-branch implies v == NaN, so the
+        optimizer may narrow v to NaN. But NaN is never equal to itself,
+        so the else branch is unreachable — the optimizer might still
+        reason about it. Also test: `if v == float('inf'):`.
+        """
+        code = dedent(f"""
+            _nan_{prefix} = float('nan')
+            _inf_{prefix} = float('inf')
+            _neginf_{prefix} = float('-inf')
+
+            def _get_nan_{prefix}():
+                return float('nan')
+
+            def _get_special_{prefix}(i):
+                # Return different special floats to confuse narrowing
+                if i % 4 == 0:
+                    return float('nan')
+                elif i % 4 == 1:
+                    return float('inf')
+                elif i % 4 == 2:
+                    return float('-inf')
+                else:
+                    return 0.0
+
+            # Phase 1: NaN equality — always False, but optimizer may still narrow
+            _vn_{prefix} = _get_nan_{prefix}()
+            _hits_{prefix} = 0
+            for _i_{prefix} in range(200):
+                if _vn_{prefix} == _nan_{prefix}:
+                    # Unreachable for NaN, but optimizer may fold here
+                    _hits_{prefix} += _vn_{prefix} + 1.0
+
+            # Phase 2: NaN inequality — always True
+            for _j_{prefix} in range(200):
+                if _vn_{prefix} != _nan_{prefix}:
+                    # Always taken. v is still NaN though.
+                    try:
+                        _ = _vn_{prefix} + 1.0  # NaN + 1.0 = NaN
+                        _ = _vn_{prefix} == _vn_{prefix}  # NaN == NaN is False
+                    except TypeError:
+                        pass
+                else:
+                    # Optimizer might narrow v to _nan here (else of !=)
+                    try:
+                        _ = _vn_{prefix} * 2.0
+                    except TypeError:
+                        pass
+
+            # Phase 3: Inf equality — v == inf, then use in comparisons
+            _vi_{prefix} = _inf_{prefix}
+            for _k_{prefix} in range(200):
+                if _vi_{prefix} == _inf_{prefix}:
+                    # Optimizer narrows to inf constant
+                    # inf + 1 = inf, inf * 0 = nan — edge cases
+                    _ = _vi_{prefix} + 1.0
+                    _ = _vi_{prefix} * 0.0  # Should be NaN, not 0
+
+            # Phase 4: -0.0 vs 0.0 — equal by ==, different by identity
+            _z1_{prefix} = 0.0
+            _z2_{prefix} = -0.0
+            for _m_{prefix} in range(200):
+                if _z1_{prefix} == _z2_{prefix}:
+                    # True: 0.0 == -0.0
+                    # But copysign(1, 0.0) != copysign(1, -0.0)
+                    import math
+                    try:
+                        _ = math.copysign(1, _z1_{prefix})  # 1.0
+                        _ = math.copysign(1, _z2_{prefix})  # -1.0
+                    except (TypeError, ValueError):
+                        pass
+        """)
+        return ast.parse(code).body
+
+    def _create_str_identity_vs_equality(self, prefix: str) -> list[ast.stmt]:
+        """
+        Exploit string interning differences in constant narrowing.
+
+        `v == "hello"` succeeds for both interned and non-interned copies.
+        The optimizer may assume identity (same pointer) after narrowing,
+        which would be wrong for non-interned strings.
+        """
+        code = dedent(f"""
+            def _make_noninterned_{prefix}(s):
+                # Force a non-interned copy
+                return "".join(list(s))
+
+            def _get_hello_{prefix}():
+                return _make_noninterned_{prefix}("hello")
+
+            # Phase 1: Warm up — optimizer narrows v to "hello" constant
+            _sv_{prefix} = _get_hello_{prefix}()
+            _count_{prefix} = 0
+            for _i_{prefix} in range(200):
+                if _sv_{prefix} == "hello":
+                    # Optimizer may assume v IS the interned "hello"
+                    # But it's a different object (non-interned)
+                    _count_{prefix} += 1
+                    _ = _sv_{prefix} + " world"
+
+            # Phase 2: Test with string subclass
+            class _RichStr_{prefix}(str):
+                def __new__(cls, val, tag="default"):
+                    obj = super().__new__(cls, val)
+                    obj.tag = tag
+                    return obj
+
+            _rs_{prefix} = _RichStr_{prefix}("hello", "secret")
+            for _j_{prefix} in range(200):
+                if _rs_{prefix} == "hello":
+                    # True (inherited __eq__), but rs has extra .tag
+                    try:
+                        _ = _rs_{prefix} + " world"
+                        _ = _rs_{prefix}.tag
+                    except AttributeError:
+                        pass
+
+            # Phase 3: != path with non-interned strings
+            _sv2_{prefix} = _get_hello_{prefix}()
+            for _k_{prefix} in range(200):
+                if _sv2_{prefix} != "hello":
+                    pass  # Should never enter
+                else:
+                    _ = _sv2_{prefix} + " post_narrow"
+        """)
+        return ast.parse(code).body
+
+    def _create_mutable_constant(self, prefix: str) -> list[ast.stmt]:
+        """
+        Objects that compare equal to a constant but mutate between
+        comparison and the folded operation.
+
+        The optimizer narrows v to constant after comparison. Between
+        the narrowing point and the folded operation, a side effect
+        changes v's actual value.
+        """
+        code = dedent(f"""
+            class _Shifty_{prefix}:
+                '''Value that changes every time it's compared.'''
+                def __init__(self, val):
+                    self._val = val
+                    self._cmp_count = 0
+
+                def __eq__(self, other):
+                    self._cmp_count += 1
+                    result = self._val == other
+                    # After comparison, shift the value
+                    if self._cmp_count % 3 == 0:
+                        self._val = self._val + 1 if isinstance(self._val, int) else self._val
+                    return result
+
+                def __hash__(self):
+                    return hash(self._val)
+
+                def __add__(self, other):
+                    return self._val + other
+
+                def __mul__(self, other):
+                    return self._val * other
+
+                def __bool__(self):
+                    return bool(self._val)
+
+            def _get_shifty_{prefix}():
+                return _Shifty_{prefix}(1)
+
+            # Phase 1: Comparison where value shifts between check and use
+            _sh_{prefix} = _get_shifty_{prefix}()
+            _total_{prefix} = 0
+            for _i_{prefix} in range(300):
+                if _sh_{prefix} == 1:
+                    # After ==, optimizer narrows to 1
+                    # But _Shifty may have shifted _val to 2
+                    _total_{prefix} += _sh_{prefix} + 1
+
+            # Phase 2: Double comparison — first narrows, second may see shifted value
+            _sh2_{prefix} = _get_shifty_{prefix}()
+            for _j_{prefix} in range(200):
+                if _sh2_{prefix} == 1:
+                    if _sh2_{prefix} == 1:
+                        # Second comparison's __eq__ shifts value again
+                        _ = _sh2_{prefix} * 2
+        """)
+        return ast.parse(code).body
+
+    def _create_hash_collision_confusion(self, prefix: str) -> list[ast.stmt]:
+        """
+        Hash/eq that makes objects indistinguishable from constants.
+
+        Create objects where hash(obj) == hash(1) and obj == 1, but
+        the object carries mutable state. Use in dict lookups where the
+        optimizer may constant-fold based on narrowing.
+        """
+        code = dedent(f"""
+            class _Impostor_{prefix}:
+                '''Pretends to be integer 1 for all equality/hash purposes.'''
+                def __init__(self):
+                    self.mutations = 0
+                    self.identity = id(self)
+
+                def __eq__(self, other):
+                    if other == 1 or isinstance(other, _Impostor_{prefix}):
+                        return True
+                    return NotImplemented
+
+                def __hash__(self):
+                    return hash(1)
+
+                def __add__(self, other):
+                    self.mutations += 1
+                    return self.mutations + (other if isinstance(other, int) else 0)
+
+                def __int__(self):
+                    return 1
+
+                def __index__(self):
+                    return 1
+
+            # Phase 1: Use impostor as dict key — should collide with 1
+            _d_{prefix} = {{1: "original"}}
+            _imp_{prefix} = _Impostor_{prefix}()
+            for _i_{prefix} in range(200):
+                # Optimizer may narrow dict key lookup based on comparison
+                _v_{prefix} = _d_{prefix}.get(_imp_{prefix}, "missing")
+                _d_{prefix}[_imp_{prefix}] = _i_{prefix}
+
+            # Phase 2: Impostor in `is` comparison (should fail — not same object)
+            for _j_{prefix} in range(200):
+                if _imp_{prefix} == 1:
+                    # Optimizer narrows to constant 1
+                    # But `_imp is 1` should be False
+                    _ = _imp_{prefix} + 1  # Returns mutations count, not 2
+                    try:
+                        _idx_{prefix} = [10, 20, 30][_imp_{prefix}]  # Uses __index__
+                    except (IndexError, TypeError):
+                        pass
+
+            # Phase 3: Impostor in set operations
+            _s_{prefix} = {{1, 2, 3}}
+            for _k_{prefix} in range(200):
+                _ = _imp_{prefix} in _s_{prefix}  # True via hash/eq
+                _s_{prefix}.add(_imp_{prefix})     # Should replace 1?
+                _s_{prefix}.discard(_imp_{prefix}) # Should remove 1?
+                _s_{prefix}.add(1)                 # Re-add
+        """)
+        return ast.parse(code).body

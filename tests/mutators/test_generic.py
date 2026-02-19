@@ -954,7 +954,7 @@ class TestSliceMutator(unittest.TestCase):
         random.seed(42)
 
     def test_injects_slice_read_operation(self):
-        """Test slice read operation injection."""
+        """Test slice read operation injection is wrapped in try/except."""
         code = dedent("""
             def uop_harness_test():
                 x = [1, 2, 3, 4, 5]
@@ -969,12 +969,13 @@ class TestSliceMutator(unittest.TestCase):
                 mutated = mutator.visit(tree)
 
         result = ast.unparse(mutated)
-        # Should have slice operation
+        # Should have slice operation wrapped in try/except
         self.assertIn("slice_var_", result)
-        self.assertIn("[", result)
+        self.assertIn("try:", result)
+        self.assertIn("except Exception:", result)
 
     def test_injects_slice_write_operation(self):
-        """Test slice write operation injection on lists."""
+        """Test slice write operation injection is wrapped in try/except."""
         code = dedent("""
             def uop_harness_test():
                 x = [1, 2, 3, 4, 5]
@@ -989,12 +990,13 @@ class TestSliceMutator(unittest.TestCase):
                 mutated = mutator.visit(tree)
 
         result = ast.unparse(mutated)
-        # Should have slice write
-        self.assertIn("x[", result)
+        # Should have slice write wrapped in try/except
         self.assertIn("= [1, 2, 3]", result)
+        self.assertIn("try:", result)
+        self.assertIn("except Exception:", result)
 
     def test_injects_slice_delete_operation(self):
-        """Test slice delete operation injection on lists."""
+        """Test slice delete operation injection is wrapped in try/except."""
         code = dedent("""
             def uop_harness_test():
                 x = [1, 2, 3, 4, 5]
@@ -1009,8 +1011,10 @@ class TestSliceMutator(unittest.TestCase):
                 mutated = mutator.visit(tree)
 
         result = ast.unparse(mutated)
-        # Should have del statement
+        # Should have del statement wrapped in try/except
         self.assertIn("del x[", result)
+        self.assertIn("try:", result)
+        self.assertIn("except Exception:", result)
 
     def test_injects_slice_object_read(self):
         """Test slice object read operation injection."""
@@ -1030,6 +1034,25 @@ class TestSliceMutator(unittest.TestCase):
         # Should have slice object
         self.assertIn("slice_obj_8000", result)
         self.assertIn("slice(", result)
+
+    def test_slice_object_read_not_double_wrapped(self):
+        """Test that read_slice_obj is not double-wrapped in try/except."""
+        code = dedent("""
+            def uop_harness_test():
+                x = [1, 2, 3, 4, 5]
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.1):
+            with patch("random.choice", side_effect=["x", "read_slice_obj", "None", "None"]):
+                with patch("random.randint", return_value=1234):
+                    mutator = SliceMutator()
+                    mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # read_slice_obj already has its own try/except, should not be double-wrapped
+        # Count "except Exception" — should appear exactly once
+        self.assertEqual(result.count("except Exception"), 1)
 
     def test_skips_functions_without_sequences(self):
         """Test that functions without lists/tuples are not mutated."""

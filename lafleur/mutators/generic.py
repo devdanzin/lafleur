@@ -952,6 +952,25 @@ class SliceMutator(ast.NodeTransformer):
             # --- END NEW ---
 
             if nodes_to_inject:
+                # Wrap in try/except for read, write, delete operations.
+                # The read_slice_obj path already has its own try/except.
+                # Cross-mutator interactions can change the target variable's
+                # type, and out-of-bounds slices crash the harness.
+                if operation in ("read", "write", "delete"):
+                    wrapped = ast.Try(
+                        body=nodes_to_inject,
+                        handlers=[
+                            ast.ExceptHandler(
+                                type=ast.Name(id="Exception", ctx=ast.Load()),
+                                name=None,
+                                body=[ast.Pass()],
+                            )
+                        ],
+                        orelse=[],
+                        finalbody=[],
+                    )
+                    nodes_to_inject = [wrapped]
+
                 injection_point = random.randint(0, len(node.body))
                 node.body[injection_point:injection_point] = nodes_to_inject
                 ast.fix_missing_locations(node)

@@ -223,8 +223,23 @@ class HelperFunctionInjector(ast.NodeTransformer):
             ),
         )
 
+        # Wrap in try/except to handle type mismatches when loop_var
+        # is not a compatible type (e.g., string in `for name in names:`)
+        wrapped_call = ast.Try(
+            body=[call_stmt],
+            handlers=[
+                ast.ExceptHandler(
+                    type=ast.Name(id="Exception", ctx=ast.Load()),
+                    name=None,
+                    body=[ast.Pass()],
+                )
+            ],
+            orelse=[],
+            finalbody=[],
+        )
+
         # Insert the call at the start of the loop body
-        node.body = [call_stmt] + node.body
+        node.body = [wrapped_call] + node.body
         ast.fix_missing_locations(node)
 
         return node
@@ -254,8 +269,23 @@ class HelperFunctionInjector(ast.NodeTransformer):
             ),
         )
 
+        # Wrap in try/except in case the helper has been sniped or
+        # is otherwise unavailable
+        wrapped_call = ast.Try(
+            body=[call_stmt],
+            handlers=[
+                ast.ExceptHandler(
+                    type=ast.Name(id="Exception", ctx=ast.Load()),
+                    name=None,
+                    body=[ast.Pass()],
+                )
+            ],
+            orelse=[],
+            finalbody=[],
+        )
+
         # Insert the call at the start of the loop body
-        node.body = [call_stmt] + node.body
+        node.body = [wrapped_call] + node.body
         ast.fix_missing_locations(node)
 
         return node

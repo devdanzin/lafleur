@@ -80,7 +80,7 @@ class TestHelperFunctionInjector(unittest.TestCase):
         self.assertGreater(len(first_loop.body), 0)
 
     def test_injects_calls_into_existing_loops(self):
-        """Test that helper calls are injected into existing loops."""
+        """Test that helper calls are injected into existing loops with error handling."""
         code = dedent("""
             def uop_harness_test():
                 total = 0
@@ -107,22 +107,46 @@ class TestHelperFunctionInjector(unittest.TestCase):
 
         self.assertIsNotNone(harness)
 
-        # Find the loop
+        # Find the loop and verify helper call is wrapped in try/except
         for node in ast.walk(harness):
             if isinstance(node, ast.For):
-                # Check if loop body has an assignment to _helper_result
-                assignments = [n for n in node.body if isinstance(n, ast.Assign)]
-                helper_assigns = [
-                    a
-                    for a in assignments
-                    if any(t.id == "_helper_result" for t in a.targets if isinstance(t, ast.Name))
-                ]
-                if helper_assigns:
-                    # Found the injected call
-                    return
+                # First statement in loop body should be a Try node wrapping the helper call
+                if node.body and isinstance(node.body[0], ast.Try):
+                    try_node = node.body[0]
+                    # The try body should have the helper call assignment
+                    result = ast.unparse(try_node)
+                    if "_helper_result" in result:
+                        return  # Found wrapped helper call
 
-        # If we get here, no helper call was found (might be due to probabilistic skip)
-        # This is acceptable in this test
+        # If probabilistic skip, this is acceptable
+
+    def test_helper_call_handles_non_int_loop_var(self):
+        """Test that injected helper calls are protected against non-int loop variables."""
+        code = dedent("""
+            def uop_harness_test():
+                for name in ["alice", "bob", "charlie"]:
+                    pass
+        """)
+        tree = ast.parse(code)
+
+        # random.random() calls: 0.1 for Module probability (< 0.3, passes),
+        # 0.9 for visit_For 50% check (>= 0.5, proceeds to inject)
+        with patch("random.random", side_effect=[0.1, 0.9]):
+            with patch("random.randint", return_value=1):
+                with patch("random.choice") as mock_choice:
+                    mock_choice.return_value = "_jit_helper_add"
+
+                    mutator = HelperFunctionInjector()
+                    mutator.helpers_injected = ["_jit_helper_add"]
+                    mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # The helper call should be wrapped in try/except
+        self.assertIn("try:", result)
+        self.assertIn("except Exception:", result)
+        self.assertIn("_helper_result", result)
+        # Code should be valid Python
+        ast.parse(result)
 
     def test_probability_controls_injection(self):
         """Test that probability parameter controls whether mutation is applied."""

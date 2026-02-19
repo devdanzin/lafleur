@@ -73,6 +73,9 @@ All notable changes to this project should be documented in this file.
 - `LatticeSurfingMutator`: Added `__radd__`, `__sub__`, `__rsub__`, `__mul__`, `__rmul__`, `__mod__`, `__lt__`, `__le__`, `__gt__`, `__ge__`, `__eq__`, `__ne__`, `__hash__`, and `__repr__` to both `_SurferA` and `_SurferB` classes. Each method performs the class-flip before delegating, increasing the attack surface, by @devdanzin.
 - `SuperResolutionAttacker`: Widened Phase 3 stress loop from `except AttributeError` to `except Exception`, by @devdanzin.
 - `CodeObjectSwapper`: Widened post-swap stress loop from `except TypeError` to `except Exception`, by @devdanzin.
+- `HelperFunctionInjector`: Wrapped injected helper calls in `visit_For` and `visit_While` in try/except to handle type mismatches when loop variables are non-int types, by @devdanzin.
+- `SniperMutator`: Gated invalidation behind an iteration counter (trigger at 50–100 iterations) so the JIT has time to compile the hot path before the sniper fires — previously fired on iteration 0, never triggering deoptimization, by @devdanzin.
+- `SliceMutator`: Wrapped read, write, and delete slice operations in try/except to handle cross-mutator type changes and out-of-bounds errors, by @devdanzin.
 
 
 ### Documentation

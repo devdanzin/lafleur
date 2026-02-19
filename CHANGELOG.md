@@ -51,6 +51,7 @@ All notable changes to this project should be documented in this file.
 
 ### Fixed
 
+- TeeLogger verbosity filtering leaving blank lines where suppressed lines were: `print()` sends two writes (content + `"\n"`) and the trailing newline was passing through after the content was suppressed, by @devdanzin.
 - Filter SyntaxError/IndentationError crashes from invalid mutations, by @devdanzin.
 - Delta tachycardia scoring applied an eternal reward because `parent_jit_stats` used a different key name than what `_prepare_new_coverage_result` stored, causing every child to appear to have higher density than its parent, by @devdanzin.
 - Delta tachycardia density threshold used a fixed minimum instead of a parent-relative calculation, making the bonus trivially easy to earn for any file above baseline, by @devdanzin.

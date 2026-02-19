@@ -160,6 +160,9 @@ class TeeLogger:
         # Repeat collapsing state
         self._last_line: str | None = None
         self._repeat_count: int = 0
+        # Track whether the last write was suppressed, so the trailing
+        # "\n" from print() can be swallowed too.
+        self._last_was_suppressed: bool = False
 
     def _is_suppressed(self, line: str) -> bool:
         """Check if a line should be suppressed in quiet mode."""
@@ -202,6 +205,10 @@ class TeeLogger:
         """
         # Pass through empty strings and bare newlines (print() separators)
         if not message or message == "\n":
+            # Swallow the trailing "\n" that print() sends after a suppressed line.
+            if message == "\n" and self._last_was_suppressed:
+                self._last_was_suppressed = False
+                return
             # Flush any pending repeat first
             if message == "\n" and self._last_line is not None:
                 # This newline might be print()'s end='\n' after a
@@ -222,7 +229,9 @@ class TeeLogger:
 
         # Check verbosity suppression
         if self._is_suppressed(message):
+            self._last_was_suppressed = True
             return
+        self._last_was_suppressed = False
 
         # Repeat collapsing: compare stripped content
         stripped = message.rstrip("\n")

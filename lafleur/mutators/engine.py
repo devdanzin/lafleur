@@ -68,7 +68,9 @@ from lafleur.mutators.scenarios_data import (
     MagicMethodMutator,
     NumericMutator,
     ReentrantSideEffectMutator,
+    SliceObjectChaosMutator,
     StackCacheThrasher,
+    StarCallMutator,
     TypeShadowingMutator,
     UnpackingChaosMutator,
     ZombieTraceMutator,
@@ -233,6 +235,8 @@ class ASTMutator:
             SysMonitoringMutator,
             ConstantNarrowingPoisonMutator,
             InlinedFrameCorruptionMutator,
+            StarCallMutator,
+            SliceObjectChaosMutator,
         ]
         # Note: SniperMutator is NOT in this list - it's applied separately
         # via orchestrator._run_sniper_stage() with Bloom-detected watched_keys

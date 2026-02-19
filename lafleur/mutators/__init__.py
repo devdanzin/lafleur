@@ -14,7 +14,7 @@ from lafleur.mutators.utils import (
     HarnessInstrumentor,
     RedundantStatementSanitizer,
 )
-from lafleur.mutators.generic import ImportPrunerMutator, VariableRenamer
+from lafleur.mutators.generic import ImportPrunerMutator, StatementDuplicator, VariableRenamer
 
 __all__ = [
     "ASTMutator",
@@ -24,5 +24,6 @@ __all__ = [
     "HarnessInstrumentor",
     "ImportPrunerMutator",
     "RedundantStatementSanitizer",
+    "StatementDuplicator",
     "VariableRenamer",
 ]

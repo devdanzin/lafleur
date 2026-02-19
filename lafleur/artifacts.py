@@ -23,6 +23,7 @@ from compression import zstd
 from lafleur.analysis import CrashFingerprinter, CrashSignature, CrashType
 from lafleur.corpus_analysis import generate_corpus_stats
 from lafleur.corpus_manager import CORPUS_DIR
+from lafleur.health import extract_error_excerpt
 from lafleur.utils import save_run_stats
 
 if TYPE_CHECKING:
@@ -475,6 +476,9 @@ class ArtifactManager:
         log_path: Path,
         parent_path: Path | None = None,
         session_files: list[Path] | None = None,
+        *,
+        parent_id: str | None = None,
+        mutation_info: dict | None = None,
     ) -> bool:
         """
         Check for crashes, determine the cause (Signal/Retcode/Keyword), and save artifacts.
@@ -486,12 +490,16 @@ class ArtifactManager:
             log_path: Path to the log file
             parent_path: Path to the parent script (for session mode)
             session_files: List of all scripts in the session (for session mode)
+            parent_id: Parent corpus file being mutated (for health monitoring).
+            mutation_info: Mutation context dict (for health monitoring).
 
         Returns:
             True if a crash was detected and saved (stat key: "crashes_found" handled by caller)
         """
         crash_signature = None
         crash_reason = None
+
+        strategy = mutation_info.get("strategy") if mutation_info else None
 
         # 1. Analyze with Fingerprinter
         if return_code != 0:
@@ -500,7 +508,12 @@ class ArtifactManager:
             if return_code in (-9, -15):
                 print(f"  [~] Ignoring signal {return_code} (SIGKILL/SIGTERM).", file=sys.stderr)
                 if self.health_monitor:
-                    self.health_monitor.record_ignored_crash("SIGKILL/SIGTERM", return_code)
+                    self.health_monitor.record_ignored_crash(
+                        reason=f"SIGNAL:{-return_code}",
+                        returncode=return_code,
+                        parent_id=parent_id,
+                        strategy=strategy,
+                    )
                 return False
 
             crash_signature = self.fingerprinter.analyze(return_code, log_content)
@@ -513,7 +526,10 @@ class ArtifactManager:
                 )
                 if self.health_monitor:
                     self.health_monitor.record_ignored_crash(
-                        crash_signature.fingerprint, return_code
+                        reason=crash_signature.fingerprint,
+                        returncode=return_code,
+                        parent_id=parent_id,
+                        strategy=strategy,
                     )
                 return False
 
@@ -532,7 +548,11 @@ class ArtifactManager:
                     )
                 if self.health_monitor:
                     self.health_monitor.record_ignored_crash(
-                        crash_signature.fingerprint, return_code
+                        reason=crash_signature.fingerprint,
+                        returncode=return_code,
+                        parent_id=parent_id,
+                        strategy=strategy,
+                        error_excerpt=extract_error_excerpt(log_content),
                     )
                 return False
 

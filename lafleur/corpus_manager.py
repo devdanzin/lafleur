@@ -312,9 +312,22 @@ class CorpusManager:
         Return the path to the selected parent and its calculated score, or
         None if the corpus is empty.
         """
-        corpus_files = list(self.coverage_state.state.get("per_file_coverage", {}).keys())
+        per_file = self.coverage_state.state.get("per_file_coverage", {})
+
+        # Filter out sterile files entirely — they can never produce interesting
+        # children and waste full sessions when selected.
+        corpus_files = [
+            filename
+            for filename, metadata in per_file.items()
+            if not metadata.get("is_sterile", False)
+        ]
+
         if not corpus_files:
-            return None
+            # Fall back to all files if everything is sterile (shouldn't happen
+            # in practice, but prevents a dead-stop)
+            corpus_files = list(per_file.keys())
+            if not corpus_files:
+                return None
 
         print("[+] Calculating corpus scores for parent selection...")
         scores = self.scheduler.calculate_scores()

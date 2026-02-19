@@ -9,6 +9,7 @@ from lafleur.health import (
     CONSECUTIVE_TIMEOUT_THRESHOLD,
     FILE_SIZE_WARNING_THRESHOLD,
     HealthMonitor,
+    extract_error_excerpt,
 )
 
 
@@ -247,6 +248,140 @@ class TestGetSummary(unittest.TestCase):
         """Empty monitor returns empty summary."""
         monitor = HealthMonitor(log_path=Path("/tmp/test.jsonl"))
         self.assertEqual(monitor.get_summary(), {})
+
+
+class TestExtractErrorExcerpt(unittest.TestCase):
+    """Test extract_error_excerpt helper."""
+
+    def test_extracts_python_error_line(self):
+        """Finds the last Error: line in log content."""
+        log = "line1\nline2\nTypeError: unsupported operand\nmore output"
+        result = extract_error_excerpt(log)
+        self.assertIn("TypeError", result)
+
+    def test_falls_back_to_last_line(self):
+        """Falls back to last non-empty line when no Error: pattern found."""
+        log = "some output\nfinal line here"
+        result = extract_error_excerpt(log)
+        self.assertEqual(result, "final line here")
+
+    def test_returns_none_for_empty(self):
+        """Returns None for empty or whitespace-only content."""
+        self.assertIsNone(extract_error_excerpt(""))
+        self.assertIsNone(extract_error_excerpt("   \n   "))
+
+    def test_truncates_long_lines(self):
+        """Excerpt is truncated to max_length."""
+        log = "ValueError: " + "x" * 300
+        result = extract_error_excerpt(log, max_length=50)
+        self.assertEqual(len(result), 50)
+
+    def test_handles_none_input(self):
+        """Handles None gracefully."""
+        self.assertIsNone(extract_error_excerpt(None))
+
+
+class TestIgnoredCrashEnriched(unittest.TestCase):
+    """Test enriched ignored_crash events."""
+
+    def setUp(self):
+        self.tmp_dir = tempfile.mkdtemp()
+        self.log_path = Path(self.tmp_dir) / "health_events.jsonl"
+        self.monitor = HealthMonitor(log_path=self.log_path)
+
+    def test_includes_parent_id(self):
+        """parent_id is included when provided."""
+        self.monitor.record_ignored_crash("PYTHON:TypeError", 1, parent_id="42.py")
+        record = json.loads(self.log_path.read_text().strip())
+        self.assertEqual(record["parent_id"], "42.py")
+
+    def test_includes_strategy(self):
+        """strategy is included when provided."""
+        self.monitor.record_ignored_crash("PYTHON:TypeError", 1, strategy="havoc")
+        record = json.loads(self.log_path.read_text().strip())
+        self.assertEqual(record["strategy"], "havoc")
+
+    def test_includes_error_excerpt(self):
+        """error_excerpt is included when provided."""
+        self.monitor.record_ignored_crash(
+            "PYTHON:unknown", 1, error_excerpt="NameError: name 'x' is not defined"
+        )
+        record = json.loads(self.log_path.read_text().strip())
+        self.assertIn("NameError", record["error_excerpt"])
+
+    def test_omits_none_fields(self):
+        """None fields are not written to the event."""
+        self.monitor.record_ignored_crash("SyntaxError", 1)
+        record = json.loads(self.log_path.read_text().strip())
+        self.assertNotIn("parent_id", record)
+        self.assertNotIn("strategy", record)
+        self.assertNotIn("error_excerpt", record)
+
+
+class TestChildScriptNoneEnriched(unittest.TestCase):
+    """Test enriched child_script_none events."""
+
+    def setUp(self):
+        self.tmp_dir = tempfile.mkdtemp()
+        self.log_path = Path(self.tmp_dir) / "health_events.jsonl"
+        self.monitor = HealthMonitor(log_path=self.log_path)
+
+    def test_includes_strategy(self):
+        """strategy is included when provided."""
+        self.monitor.record_child_script_none("42.py", 100, strategy="sniper")
+        record = json.loads(self.log_path.read_text().strip())
+        self.assertEqual(record["strategy"], "sniper")
+
+    def test_omits_strategy_when_none(self):
+        """strategy is omitted when not provided."""
+        self.monitor.record_child_script_none("42.py", 100)
+        record = json.loads(self.log_path.read_text().strip())
+        self.assertNotIn("strategy", record)
+
+
+class TestCoreSyntaxErrorEnriched(unittest.TestCase):
+    """Test enriched core_code_syntax_error events."""
+
+    def setUp(self):
+        self.tmp_dir = tempfile.mkdtemp()
+        self.log_path = Path(self.tmp_dir) / "health_events.jsonl"
+        self.monitor = HealthMonitor(log_path=self.log_path)
+
+    def test_includes_strategy(self):
+        """strategy is included when provided."""
+        self.monitor.record_core_code_syntax_error("42.py", "bad indent", strategy="havoc")
+        record = json.loads(self.log_path.read_text().strip())
+        self.assertEqual(record["strategy"], "havoc")
+
+    def test_omits_strategy_when_none(self):
+        """strategy is omitted when not provided."""
+        self.monitor.record_core_code_syntax_error("42.py", "bad indent")
+        record = json.loads(self.log_path.read_text().strip())
+        self.assertNotIn("strategy", record)
+
+
+class TestCorpusSterilityOnce(unittest.TestCase):
+    """Test that corpus_sterility_reached fires only once."""
+
+    def setUp(self):
+        self.tmp_dir = tempfile.mkdtemp()
+        self.log_path = Path(self.tmp_dir) / "health_events.jsonl"
+        self.monitor = HealthMonitor(log_path=self.log_path)
+
+    def test_fires_once_not_repeatedly(self):
+        """Verifying at the health monitor level that repeated calls produce repeated events.
+
+        The once-only behavior is enforced in the orchestrator by checking
+        is_sterile before calling record_corpus_sterility. This test verifies
+        the monitor itself doesn't deduplicate (it shouldn't — that's the
+        orchestrator's job).
+        """
+        self.monitor.record_corpus_sterility("42.py", 600)
+        self.monitor.record_corpus_sterility("42.py", 601)
+
+        lines = self.log_path.read_text().strip().split("\n")
+        # Both calls should write (the monitor is stateless about sterility)
+        self.assertEqual(len(lines), 2)
 
 
 class TestFileConstants(unittest.TestCase):

@@ -92,7 +92,13 @@ class TypeInstabilityInjector(ast.NodeTransformer):
             body=new_body,
             handlers=[
                 ast.ExceptHandler(
-                    type=ast.Name(id="TypeError", ctx=ast.Load()),
+                    type=ast.Tuple(
+                        elts=[
+                            ast.Name(id="TypeError", ctx=ast.Load()),
+                            ast.Name(id="AttributeError", ctx=ast.Load()),
+                        ],
+                        ctx=ast.Load(),
+                    ),
                     name=None,
                     body=[recovery_assignment],
                 )
@@ -667,8 +673,9 @@ class SuperResolutionAttacker(ast.NodeTransformer):
                 for _ in range(100):
                     try:
                         _ = {instance_name}.f()
-                    except AttributeError:
-                        # This is the expected exception after the shuffle
+                    except Exception:
+                        # MRO changes can cause AttributeError, TypeError,
+                        # RuntimeError, etc. depending on resolution state.
                         pass
             """)
             ).body
@@ -746,8 +753,9 @@ class CodeObjectSwapper(ast.NodeTransformer):
                     try:
                         res = {original_name}() # Now returns a string
                         _ = res + 1          # This will raise a TypeError
-                    except TypeError:
-                        # This is the expected outcome.
+                    except Exception:
+                        # Code swap can cause TypeError, NameError, ValueError,
+                        # AttributeError, etc. depending on the swapped code.
                         pass
             """)
             ).body

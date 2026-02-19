@@ -40,7 +40,7 @@ class TestTypeInstabilityInjector(unittest.TestCase):
         random.seed(42)
 
     def test_type_instability_injector(self):
-        """Test TypeInstabilityInjector mutator."""
+        """Test TypeInstabilityInjector mutator catches TypeError and AttributeError."""
         code = dedent("""
             def uop_harness_test():
                 for i in range(100):
@@ -58,6 +58,7 @@ class TestTypeInstabilityInjector(unittest.TestCase):
         result = ast.unparse(mutated)
         self.assertIn("try:", result)
         self.assertIn("TypeError", result)
+        self.assertIn("AttributeError", result)
 
     def test_type_instability_with_no_loop_var(self):
         """Test TypeInstabilityInjector with tuple target."""
@@ -863,7 +864,7 @@ class TestSuperResolutionAttacker(unittest.TestCase):
         self.assertGreaterEqual(result.count("super()"), 2)
 
     def test_includes_stress_loop(self):
-        """Test that stress loop repeatedly calls method."""
+        """Test that stress loop repeatedly calls method with broad exception handling."""
         code = dedent("""
             def uop_harness_test():
                 x = 1
@@ -879,6 +880,8 @@ class TestSuperResolutionAttacker(unittest.TestCase):
         # Should have stress loop calling method
         self.assertIn("for _ in range(100):", result)
         self.assertIn("instance_super_5000.f()", result)
+        # Phase 3 stress loop should catch Exception (not just AttributeError)
+        self.assertIn("except Exception", result)
 
     def test_wraps_in_try_except(self):
         """Test that scenario is wrapped in try/except."""

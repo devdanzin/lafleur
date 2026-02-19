@@ -803,7 +803,7 @@ class TestMutateForLoopIter(unittest.TestCase):
     """Test the shared _mutate_for_loop_iter helper."""
 
     def test_mutate_for_loop_iter_shared_function(self):
-        """Test the shared _mutate_for_loop_iter helper."""
+        """Test the shared _mutate_for_loop_iter helper wraps in try/except."""
         code = dedent("""
             def uop_harness_test():
                 for i in range(10):
@@ -818,6 +818,9 @@ class TestMutateForLoopIter(unittest.TestCase):
         self.assertTrue(result)
         code_str = ast.unparse(func_node)
         self.assertIn("StatefulIter_iter_4242", code_str)
+        # The for loop should be wrapped in try/except
+        try_nodes = [n for n in func_node.body if isinstance(n, ast.Try)]
+        self.assertGreater(len(try_nodes), 0, "For loop should be wrapped in try/except")
 
     def test_mutate_for_loop_iter_no_loop(self):
         """Test that _mutate_for_loop_iter returns False with no for loop."""
@@ -1197,6 +1200,12 @@ class TestLatticeSurfingMutator(unittest.TestCase):
         self.assertIn("self.__class__ = _SurferB", result)
         # _SurferB should flip to _SurferA in magic methods
         self.assertIn("self.__class__ = _SurferA", result)
+        # Should have comparison and arithmetic dunder methods
+        self.assertIn("__lt__", result)
+        self.assertIn("__eq__", result)
+        self.assertIn("__sub__", result)
+        self.assertIn("__mul__", result)
+        self.assertIn("__hash__", result)
 
     def test_limits_mutation_to_1_or_2_variables(self):
         """Test that only 1-2 variables are mutated."""

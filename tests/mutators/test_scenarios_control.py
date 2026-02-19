@@ -36,7 +36,7 @@ class TestRecursionWrappingMutator(unittest.TestCase):
         random.seed(42)
 
     def test_wraps_block_in_recursive_function(self):
-        """Test that a block is wrapped in a recursive function."""
+        """Test that a block is wrapped in a recursive function and remainder is protected."""
         code = dedent("""
             def uop_harness_test():
                 a = 1
@@ -56,6 +56,10 @@ class TestRecursionWrappingMutator(unittest.TestCase):
         result = ast.unparse(mutated)
         # Should have recursive function
         self.assertIn("def recursive_wrapper_5000():", result)
+        # Remainder should be wrapped in try/except
+        # Count try: blocks — should have at least 2 (one for the RecursionError,
+        # one for the remainder protection)
+        self.assertGreaterEqual(result.count("try:"), 2)
 
     def test_creates_function_with_unique_name(self):
         """Test that recursive function has unique name."""
@@ -272,6 +276,55 @@ class TestRecursionWrappingMutator(unittest.TestCase):
         result = ast.unparse(mutated)
         # Should not be mutated (too few statements)
         self.assertEqual(original, result)
+
+    def test_remainder_wrapped_in_try_except(self):
+        """Test that statements after the wrapped block are protected from scope errors."""
+        code = dedent("""
+            def uop_harness_test():
+                a = 1
+                b = 2
+                c = a + b
+                d = c * 2
+                e = d + 1
+                f = e + a
+                g = f + 1
+        """)
+        tree = ast.parse(code)
+
+        # Wrap block starting at index 2 (c, d, e)
+        with patch("random.random", return_value=0.01):
+            with patch("random.randint", side_effect=[2, 7000]):
+                mutator = RecursionWrappingMutator()
+                mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # The remainder (f = e + a, g = f + 1) should be inside a try/except
+        self.assertIn("except Exception", result)
+        # Verify the code is valid Python
+        ast.parse(result)
+
+    def test_no_remainder_wrapper_when_block_at_end(self):
+        """Test that no remainder wrapper is added when the block is at the end."""
+        code = dedent("""
+            def uop_harness_test():
+                a = 1
+                b = 2
+                c = 3
+                d = 4
+                e = 5
+        """)
+        tree = ast.parse(code)
+
+        # Wrap block at index 2 (c, d, e) — no remainder
+        with patch("random.random", return_value=0.01):
+            with patch("random.randint", side_effect=[2, 8000]):
+                mutator = RecursionWrappingMutator()
+                mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should have exactly one try (for RecursionError), no except Exception
+        self.assertIn("except RecursionError", result)
+        self.assertNotIn("except Exception", result)
 
 
 class TestExceptionHandlerMaze(unittest.TestCase):

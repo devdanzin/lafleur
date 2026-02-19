@@ -76,6 +76,10 @@ All notable changes to this project should be documented in this file.
 - `HelperFunctionInjector`: Wrapped injected helper calls in `visit_For` and `visit_While` in try/except to handle type mismatches when loop variables are non-int types, by @devdanzin.
 - `SniperMutator`: Gated invalidation behind an iteration counter (trigger at 50–100 iterations) so the JIT has time to compile the hot path before the sniper fires — previously fired on iteration 0, never triggering deoptimization, by @devdanzin.
 - `SliceMutator`: Wrapped read, write, and delete slice operations in try/except to handle cross-mutator type changes and out-of-bounds errors, by @devdanzin.
+- `run_session()`: `SystemExit` is now caught and logged instead of propagating. If a mutator injects `sys.exit()` into a warmup or polluter script, the session continues to the attack script instead of killing the driver process, by @devdanzin.
+- `run_session()`: `sys.path` and `sys.modules` are now snapshotted and restored between scripts. This prevents `ImportChaosMutator` pollution from leaking across session scripts and causing false-positive divergences, by @devdanzin.
+- `get_jit_stats()`, `snapshot_executor_state()`, `scan_watched_variables()`: Dictionary iteration now uses `list(dict.items())` to prevent `RuntimeError: dictionary changed size during iteration` when chaotic harness code triggers namespace-modifying side effects, by @devdanzin.
+- `verify_target_capabilities()`: Fixed typo in error message — `PYTHON_LLTRACE=4` corrected to `PYTHON_LLTRACE=2`, by @devdanzin.
 
 
 ### Documentation

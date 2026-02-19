@@ -291,17 +291,118 @@ class TestRunSessionSystemExit(unittest.TestCase):
     def tearDown(self):
         self.temp_dir.cleanup()
 
-    def test_run_session_propagates_system_exit(self):
-        """Test that SystemExit is propagated, not caught."""
+    def test_run_session_catches_system_exit_and_continues(self):
+        """Test that SystemExit is caught and subsequent scripts still run."""
         exit_script = self.temp_path / "exit.py"
         exit_script.write_text("import sys; sys.exit(42)")
 
-        with self.assertRaises(SystemExit) as ctx:
-            captured_stdout = StringIO()
-            with patch("sys.stdout", captured_stdout):
-                run_session([str(exit_script)])
+        success_script = self.temp_path / "success.py"
+        success_script.write_text("x = 1")
 
-        self.assertEqual(ctx.exception.code, 42)
+        captured_stdout = StringIO()
+        with patch("sys.stdout", captured_stdout):
+            result = run_session([str(exit_script), str(success_script)])
+
+        # Should return 1 (errors occurred) but NOT raise SystemExit
+        self.assertEqual(result, 1)
+        output = captured_stdout.getvalue()
+
+        # Both scripts should have been started
+        start_count = output.count("[DRIVER:START]")
+        self.assertEqual(start_count, 2)
+
+        # SystemExit should be logged as an error
+        self.assertIn("[DRIVER:ERROR]", output)
+        self.assertIn("SystemExit", output)
+
+        # The exit stats should include the exit code
+        self.assertIn('"status": "exit"', output)
+        self.assertIn('"code": 42', output)
+
+        # Second script should succeed
+        self.assertIn("success.py", output)
+
+    def test_run_session_system_exit_zero(self):
+        """Test that sys.exit(0) is also caught, not propagated."""
+        exit_script = self.temp_path / "exit_zero.py"
+        exit_script.write_text("import sys; sys.exit(0)")
+
+        captured_stdout = StringIO()
+        with patch("sys.stdout", captured_stdout):
+            result = run_session([str(exit_script)])
+
+        # Even exit(0) should be caught — the driver manages its own exit code
+        self.assertEqual(result, 1)
+        output = captured_stdout.getvalue()
+        self.assertIn('"status": "exit"', output)
+
+
+class TestRunSessionStateIsolation(unittest.TestCase):
+    """Tests for run_session state isolation between scripts."""
+
+    def setUp(self):
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.temp_path = Path(self.temp_dir.name)
+
+    def tearDown(self):
+        self.temp_dir.cleanup()
+
+    def test_sys_path_restored_between_scripts(self):
+        """Test that sys.path modifications don't leak between scripts."""
+        polluter = self.temp_path / "polluter.py"
+        polluter.write_text("import sys; sys.path.append('/fake/path/12345')")
+
+        checker = self.temp_path / "checker.py"
+        checker.write_text(
+            "import sys\n"
+            "assert '/fake/path/12345' not in sys.path, "
+            "'sys.path pollution leaked from previous script'"
+        )
+
+        captured_stdout = StringIO()
+        with patch("sys.stdout", captured_stdout):
+            result = run_session([str(polluter), str(checker)])
+
+        # Both should succeed — sys.path should be restored between scripts
+        self.assertEqual(result, 0)
+
+    def test_sys_modules_cleaned_between_scripts(self):
+        """Test that new sys.modules entries don't leak between scripts."""
+        # First script adds a fake module to sys.modules
+        polluter = self.temp_path / "polluter.py"
+        polluter.write_text("import sys; sys.modules['_fake_test_module_xyz'] = None")
+
+        checker = self.temp_path / "checker.py"
+        checker.write_text(
+            "import sys\n"
+            "assert '_fake_test_module_xyz' not in sys.modules, "
+            "'sys.modules pollution leaked from previous script'"
+        )
+
+        captured_stdout = StringIO()
+        with patch("sys.stdout", captured_stdout):
+            result = run_session([str(polluter), str(checker)])
+
+        # Both should succeed — new module entries should be cleaned
+        self.assertEqual(result, 0)
+
+    def test_sys_argv_restored_between_scripts(self):
+        """Test that sys.argv is restored between scripts (existing behavior)."""
+        script1 = self.temp_path / "script1.py"
+        script1.write_text("import sys; sys.argv.append('POLLUTED')")
+
+        script2 = self.temp_path / "script2.py"
+        script2.write_text(
+            "import sys\n"
+            "assert 'POLLUTED' not in sys.argv, "
+            "'sys.argv pollution leaked from previous script'"
+        )
+
+        captured_stdout = StringIO()
+        with patch("sys.stdout", captured_stdout):
+            result = run_session([str(script1), str(script2)])
+
+        self.assertEqual(result, 0)
 
 
 class TestRunSessionKeyboardInterrupt(unittest.TestCase):

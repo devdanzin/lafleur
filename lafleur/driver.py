@@ -151,7 +151,7 @@ def scan_watched_variables(
     try:
         check_bloom(bloom, id(namespace))
 
-        for name, obj in namespace.items():
+        for name, obj in list(namespace.items()):
             if isinstance(name, str) and is_watched(obj):
                 watched.append(name)
 
@@ -164,7 +164,7 @@ def scan_watched_variables(
                 builtins_dict = vars(builtins_val)
 
             if isinstance(builtins_dict, dict):
-                for name, obj in builtins_dict.items():
+                for name, obj in list(builtins_dict.items()):
                     if isinstance(name, str) and is_watched(obj):
                         watched.append(name)
     except Exception as e:
@@ -218,7 +218,7 @@ def snapshot_executor_state(namespace: dict) -> dict[tuple[int, int], int]:
 
     snapshot: dict[tuple[int, int], int] = {}
 
-    for name, obj in namespace.items():
+    for name, obj in list(namespace.items()):
         if not isinstance(name, str) or name.startswith("_"):
             continue
 
@@ -372,7 +372,7 @@ def get_jit_stats(namespace: dict, baseline: dict[tuple[int, int], int] | None =
                 traceback.print_exc(file=sys.stderr)
                 introspection_error_logged = True
 
-    for name, obj in namespace.items():
+    for name, obj in list(namespace.items()):
         if not isinstance(name, str) or name.startswith("_"):
             continue
 
@@ -459,8 +459,16 @@ def run_session(files: list[str], *, no_ekg: bool = False) -> int:
             errors_occurred = True
             continue
 
-        # Save original sys.argv to restore later
+        # Save interpreter state to restore after each script.
+        # sys.argv: Ensures scripts see their own path.
+        # sys.path: Prevents import path pollution between scripts.
+        # sys.modules: Prevents ImportChaosMutator from poisoning the
+        #   module cache for subsequent scripts. We track the key set
+        #   and only remove NEW entries (removing cached C extensions
+        #   can cause segfaults).
         original_argv = sys.argv
+        original_path = sys.path.copy()
+        original_module_keys = set(sys.modules.keys())
 
         # Snapshot executor state before this script runs
         baseline = snapshot_executor_state(shared_globals) if not no_ekg else None
@@ -503,12 +511,21 @@ def run_session(files: list[str], *, no_ekg: bool = False) -> int:
             # Continue to next script
 
         except SystemExit as e:
-            # Let SystemExit propagate - script requested exit
+            # Catch SystemExit rather than propagating — mutators may inject
+            # sys.exit() into warmup or polluter scripts, and we must continue
+            # to the attack script for the session to be useful.
             print(
-                f"[DRIVER:STATS] {json.dumps({'file': path.name, 'status': 'exit', 'code': e.code})}",
+                f"[DRIVER:ERROR] {filepath}: SystemExit with code {e.code}",
                 flush=True,
             )
-            raise
+            stats = {
+                "file": path.name,
+                "status": "exit",
+                "code": e.code,
+            }
+            print(f"[DRIVER:STATS] {json.dumps(stats)}", flush=True)
+            errors_occurred = True
+            # Continue to next script — don't kill the session
 
         except KeyboardInterrupt:
             # User interrupted
@@ -533,8 +550,20 @@ def run_session(files: list[str], *, no_ekg: bool = False) -> int:
             # Continue to next script - don't stop the session
 
         finally:
-            # Always restore original sys.argv so driver logic doesn't break
+            # Restore interpreter state to prevent cross-script pollution.
             sys.argv = original_argv
+            sys.path[:] = original_path
+
+            # Remove modules added by this script. We only remove NEW
+            # entries rather than fully restoring because unloading C
+            # extension modules that were legitimately imported can
+            # cause interpreter instability.
+            new_modules = set(sys.modules.keys()) - original_module_keys
+            for mod_name in new_modules:
+                try:
+                    del sys.modules[mod_name]
+                except KeyError:
+                    pass  # Already removed by another cleanup path
 
     return 1 if errors_occurred else 0
 

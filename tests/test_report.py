@@ -467,6 +467,54 @@ class TestGenerateReport(unittest.TestCase):
 
         self.assertIn("Degraded", report)
 
+    def test_generate_report_with_crash_attribution(self):
+        """Test that CRASH ATTRIBUTION section appears with data."""
+        self._create_minimal_instance()
+
+        logs_dir = self.root / "logs"
+        log_path = logs_dir / "crash_attribution.jsonl"
+        log_path.write_text(
+            json.dumps(
+                {
+                    "fingerprint": "ASSERT:test",
+                    "parent_id": "5.py",
+                    "direct": {"strategy": "havoc", "transformers": ["TypeInstabilityInjector"]},
+                    "lineage_depth": 3,
+                    "lineage_strategies": ["spam", "deterministic"],
+                    "lineage_transformers": ["OperatorSwapper", "ConstantPerturbator"],
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        report = generate_report(self.root)
+
+        self.assertIn("CRASH ATTRIBUTION", report)
+        self.assertIn("Attributed Crashes:", report)
+        self.assertIn("TypeInstabilityInjector", report)
+        self.assertIn("havoc", report)
+
+    def test_generate_report_no_crash_attribution(self):
+        """Test CRASH ATTRIBUTION section placeholder when no data."""
+        self._create_minimal_instance()
+
+        report = generate_report(self.root)
+
+        self.assertIn("CRASH ATTRIBUTION", report)
+        self.assertIn("No crash attribution data recorded", report)
+
+    def test_crash_attribution_before_crash_digest(self):
+        """Test that CRASH ATTRIBUTION appears before CRASH DIGEST."""
+        self._create_minimal_instance()
+
+        report = generate_report(self.root)
+
+        attr_pos = report.find("CRASH ATTRIBUTION")
+        digest_pos = report.find("CRASH DIGEST")
+        self.assertGreater(attr_pos, -1)
+        self.assertGreater(digest_pos, -1)
+        self.assertLess(attr_pos, digest_pos)
+
 
 if __name__ == "__main__":
     unittest.main()

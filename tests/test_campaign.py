@@ -12,6 +12,7 @@ from lafleur.campaign import (
     generate_html_report,
     load_json_file,
     load_health_summary,
+    load_crash_attribution_summary,
     parse_timestamp,
     format_duration,
     discover_instances,
@@ -901,3 +902,283 @@ class TestHealthGrade(unittest.TestCase):
         short, long = CampaignAggregator.health_grade(0.15)
         self.assertEqual(short, "BAD")
         self.assertEqual(long, "Unhealthy")
+
+
+class TestLoadCrashAttributionSummary(unittest.TestCase):
+    """Test crash attribution JSONL parsing."""
+
+    def setUp(self):
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.root = Path(self.temp_dir.name)
+        self.log_path = self.root / "crash_attribution.jsonl"
+
+    def tearDown(self):
+        self.temp_dir.cleanup()
+
+    def _write_entries(self, entries):
+        self.log_path.write_text("\n".join(json.dumps(e) for e in entries), encoding="utf-8")
+
+    def test_returns_none_for_missing_file(self):
+        result = load_crash_attribution_summary(self.root / "nonexistent.jsonl")
+        self.assertIsNone(result)
+
+    def test_returns_none_for_empty_file(self):
+        self.log_path.write_text("", encoding="utf-8")
+        result = load_crash_attribution_summary(self.log_path)
+        self.assertIsNone(result)
+
+    def test_parses_single_entry(self):
+        self._write_entries(
+            [
+                {
+                    "fingerprint": "ASSERT:test",
+                    "parent_id": "42.py",
+                    "direct": {"strategy": "havoc", "transformers": ["T1", "T2"]},
+                    "lineage_depth": 3,
+                    "lineage_strategies": ["spam", "deterministic"],
+                    "lineage_transformers": ["T3", "T4"],
+                }
+            ]
+        )
+
+        result = load_crash_attribution_summary(self.log_path)
+
+        self.assertIsNotNone(result)
+        self.assertEqual(result["total_attributed_crashes"], 1)
+        self.assertEqual(result["unique_fingerprints"], 1)
+        self.assertAlmostEqual(result["avg_lineage_depth"], 3.0)
+
+        # Direct: T1 and T2 each get 5 points
+        self.assertEqual(result["combined_transformer_scores"]["T1"], 5)
+        self.assertEqual(result["combined_transformer_scores"]["T2"], 5)
+        # Lineage: T3 and T4 each get 2 points
+        self.assertEqual(result["combined_transformer_scores"]["T3"], 2)
+        self.assertEqual(result["combined_transformer_scores"]["T4"], 2)
+        # Strategy: havoc gets 5 (direct), spam and deterministic get 2 each (lineage)
+        self.assertEqual(result["combined_strategy_scores"]["havoc"], 5)
+        self.assertEqual(result["combined_strategy_scores"]["spam"], 2)
+
+    def test_parses_multiple_entries(self):
+        self._write_entries(
+            [
+                {
+                    "fingerprint": "ASSERT:crash1",
+                    "direct": {"strategy": "havoc", "transformers": ["T1"]},
+                    "lineage_depth": 2,
+                    "lineage_strategies": ["spam"],
+                    "lineage_transformers": ["T2"],
+                },
+                {
+                    "fingerprint": "ASSERT:crash2",
+                    "direct": {"strategy": "havoc", "transformers": ["T1"]},
+                    "lineage_depth": 4,
+                    "lineage_strategies": ["havoc", "deterministic"],
+                    "lineage_transformers": ["T1", "T3"],
+                },
+            ]
+        )
+
+        result = load_crash_attribution_summary(self.log_path)
+
+        self.assertEqual(result["total_attributed_crashes"], 2)
+        self.assertEqual(result["unique_fingerprints"], 2)
+        self.assertAlmostEqual(result["avg_lineage_depth"], 3.0)
+
+        # T1: 2 direct (2*5=10) + 1 lineage (1*2=2) = 12
+        self.assertEqual(result["combined_transformer_scores"]["T1"], 12)
+        # havoc: 2 direct (2*5=10) + 1 lineage (1*2=2) = 12
+        self.assertEqual(result["combined_strategy_scores"]["havoc"], 12)
+
+    def test_deduplicates_fingerprints(self):
+        self._write_entries(
+            [
+                {
+                    "fingerprint": "ASSERT:same",
+                    "direct": {"strategy": "havoc", "transformers": []},
+                    "lineage_depth": 1,
+                    "lineage_strategies": [],
+                    "lineage_transformers": [],
+                },
+                {
+                    "fingerprint": "ASSERT:same",
+                    "direct": {"strategy": "spam", "transformers": []},
+                    "lineage_depth": 2,
+                    "lineage_strategies": [],
+                    "lineage_transformers": [],
+                },
+            ]
+        )
+
+        result = load_crash_attribution_summary(self.log_path)
+
+        self.assertEqual(result["total_attributed_crashes"], 2)
+        self.assertEqual(result["unique_fingerprints"], 1)  # Same fingerprint
+
+    def test_skips_malformed_lines(self):
+        self.log_path.write_text(
+            "not json\n"
+            + json.dumps(
+                {
+                    "fingerprint": "ASSERT:ok",
+                    "direct": {"strategy": "havoc", "transformers": ["T1"]},
+                    "lineage_depth": 0,
+                    "lineage_strategies": [],
+                    "lineage_transformers": [],
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+        result = load_crash_attribution_summary(self.log_path)
+
+        self.assertEqual(result["total_attributed_crashes"], 1)
+
+
+class TestCampaignCrashAttributionAggregation(unittest.TestCase):
+    """Test fleet-level crash attribution aggregation."""
+
+    def setUp(self):
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.root = Path(self.temp_dir.name)
+        self.runs_dir = self.root / "runs"
+        self.runs_dir.mkdir()
+
+    def tearDown(self):
+        self.temp_dir.cleanup()
+
+    def _create_instance(self, name, stats=None, attribution_entries=None):
+        """Create an instance dir with optional crash attribution log."""
+        inst_dir = self.runs_dir / name
+        logs_dir = inst_dir / "logs"
+        logs_dir.mkdir(parents=True)
+
+        metadata = {"instance_name": name, "run_id": f"run-{name}"}
+        (logs_dir / "run_metadata.json").write_text(json.dumps(metadata))
+
+        if stats:
+            (inst_dir / "fuzz_run_stats.json").write_text(json.dumps(stats))
+
+        if attribution_entries:
+            log_path = logs_dir / "crash_attribution.jsonl"
+            log_path.write_text(
+                "\n".join(json.dumps(e) for e in attribution_entries),
+                encoding="utf-8",
+            )
+
+        return inst_dir
+
+    def test_aggregates_across_instances(self):
+        inst1 = self._create_instance(
+            "inst1",
+            {"total_mutations": 100},
+            [
+                {
+                    "fingerprint": "ASSERT:crash1",
+                    "direct": {"strategy": "havoc", "transformers": ["T1"]},
+                    "lineage_depth": 2,
+                    "lineage_strategies": [],
+                    "lineage_transformers": [],
+                },
+            ],
+        )
+        inst2 = self._create_instance(
+            "inst2",
+            {"total_mutations": 200},
+            [
+                {
+                    "fingerprint": "ASSERT:crash2",
+                    "direct": {"strategy": "spam", "transformers": ["T2"]},
+                    "lineage_depth": 4,
+                    "lineage_strategies": ["havoc"],
+                    "lineage_transformers": ["T1"],
+                },
+            ],
+        )
+
+        aggregator = CampaignAggregator([inst1, inst2])
+        aggregator.load_instances()
+        aggregator.aggregate()
+
+        ca = aggregator.fleet_crash_attribution
+        self.assertIsNotNone(ca)
+        self.assertEqual(ca["total_attributed_crashes"], 2)
+        self.assertEqual(ca["unique_fingerprints"], 2)
+        # T1: 1 direct (5) + 1 lineage (2) = 7
+        self.assertEqual(ca["combined_transformer_scores"]["T1"], 7)
+        # T2: 1 direct (5) = 5
+        self.assertEqual(ca["combined_transformer_scores"]["T2"], 5)
+
+    def test_no_attribution_data(self):
+        inst = self._create_instance("inst1", {"total_mutations": 100})
+
+        aggregator = CampaignAggregator([inst])
+        aggregator.load_instances()
+        aggregator.aggregate()
+
+        self.assertIsNone(aggregator.fleet_crash_attribution)
+
+    def test_report_includes_section(self):
+        inst = self._create_instance(
+            "inst1",
+            {
+                "total_mutations": 100,
+                "start_time": "2025-01-01T00:00:00Z",
+                "last_update_time": "2025-01-01T01:00:00Z",
+            },
+            [
+                {
+                    "fingerprint": "ASSERT:test",
+                    "direct": {"strategy": "havoc", "transformers": ["TypeInstabilityInjector"]},
+                    "lineage_depth": 3,
+                    "lineage_strategies": ["spam"],
+                    "lineage_transformers": ["OperatorSwapper"],
+                },
+            ],
+        )
+
+        aggregator = CampaignAggregator([inst])
+        aggregator.load_instances()
+        aggregator.aggregate()
+
+        report = aggregator.generate_report()
+        self.assertIn("CRASH-PRODUCTIVE MUTATORS", report)
+        self.assertIn("TypeInstabilityInjector", report)
+        self.assertIn("Attributed Crashes:", report)
+
+    def test_report_omits_section_when_no_data(self):
+        inst = self._create_instance("inst1", {"total_mutations": 100})
+
+        aggregator = CampaignAggregator([inst])
+        aggregator.load_instances()
+        aggregator.aggregate()
+
+        report = aggregator.generate_report()
+        self.assertNotIn("CRASH-PRODUCTIVE MUTATORS", report)
+
+    def test_html_report_includes_section(self):
+        inst = self._create_instance(
+            "inst1",
+            {
+                "total_mutations": 100,
+                "start_time": "2025-01-01T00:00:00Z",
+                "last_update_time": "2025-01-01T01:00:00Z",
+            },
+            [
+                {
+                    "fingerprint": "ASSERT:test",
+                    "direct": {"strategy": "havoc", "transformers": ["T1"]},
+                    "lineage_depth": 1,
+                    "lineage_strategies": [],
+                    "lineage_transformers": [],
+                },
+            ],
+        )
+
+        aggregator = CampaignAggregator([inst])
+        aggregator.load_instances()
+        aggregator.aggregate()
+
+        html_content = generate_html_report(aggregator)
+        self.assertIn("Crash-Productive Mutators", html_content)
+        self.assertIn("Attributed Crashes", html_content)

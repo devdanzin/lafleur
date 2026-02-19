@@ -31,6 +31,28 @@ class GlobalCorpusData(TypedDict):
     mutator_counter: Counter[str]
 
 
+class HealthSummary(TypedDict):
+    """Type definition for per-instance health event summary."""
+
+    total_events: int
+    by_event: Counter[str]
+    by_category: Counter[str]
+    waste_event_count: int
+    crash_profile: Counter[str]
+    parent_offenders: Counter[str]
+
+
+WASTE_EVENT_TYPES: frozenset[str] = frozenset(
+    {
+        "parent_parse_failure",
+        "mutation_recursion_error",
+        "unparse_recursion_error",
+        "child_script_none",
+        "core_code_syntax_error",
+    }
+)
+
+
 def load_json_file(path: Path) -> dict[str, Any] | None:
     """Load a JSON file, returning None if it doesn't exist or is invalid."""
     try:
@@ -38,6 +60,68 @@ def load_json_file(path: Path) -> dict[str, Any] | None:
             return json.load(f)
     except (FileNotFoundError, json.JSONDecodeError, OSError):
         return None
+
+
+def load_health_summary(health_log_path: Path) -> HealthSummary | None:
+    """Load and summarize health events from a JSONL health log.
+
+    Args:
+        health_log_path: Path to the health_events.jsonl file.
+
+    Returns:
+        Aggregated health summary, or None if the file is missing or empty.
+    """
+    if not health_log_path.exists():
+        return None
+
+    by_event: Counter[str] = Counter()
+    by_category: Counter[str] = Counter()
+    crash_profile: Counter[str] = Counter()
+    parent_offenders: Counter[str] = Counter()
+    total_events = 0
+    waste_event_count = 0
+
+    try:
+        with open(health_log_path, encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    record = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+
+                total_events += 1
+                event = record.get("event", "unknown")
+                category = record.get("cat", "unknown")
+
+                by_event[event] += 1
+                by_category[category] += 1
+
+                if event in WASTE_EVENT_TYPES:
+                    waste_event_count += 1
+                    parent_id = record.get("parent_id")
+                    if parent_id:
+                        parent_offenders[parent_id] += 1
+
+                if event == "ignored_crash":
+                    reason = record.get("reason", "unknown")
+                    crash_profile[reason] += 1
+    except OSError:
+        return None
+
+    if total_events == 0:
+        return None
+
+    return {
+        "total_events": total_events,
+        "by_event": by_event,
+        "by_category": by_category,
+        "waste_event_count": waste_event_count,
+        "crash_profile": crash_profile,
+        "parent_offenders": parent_offenders,
+    }
 
 
 def parse_timestamp(timestamp_str: str | None) -> datetime | None:
@@ -98,6 +182,7 @@ class InstanceData:
     metadata: dict[str, Any] | None = None
     stats: dict[str, Any] | None = None
     corpus_stats: dict[str, Any] | None = None
+    health_summary: HealthSummary | None = None
     status: str = "Unknown"
     speed: float = 0.0
     coverage: int = 0
@@ -138,6 +223,14 @@ class CampaignAggregator:
             "total_duration_secs": 0.0,
             "total_coverage_edges": 0,
         }
+        self.global_health: dict[str, Any] = {
+            "total_events": 0,
+            "waste_events": 0,
+            "by_event": Counter(),
+            "by_category": Counter(),
+            "crash_profile": Counter(),
+            "top_offenders": Counter(),
+        }
 
     def load_instances(self) -> None:
         """Load and validate all instance directories."""
@@ -167,6 +260,7 @@ class CampaignAggregator:
         metadata = load_json_file(metadata_path)
         stats = load_json_file(path / "fuzz_run_stats.json")
         corpus_stats = load_json_file(path / "corpus_stats.json")
+        health_summary = load_health_summary(path / "logs" / "health_events.jsonl")
 
         # Determine instance name
         name = metadata.get("instance_name", path.name) if metadata else path.name
@@ -177,6 +271,7 @@ class CampaignAggregator:
             metadata=metadata,
             stats=stats,
             corpus_stats=corpus_stats,
+            health_summary=health_summary,
             relative_dir=path.name,
         )
 
@@ -246,6 +341,7 @@ class CampaignAggregator:
             self._aggregate_crashes(instance)
             self._aggregate_corpus(instance)
             self._aggregate_performance(instance)
+            self._aggregate_health(instance)
 
     def _aggregate_crashes(self, instance: InstanceData) -> None:
         """Aggregate crash data from an instance."""
@@ -344,6 +440,22 @@ class CampaignAggregator:
             duration = (end_time - start_time).total_seconds()
             self.totals["total_duration_secs"] += duration
 
+    def _aggregate_health(self, instance: InstanceData) -> None:
+        """Aggregate health event data from an instance."""
+        if not instance.health_summary:
+            return
+
+        hs = instance.health_summary
+        self.global_health["total_events"] += hs["total_events"]
+        self.global_health["waste_events"] += hs["waste_event_count"]
+        self.global_health["by_event"] += hs["by_event"]
+        self.global_health["by_category"] += hs["by_category"]
+        self.global_health["crash_profile"] += hs["crash_profile"]
+
+        # Prefix parent_ids with instance name for fleet-wide tracking
+        for parent_id, count in hs["parent_offenders"].items():
+            self.global_health["top_offenders"][f"{instance.name}:{parent_id}"] += count
+
     def get_fleet_speed(self) -> float:
         """Calculate aggregate fleet execution speed."""
         if self.totals["total_duration_secs"] > 0:
@@ -373,6 +485,39 @@ class CampaignAggregator:
     def get_top_mutators(self, n: int = 5) -> list[tuple[str, int]]:
         """Get top N individual mutators/transformers by success count."""
         return self.global_corpus["mutator_counter"].most_common(n)
+
+    def get_fleet_waste_rate(self) -> float:
+        """Calculate fleet-wide mutation waste rate."""
+        total_mutations = self.totals["total_executions"]
+        if total_mutations == 0:
+            return 0.0
+        return self.global_health["waste_events"] / total_mutations
+
+    def get_fleet_health_grade(self) -> tuple[str, str]:
+        """Get the fleet-wide health grade based on waste rate."""
+        return self.health_grade(self.get_fleet_waste_rate())
+
+    def get_top_offenders(self, n: int = 5) -> list[tuple[str, int]]:
+        """Get parent files causing the most waste events fleet-wide."""
+        return self.global_health["top_offenders"].most_common(n)
+
+    def get_crash_profile(self, n: int = 5) -> list[tuple[str, int]]:
+        """Get most common ignored crash reasons fleet-wide."""
+        return self.global_health["crash_profile"].most_common(n)
+
+    @staticmethod
+    def health_grade(waste_rate: float) -> tuple[str, str]:
+        """Map a waste rate to a health grade.
+
+        Returns:
+            Tuple of (short_label, long_label): e.g. ("OK", "Healthy").
+        """
+        if waste_rate < 0.02:
+            return ("OK", "Healthy")
+        elif waste_rate < 0.10:
+            return ("WARN", "Degraded")
+        else:
+            return ("BAD", "Unhealthy")
 
     def enrich_crashes_from_registry(self, registry: Any) -> None:
         """
@@ -450,17 +595,54 @@ class CampaignAggregator:
         # Table header
         lines.append(
             f"{'Name':<25} | {'Status':<8} | {'Speed':>10} | {'Coverage':>8} | "
-            f"{'Crashes':>7} | {'Corpus':>8} | {'Dir'}"
+            f"{'Crashes':>7} | {'Corpus':>8} | {'Health':>6} | {'Dir'}"
         )
-        lines.append("-" * 120)
+        lines.append("-" * 130)
 
         for inst in sorted_instances:
             speed_str = f"{inst.speed:.2f}/s" if inst.speed > 0 else "N/A"
+
+            # Per-instance health grade
+            if inst.health_summary and inst.stats:
+                total_muts = inst.stats.get("total_mutations", 0)
+                if total_muts > 0:
+                    inst_waste = inst.health_summary["waste_event_count"] / total_muts
+                else:
+                    inst_waste = 0.0
+                health_str, _ = self.health_grade(inst_waste)
+            else:
+                health_str = "N/A"
+
             lines.append(
                 f"{inst.name:<25} | {inst.status:<8} | {speed_str:>10} | "
                 f"{inst.coverage:>8,} | {inst.crash_count:>7,} | {inst.corpus_size:>8,} | "
-                f"{inst.relative_dir}"
+                f"{health_str:>6} | {inst.relative_dir}"
             )
+
+        lines.append("")
+
+        # ========== FLEET HEALTH ==========
+        lines.append("-" * 90)
+        lines.append("FLEET HEALTH")
+        lines.append("-" * 90)
+
+        waste_rate = self.get_fleet_waste_rate()
+        short_grade, long_grade = self.get_fleet_health_grade()
+        lines.append(f"Waste Rate:     {waste_rate * 100:.2f}% ({long_grade})")
+        lines.append(
+            f"Health Events:  {self.global_health['total_events']:,} total, "
+            f"{self.global_health['waste_events']:,} waste"
+        )
+
+        top_offenders = self.get_top_offenders(5)
+        if top_offenders:
+            offender_str = ", ".join(f"{name} ({count:,})" for name, count in top_offenders)
+            lines.append(f"Top Offenders:  {offender_str}")
+
+        crash_profile = self.get_crash_profile(5)
+        if crash_profile:
+            profile_str = ", ".join(f"{reason} ({count:,})" for reason, count in crash_profile)
+            lines.append(f"Crash Profile:  {profile_str}")
 
         lines.append("")
 
@@ -610,6 +792,19 @@ def generate_html_report(aggregator: CampaignAggregator) -> str:
         coverage_pct = (inst.coverage / max_coverage) * 100 if max_coverage else 0
         speed_str = f"{inst.speed:.2f}/s" if inst.speed > 0 else "N/A"
 
+        # Per-instance health badge
+        if inst.health_summary and inst.stats:
+            total_muts = inst.stats.get("total_mutations", 0)
+            if total_muts > 0:
+                inst_waste = inst.health_summary["waste_event_count"] / total_muts
+            else:
+                inst_waste = 0.0
+            short_label, _ = CampaignAggregator.health_grade(inst_waste)
+            health_class = f"health-{short_label.lower()}"
+            health_badge = f'<span class="health-badge {health_class}">{short_label}</span>'
+        else:
+            health_badge = '<span class="health-badge">N/A</span>'
+
         instance_rows.append(f"""        <tr>
           <td>{name_escaped}</td>
           <td><span class="status {status_class}">{inst.status}</span></td>
@@ -617,6 +812,7 @@ def generate_html_report(aggregator: CampaignAggregator) -> str:
           <td data-sort="{inst.coverage}"><div class="bar-container"><div class="bar-fill coverage" style="width:{coverage_pct:.1f}%"></div><span class="bar-text">{inst.coverage:,}</span></div></td>
           <td data-sort="{inst.corpus_size}">{inst.corpus_size:,}</td>
           <td data-sort="{inst.crash_count}">{inst.crash_count:,}</td>
+          <td>{health_badge}</td>
           <td>{dir_escaped}</td>
         </tr>""")
 
@@ -684,6 +880,43 @@ def generate_html_report(aggregator: CampaignAggregator) -> str:
     )
 
     report_date = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    # Fleet health data
+    fleet_waste_rate = aggregator.get_fleet_waste_rate()
+    fleet_short_grade, fleet_long_grade = aggregator.get_fleet_health_grade()
+    fleet_health_color = {
+        "OK": "var(--success)",
+        "WARN": "var(--warning)",
+        "BAD": "var(--accent)",
+    }.get(fleet_short_grade, "var(--text-dim)")
+
+    # Fleet health section content
+    top_offenders = aggregator.get_top_offenders(5)
+    offenders_html = (
+        ", ".join(
+            f"<span class='mutation'>{html.escape(name)}</span> ({count:,})"
+            for name, count in top_offenders
+        )
+        if top_offenders
+        else "None"
+    )
+    crash_profile = aggregator.get_crash_profile(5)
+    crash_profile_html = (
+        ", ".join(
+            f"<span class='mutation'>{html.escape(reason)}</span> ({count:,})"
+            for reason, count in crash_profile
+        )
+        if crash_profile
+        else "None"
+    )
+
+    # Waste event breakdown
+    waste_by_event = aggregator.global_health["by_event"]
+    waste_breakdown_html = (
+        ", ".join(f"{html.escape(evt)} ({count:,})" for evt, count in waste_by_event.most_common(5))
+        if waste_by_event
+        else "None"
+    )
 
     return f"""<!DOCTYPE html>
 <html lang="en">
@@ -805,6 +1038,15 @@ def generate_html_report(aggregator: CampaignAggregator) -> str:
     tr.regression:hover {{ background: rgba(220, 38, 38, 0.25) !important; }}
     tr.noise {{ opacity: 0.6; }}
     tr.noise:hover {{ opacity: 0.8; }}
+    .health-badge {{
+      padding: 0.25rem 0.5rem;
+      border-radius: 4px;
+      font-size: 0.7rem;
+      font-weight: bold;
+    }}
+    .health-ok {{ background: var(--success); color: #000; }}
+    .health-warn {{ background: var(--warning); color: #000; }}
+    .health-bad {{ background: var(--accent); color: #fff; }}
     a {{ color: #60a5fa; text-decoration: none; }}
     a:hover {{ text-decoration: underline; }}
     footer {{ margin-top: 3rem; text-align: center; color: var(--text-dim); font-size: 0.875rem; }}
@@ -831,6 +1073,11 @@ def generate_html_report(aggregator: CampaignAggregator) -> str:
       <div class="label">Unique Crashes</div>
       <div class="value">{unique_crashes}</div>
     </div>
+    <div class="kpi-card" style="border-left-color: {fleet_health_color};">
+      <div class="label">Fleet Health</div>
+      <div class="value" style="color: {fleet_health_color};">{fleet_long_grade}</div>
+      <div class="label">{fleet_waste_rate * 100:.2f}% waste</div>
+    </div>
   </div>
 
   <h2>Instance Leaderboard ({instance_count} instances)</h2>
@@ -843,6 +1090,7 @@ def generate_html_report(aggregator: CampaignAggregator) -> str:
         <th>Coverage</th>
         <th>Corpus</th>
         <th>Crashes</th>
+        <th>Health</th>
         <th>Directory</th>
       </tr>
     </thead>
@@ -874,6 +1122,15 @@ def generate_html_report(aggregator: CampaignAggregator) -> str:
     <p><strong>Avg Lineage Depth:</strong> {aggregator.get_avg_lineage_depth():.1f}</p>
     <p><strong>Top Strategies:</strong> {strategies_html}</p>
     <p><strong>Top Mutators:</strong> {mutators_html}</p>
+  </div>
+
+  <div class="summary">
+    <h2 style="margin-top:0;border:none;">Fleet Health</h2>
+    <p><strong>Waste Rate:</strong> {fleet_waste_rate * 100:.2f}% ({fleet_long_grade})</p>
+    <p><strong>Health Events:</strong> {aggregator.global_health["total_events"]:,} total, {aggregator.global_health["waste_events"]:,} waste</p>
+    <p><strong>Event Breakdown:</strong> {waste_breakdown_html}</p>
+    <p><strong>Top Offenders:</strong> {offenders_html}</p>
+    <p><strong>Crash Profile:</strong> {crash_profile_html}</p>
   </div>
 
   <footer>Lafleur Fuzzer Campaign Analysis</footer>

@@ -11,11 +11,13 @@ from lafleur.campaign import (
     InstanceData,
     generate_html_report,
     load_json_file,
+    load_health_summary,
     parse_timestamp,
     format_duration,
     discover_instances,
     main,
     CrashInfo,
+    HealthSummary,
 )
 
 
@@ -631,3 +633,271 @@ class TestDetectInstanceStatus(unittest.TestCase):
         stats = {"last_update_time": recent_time}
         status = CampaignAggregator._detect_instance_status(self.inst_path, stats)
         self.assertEqual(status, "Running")
+
+
+class TestLoadHealthSummary(unittest.TestCase):
+    """Tests for load_health_summary function."""
+
+    def setUp(self):
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.temp_path = Path(self.temp_dir.name)
+
+    def tearDown(self):
+        self.temp_dir.cleanup()
+
+    def _write_events(self, events: list[dict]) -> Path:
+        """Write a list of event dicts as JSONL."""
+        path = self.temp_path / "health_events.jsonl"
+        with open(path, "w", encoding="utf-8") as f:
+            for event in events:
+                f.write(json.dumps(event) + "\n")
+        return path
+
+    def test_returns_none_for_missing_file(self):
+        """Returns None when the health log file does not exist."""
+        result = load_health_summary(self.temp_path / "nonexistent.jsonl")
+        self.assertIsNone(result)
+
+    def test_returns_none_for_empty_file(self):
+        """Returns None when the health log file is empty."""
+        path = self.temp_path / "health_events.jsonl"
+        path.write_text("")
+        result = load_health_summary(path)
+        self.assertIsNone(result)
+
+    def test_counts_total_events(self):
+        """Counts all events correctly."""
+        events = [
+            {"cat": "mutation_pipeline", "event": "child_script_none"},
+            {"cat": "execution", "event": "consecutive_timeouts"},
+            {"cat": "corpus_health", "event": "duplicate_rejected"},
+        ]
+        result = load_health_summary(self._write_events(events))
+        self.assertIsNotNone(result)
+        self.assertEqual(result["total_events"], 3)
+
+    def test_counts_waste_events(self):
+        """Counts only waste event types."""
+        events = [
+            {"cat": "mutation_pipeline", "event": "parent_parse_failure"},
+            {"cat": "mutation_pipeline", "event": "child_script_none"},
+            {"cat": "execution", "event": "consecutive_timeouts"},  # Not waste
+            {"cat": "mutation_pipeline", "event": "mutation_recursion_error"},
+        ]
+        result = load_health_summary(self._write_events(events))
+        self.assertEqual(result["waste_event_count"], 3)
+
+    def test_counts_by_event_and_category(self):
+        """Groups events by event type and category."""
+        events = [
+            {"cat": "mutation_pipeline", "event": "child_script_none"},
+            {"cat": "mutation_pipeline", "event": "child_script_none"},
+            {"cat": "execution", "event": "ignored_crash", "reason": "SIGKILL"},
+        ]
+        result = load_health_summary(self._write_events(events))
+        self.assertEqual(result["by_event"]["child_script_none"], 2)
+        self.assertEqual(result["by_event"]["ignored_crash"], 1)
+        self.assertEqual(result["by_category"]["mutation_pipeline"], 2)
+        self.assertEqual(result["by_category"]["execution"], 1)
+
+    def test_builds_crash_profile(self):
+        """Tracks ignored crash reasons."""
+        events = [
+            {"cat": "execution", "event": "ignored_crash", "reason": "SIGKILL"},
+            {"cat": "execution", "event": "ignored_crash", "reason": "SIGKILL"},
+            {"cat": "execution", "event": "ignored_crash", "reason": "PYTHON_UNCAUGHT"},
+        ]
+        result = load_health_summary(self._write_events(events))
+        self.assertEqual(result["crash_profile"]["SIGKILL"], 2)
+        self.assertEqual(result["crash_profile"]["PYTHON_UNCAUGHT"], 1)
+
+    def test_tracks_parent_offenders(self):
+        """Tracks parent_ids that cause waste events."""
+        events = [
+            {"cat": "mutation_pipeline", "event": "child_script_none", "parent_id": "file_a.py"},
+            {"cat": "mutation_pipeline", "event": "child_script_none", "parent_id": "file_a.py"},
+            {"cat": "mutation_pipeline", "event": "parent_parse_failure", "parent_id": "file_b.py"},
+            {"cat": "execution", "event": "ignored_crash", "reason": "X"},  # Not waste
+        ]
+        result = load_health_summary(self._write_events(events))
+        self.assertEqual(result["parent_offenders"]["file_a.py"], 2)
+        self.assertEqual(result["parent_offenders"]["file_b.py"], 1)
+
+    def test_skips_invalid_json_lines(self):
+        """Gracefully skips malformed JSONL lines."""
+        path = self.temp_path / "health_events.jsonl"
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(json.dumps({"cat": "execution", "event": "consecutive_timeouts"}) + "\n")
+            f.write("not valid json\n")
+            f.write(
+                json.dumps({"cat": "execution", "event": "ignored_crash", "reason": "X"}) + "\n"
+            )
+        result = load_health_summary(path)
+        self.assertEqual(result["total_events"], 2)
+
+
+class TestFleetHealthAggregation(unittest.TestCase):
+    """Tests for fleet health aggregation on CampaignAggregator."""
+
+    def _make_summary(
+        self,
+        total_events: int = 10,
+        waste: int = 1,
+        by_event: dict | None = None,
+        by_category: dict | None = None,
+        crash_profile: dict | None = None,
+        parent_offenders: dict | None = None,
+    ) -> HealthSummary:
+        from collections import Counter
+
+        return {
+            "total_events": total_events,
+            "by_event": Counter(by_event or {}),
+            "by_category": Counter(by_category or {}),
+            "waste_event_count": waste,
+            "crash_profile": Counter(crash_profile or {}),
+            "parent_offenders": Counter(parent_offenders or {}),
+        }
+
+    def test_aggregate_health_sums_totals(self):
+        """Total events and waste are summed across instances."""
+        agg = CampaignAggregator([])
+        agg.instances = [
+            InstanceData(
+                path=Path("/r/run1"),
+                name="run1",
+                health_summary=self._make_summary(total_events=10, waste=2),
+            ),
+            InstanceData(
+                path=Path("/r/run2"),
+                name="run2",
+                health_summary=self._make_summary(total_events=5, waste=1),
+            ),
+        ]
+        agg.aggregate()
+        self.assertEqual(agg.global_health["total_events"], 15)
+        self.assertEqual(agg.global_health["waste_events"], 3)
+
+    def test_aggregate_health_merges_counters(self):
+        """Event and category counters are merged across instances."""
+        agg = CampaignAggregator([])
+        agg.instances = [
+            InstanceData(
+                path=Path("/r/run1"),
+                name="run1",
+                health_summary=self._make_summary(
+                    by_event={"child_script_none": 3},
+                    by_category={"mutation_pipeline": 3},
+                ),
+            ),
+            InstanceData(
+                path=Path("/r/run2"),
+                name="run2",
+                health_summary=self._make_summary(
+                    by_event={"child_script_none": 2, "ignored_crash": 1},
+                    by_category={"mutation_pipeline": 2, "execution": 1},
+                ),
+            ),
+        ]
+        agg.aggregate()
+        self.assertEqual(agg.global_health["by_event"]["child_script_none"], 5)
+        self.assertEqual(agg.global_health["by_event"]["ignored_crash"], 1)
+        self.assertEqual(agg.global_health["by_category"]["mutation_pipeline"], 5)
+
+    def test_aggregate_health_prefixes_offenders(self):
+        """Parent offenders are prefixed with instance name."""
+        agg = CampaignAggregator([])
+        agg.instances = [
+            InstanceData(
+                path=Path("/r/run1"),
+                name="run1",
+                health_summary=self._make_summary(parent_offenders={"file_a.py": 5}),
+            ),
+            InstanceData(
+                path=Path("/r/run2"),
+                name="run2",
+                health_summary=self._make_summary(parent_offenders={"file_a.py": 3}),
+            ),
+        ]
+        agg.aggregate()
+        self.assertEqual(agg.global_health["top_offenders"]["run1:file_a.py"], 5)
+        self.assertEqual(agg.global_health["top_offenders"]["run2:file_a.py"], 3)
+
+    def test_aggregate_health_merges_crash_profile(self):
+        """Crash profile reasons are merged across instances."""
+        agg = CampaignAggregator([])
+        agg.instances = [
+            InstanceData(
+                path=Path("/r/run1"),
+                name="run1",
+                health_summary=self._make_summary(crash_profile={"SIGKILL": 2}),
+            ),
+            InstanceData(
+                path=Path("/r/run2"),
+                name="run2",
+                health_summary=self._make_summary(crash_profile={"SIGKILL": 1, "UNCAUGHT": 3}),
+            ),
+        ]
+        agg.aggregate()
+        self.assertEqual(agg.global_health["crash_profile"]["SIGKILL"], 3)
+        self.assertEqual(agg.global_health["crash_profile"]["UNCAUGHT"], 3)
+
+    def test_aggregate_health_skips_none_summary(self):
+        """Instances without health_summary are silently skipped."""
+        agg = CampaignAggregator([])
+        agg.instances = [
+            InstanceData(path=Path("/r/run1"), name="run1", health_summary=None),
+            InstanceData(
+                path=Path("/r/run2"),
+                name="run2",
+                health_summary=self._make_summary(total_events=7, waste=2),
+            ),
+        ]
+        agg.aggregate()
+        self.assertEqual(agg.global_health["total_events"], 7)
+        self.assertEqual(agg.global_health["waste_events"], 2)
+
+    def test_get_fleet_waste_rate(self):
+        """Fleet waste rate is waste_events / total_executions."""
+        agg = CampaignAggregator([])
+        agg.totals["total_executions"] = 1000
+        agg.global_health["waste_events"] = 50
+        self.assertAlmostEqual(agg.get_fleet_waste_rate(), 0.05)
+
+    def test_get_fleet_waste_rate_zero_executions(self):
+        """Returns 0.0 when no executions have been performed."""
+        agg = CampaignAggregator([])
+        agg.totals["total_executions"] = 0
+        self.assertEqual(agg.get_fleet_waste_rate(), 0.0)
+
+    def test_get_top_offenders(self):
+        """Returns top N offenders by count."""
+        agg = CampaignAggregator([])
+        agg.global_health["top_offenders"]["run1:a.py"] = 10
+        agg.global_health["top_offenders"]["run2:b.py"] = 5
+        agg.global_health["top_offenders"]["run1:c.py"] = 1
+        top = agg.get_top_offenders(2)
+        self.assertEqual(len(top), 2)
+        self.assertEqual(top[0], ("run1:a.py", 10))
+
+
+class TestHealthGrade(unittest.TestCase):
+    """Tests for CampaignAggregator.health_grade static method."""
+
+    def test_healthy_below_two_percent(self):
+        """Waste rate below 2% is Healthy/OK."""
+        short, long = CampaignAggregator.health_grade(0.01)
+        self.assertEqual(short, "OK")
+        self.assertEqual(long, "Healthy")
+
+    def test_degraded_between_two_and_ten_percent(self):
+        """Waste rate between 2% and 10% is Degraded/WARN."""
+        short, long = CampaignAggregator.health_grade(0.05)
+        self.assertEqual(short, "WARN")
+        self.assertEqual(long, "Degraded")
+
+    def test_unhealthy_above_ten_percent(self):
+        """Waste rate above 10% is Unhealthy/BAD."""
+        short, long = CampaignAggregator.health_grade(0.15)
+        self.assertEqual(short, "BAD")
+        self.assertEqual(long, "Unhealthy")

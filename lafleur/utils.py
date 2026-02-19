@@ -86,26 +86,179 @@ class TeeLogger:
     """
     A file-like object that writes to both a file and another stream
     (like the original stdout), and flushes immediately.
+
+    Features:
+    - Repeat collapsing: consecutive identical lines are collapsed into
+      a single line with a (×N) suffix.
+    - Verbosity filtering: when verbose=False, detail-level messages
+      (individual mutator actions, per-run boilerplate, individual
+      coverage discoveries) are suppressed from both console and file.
     """
 
-    def __init__(self, file_path: str | Path, original_stream: TextIO) -> None:
-        """Initialize the logger with a file path and an existing stream."""
+    # Lines matching these prefixes are suppressed in quiet mode.
+    # Checked in order — first match wins. Be specific to avoid
+    # accidentally suppressing important lines.
+    _QUIET_SUPPRESS_PREFIXES: tuple[str, ...] = (
+        # Mutator detail lines (4-space indent + arrow)
+        "    -> Injecting",
+        "    -> Removing",
+        "    -> Slicing",
+        "    -> Spamming with:",
+        "    -> Prepending",
+        "    -> Swapping",
+        "    -> Applying",
+        "    -> Creating",
+        "    -> Wrapping",
+        "    -> Shuffling",
+        "    -> Inserting",
+        "    -> Modifying",
+        "    -> Adding",
+        "    -> Converting",
+        "    -> Corrupting",
+        "    -> Patching",
+        "    -> Polluting",
+        "    -> Run #",
+        # Stage notifications
+        "  [~] Large AST detected",
+        "  [~] Running HAVOC",
+        "  [~] Running DETERMINISTIC",
+        "  [~] Running SPAM",
+        "  [~] Running HELPER+SNIPER",
+        "  [~] Running SNIPER",
+        "  [~] Detected",
+        "  [!] No helpers available",
+        # Execution boilerplate
+        "[COVERAGE]",
+        "[SESSION]",
+        "[MIXER]",
+        # Individual relative discoveries (globals are important, relatives are noisy)
+        "[NEW RELATIVE EDGE]",
+        "[NEW RELATIVE UOP]",
+        # Non-interesting child results
+        "  [+] Child IS NOT interesting",
+        # Corpus score calculation (happens twice per mutation cycle)
+        "[+] Calculating corpus scores",
+    )
+
+    def __init__(
+        self,
+        file_path: str | Path,
+        original_stream: TextIO,
+        verbose: bool = True,
+    ) -> None:
+        """Initialize the logger with a file path and an existing stream.
+
+        Args:
+            file_path: Path to the log file.
+            original_stream: The original stream (e.g., sys.stdout) to tee to.
+            verbose: If False, suppress detail-level messages. Default True.
+        """
         self.original_stream = original_stream
         self.log_file = open(file_path, "w", encoding="utf-8")
+        self.verbose = verbose
+
+        # Repeat collapsing state
+        self._last_line: str | None = None
+        self._repeat_count: int = 0
+
+    def _is_suppressed(self, line: str) -> bool:
+        """Check if a line should be suppressed in quiet mode."""
+        if self.verbose:
+            return False
+        stripped = line.lstrip()
+        # Use the original line for prefixes that include leading whitespace
+        for prefix in self._QUIET_SUPPRESS_PREFIXES:
+            if line.startswith(prefix) or stripped.startswith(prefix):
+                return True
+        return False
+
+    def _flush_repeat(self) -> None:
+        """Flush the buffered repeated line, if any."""
+        if self._last_line is None:
+            return
+
+        if self._repeat_count > 1:
+            suffix = f" (×{self._repeat_count})"
+            # Insert suffix before trailing newline if present
+            if self._last_line.endswith("\n"):
+                output = self._last_line[:-1] + suffix + "\n"
+            else:
+                output = self._last_line + suffix
+        else:
+            output = self._last_line
+
+        self.original_stream.write(output)
+        self.log_file.write(output)
+
+        self._last_line = None
+        self._repeat_count = 0
 
     def write(self, message: str) -> None:
-        """Write a message to both the original stream and the log file."""
-        self.original_stream.write(message)
-        self.log_file.write(message)
-        self.flush()
+        """Write a message to both the original stream and the log file.
 
-    def flush(self) -> None:
-        """Flush both the original stream and the log file."""
+        Consecutive identical lines are collapsed. Empty writes and bare
+        newlines are passed through immediately without affecting the
+        repeat buffer.
+        """
+        # Pass through empty strings and bare newlines (print() separators)
+        if not message or message == "\n":
+            # Flush any pending repeat first
+            if message == "\n" and self._last_line is not None:
+                # This newline might be print()'s end='\n' after a
+                # line that's already buffered with its own \n.
+                # Only pass through if the buffered line doesn't end with \n.
+                if not self._last_line.endswith("\n"):
+                    self._flush_repeat()
+                    self.original_stream.write(message)
+                    self.log_file.write(message)
+                    self._do_flush()
+                    return
+                # Otherwise, the \n is redundant — ignore it
+                return
+            self.original_stream.write(message)
+            self.log_file.write(message)
+            self._do_flush()
+            return
+
+        # Check verbosity suppression
+        if self._is_suppressed(message):
+            return
+
+        # Repeat collapsing: compare stripped content
+        stripped = message.rstrip("\n")
+        if stripped == "" and message != "":
+            # Message is only newlines — pass through
+            self._flush_repeat()
+            self.original_stream.write(message)
+            self.log_file.write(message)
+            self._do_flush()
+            return
+
+        if self._last_line is not None:
+            last_stripped = self._last_line.rstrip("\n")
+            if stripped == last_stripped:
+                self._repeat_count += 1
+                return
+
+        # Different line — flush the old one and buffer the new one
+        self._flush_repeat()
+        self._last_line = message
+        self._repeat_count = 1
+
+    def _do_flush(self) -> None:
+        """Flush both underlying streams."""
         self.original_stream.flush()
         self.log_file.flush()
 
+    def flush(self) -> None:
+        """Flush any buffered repeat and both underlying streams."""
+        self._flush_repeat()
+        self._do_flush()
+
     def close(self) -> None:
-        """Close the log file."""
+        """Flush any buffered repeat and close the log file."""
+        self._flush_repeat()
+        self._do_flush()
         self.log_file.close()
 
     @property

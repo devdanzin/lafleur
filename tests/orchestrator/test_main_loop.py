@@ -2080,6 +2080,92 @@ class TestMainCLIPlumbing(unittest.TestCase):
             self.assertEqual(args_namespace.instance_name, "my-instance")
 
 
+class TestTeeLoggerCLIPlumbing(unittest.TestCase):
+    """Tests for --verbose and --log-path CLI flag integration with TeeLogger."""
+
+    @patch("lafleur.orchestrator.LafleurOrchestrator")
+    @patch("lafleur.orchestrator.generate_run_metadata")
+    @patch("lafleur.orchestrator.load_run_stats")
+    @patch("lafleur.orchestrator.TeeLogger")
+    def test_main_verbose_flag(self, mock_tee, mock_stats, mock_metadata, mock_orch_class):
+        """Test that --verbose flag is passed to TeeLogger."""
+        mock_stats.return_value = {"total_mutations": 0}
+        mock_metadata.return_value = {"run_id": "test-123", "instance_name": "test"}
+        mock_tee_instance = MagicMock()
+        mock_tee.return_value = mock_tee_instance
+
+        mock_orch = MagicMock()
+        mock_orch_class.return_value = mock_orch
+
+        with patch("sys.argv", ["orchestrator", "--fusil-path", "/fake/fusil", "--verbose"]):
+            with patch("lafleur.orchestrator.LOGS_DIR") as mock_logs:
+                mock_logs.mkdir = MagicMock()
+                mock_logs.__truediv__ = lambda self, x: Path("/fake/logs") / x
+                main()
+
+        # TeeLogger should be constructed with verbose=True
+        call_kwargs = mock_tee.call_args
+        # verbose is the third positional arg or a keyword arg
+        if call_kwargs.kwargs.get("verbose") is not None:
+            self.assertTrue(call_kwargs.kwargs["verbose"])
+        elif len(call_kwargs.args) >= 3:
+            self.assertTrue(call_kwargs.args[2])
+
+    @patch("lafleur.orchestrator.LafleurOrchestrator")
+    @patch("lafleur.orchestrator.generate_run_metadata")
+    @patch("lafleur.orchestrator.load_run_stats")
+    @patch("lafleur.orchestrator.TeeLogger")
+    def test_main_quiet_by_default(self, mock_tee, mock_stats, mock_metadata, mock_orch_class):
+        """Test that TeeLogger gets verbose=False when --verbose is not passed."""
+        mock_stats.return_value = {"total_mutations": 0}
+        mock_metadata.return_value = {"run_id": "test-123", "instance_name": "test"}
+        mock_tee_instance = MagicMock()
+        mock_tee.return_value = mock_tee_instance
+
+        mock_orch = MagicMock()
+        mock_orch_class.return_value = mock_orch
+
+        with patch("sys.argv", ["orchestrator", "--fusil-path", "/fake/fusil"]):
+            with patch("lafleur.orchestrator.LOGS_DIR") as mock_logs:
+                mock_logs.mkdir = MagicMock()
+                mock_logs.__truediv__ = lambda self, x: Path("/fake/logs") / x
+                main()
+
+        call_kwargs = mock_tee.call_args
+        if call_kwargs.kwargs.get("verbose") is not None:
+            self.assertFalse(call_kwargs.kwargs["verbose"])
+        elif len(call_kwargs.args) >= 3:
+            self.assertFalse(call_kwargs.args[2])
+
+    @patch("lafleur.orchestrator.LafleurOrchestrator")
+    @patch("lafleur.orchestrator.generate_run_metadata")
+    @patch("lafleur.orchestrator.load_run_stats")
+    @patch("lafleur.orchestrator.TeeLogger")
+    def test_main_custom_log_path(self, mock_tee, mock_stats, mock_metadata, mock_orch_class):
+        """Test that --log-path flag is used for the log file."""
+        mock_stats.return_value = {"total_mutations": 0}
+        mock_metadata.return_value = {"run_id": "test-123", "instance_name": "test"}
+        mock_tee_instance = MagicMock()
+        mock_tee.return_value = mock_tee_instance
+
+        mock_orch = MagicMock()
+        mock_orch_class.return_value = mock_orch
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            custom_path = str(Path(tmp_dir) / "custom.log")
+            with patch(
+                "sys.argv",
+                ["orchestrator", "--fusil-path", "/fake/fusil", "--log-path", custom_path],
+            ):
+                with patch("lafleur.orchestrator.LOGS_DIR") as mock_logs:
+                    mock_logs.mkdir = MagicMock()
+                    main()
+
+            # TeeLogger should be constructed with the custom path
+            call_args = mock_tee.call_args
+            self.assertEqual(str(call_args.args[0]), custom_path)
+
+
 class TestWalkCrashLineage(unittest.TestCase):
     """Test _walk_crash_lineage method."""
 

@@ -22,8 +22,10 @@ from lafleur.mutators import (
     EmptyBodySanitizer,
     FuzzerSetupNormalizer,
     HarnessInstrumentor,
+    RedundantStatementSanitizer,
     SlicingMutator,
 )
+from lafleur.mutators.generic import ImportChaosMutator, ImportPrunerMutator
 from lafleur.mutators.sniper import SniperMutator
 from lafleur.mutators.helper_injection import HelperFunctionInjector
 
@@ -50,6 +52,12 @@ class MutationController:
     managing the mutation pipeline, preparing child scripts, and
     extracting boilerplate/core code from source files.
     """
+
+    HYGIENE_MUTATORS: list[tuple[type[ast.NodeTransformer], float]] = [
+        (ImportChaosMutator, 0.15),
+        (ImportPrunerMutator, 0.20),
+        (RedundantStatementSanitizer, 0.25),
+    ]
 
     def __init__(
         self,
@@ -411,6 +419,15 @@ class MutationController:
             mutated_ast, mutation_info = chosen_strategy(
                 tree_copy, seed=seed, watched_keys=watched_keys
             )
+
+        # Run hygiene mutators at fixed probability (independent of learning system).
+        hygiene_applied: list[str] = []
+        for mutator_cls, probability in self.HYGIENE_MUTATORS:
+            if RANDOM.random() < probability:
+                mutated_ast = mutator_cls().visit(mutated_ast)
+                hygiene_applied.append(mutator_cls.__name__)
+        if hygiene_applied:
+            mutation_info.setdefault("transformers", []).extend(hygiene_applied)
 
         # Always run the sanitizer last to fix any empty bodies.
         sanitizer = EmptyBodySanitizer()

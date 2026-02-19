@@ -23,6 +23,7 @@ from lafleur.mutators.generic import (
     ConstantPerturbator,
     ContainerChanger,
     DecoratorMutator,
+    ImportPrunerMutator,
     ExceptionGroupMutator,
     ForLoopInjector,
     GuardInjector,
@@ -2172,6 +2173,144 @@ class TestBasicMutators(unittest.TestCase):
 
         # Should NOT be wrapped in an if
         self.assertIsInstance(mutated.body[0], ast.Assign)
+
+
+class TestImportPrunerMutator(unittest.TestCase):
+    """Test ImportPrunerMutator hygiene mutator."""
+
+    def test_removes_bare_import(self):
+        """Test that bare import statements are removed."""
+        code = dedent("""
+            import os
+            def test():
+                x = 42
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.1):  # Below 0.5 default
+            mutator = ImportPrunerMutator()
+            mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        self.assertNotIn("import os", result)
+        self.assertIn("x = 42", result)
+
+    def test_removes_import_from(self):
+        """Test that from-import statements are removed."""
+        code = dedent("""
+            from os import path
+            def test():
+                x = 42
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.1):
+            mutator = ImportPrunerMutator()
+            mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        self.assertNotIn("from os", result)
+        self.assertIn("x = 42", result)
+
+    def test_removes_try_except_wrapped_import(self):
+        """Test that try/except-wrapped imports are removed."""
+        code = dedent("""
+            try:
+                import os
+            except (ImportError, Exception):
+                pass
+            def test():
+                x = 42
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.1):
+            mutator = ImportPrunerMutator()
+            mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        self.assertNotIn("import os", result)
+        self.assertIn("x = 42", result)
+
+    def test_preserves_non_import_statements(self):
+        """Test that non-import statements are never removed."""
+        code = dedent("""
+            x = 1
+            def test():
+                y = 2
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.1):
+            mutator = ImportPrunerMutator()
+            mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        self.assertIn("x = 1", result)
+        self.assertIn("y = 2", result)
+
+    def test_respects_probability(self):
+        """Test that imports are kept when random > removal_probability."""
+        code = dedent("""
+            import os
+            def test():
+                x = 42
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.9):  # Above 0.5 default
+            mutator = ImportPrunerMutator()
+            mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        self.assertIn("import os", result)
+
+    def test_custom_removal_probability(self):
+        """Test that custom removal probability is respected."""
+        code = dedent("""
+            import os
+            def test():
+                x = 42
+        """)
+        tree = ast.parse(code)
+
+        # 0.3 is above custom probability of 0.2, so import stays
+        with patch("random.random", return_value=0.3):
+            mutator = ImportPrunerMutator(removal_probability=0.2)
+            mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        self.assertIn("import os", result)
+
+    def test_does_not_remove_try_except_with_multiple_body_stmts(self):
+        """Test that try/except with multiple body statements is not removed."""
+        code = dedent("""
+            try:
+                import os
+                x = 1
+            except Exception:
+                pass
+            def test():
+                y = 2
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.1):
+            mutator = ImportPrunerMutator()
+            mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # The try block has 2 body statements, so it should NOT be removed
+        self.assertIn("import os", result)
+
+    def test_empty_module(self):
+        """Test that empty module is handled gracefully."""
+        tree = ast.parse("")
+
+        mutator = ImportPrunerMutator()
+        mutated = mutator.visit(tree)
+
+        self.assertEqual(mutated.body, [])
 
 
 if __name__ == "__main__":

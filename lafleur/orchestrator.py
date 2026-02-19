@@ -391,7 +391,10 @@ class LafleurOrchestrator:
             strategy = mutation_info.get("strategy")
             transformers = mutation_info.get("transformers", [])
             if strategy and transformers:
-                self.score_tracker.record_success(strategy, transformers)
+                hygiene_names = {cls.__name__ for cls, _ in MutationController.HYGIENE_MUTATORS}
+                filtered = [t for t in transformers if t not in hygiene_names]
+                if filtered:
+                    self.score_tracker.record_success(strategy, filtered)
 
         if status == "DIVERGENCE":
             self.run_stats["divergences_found"] = self.run_stats.get("divergences_found", 0) + 1

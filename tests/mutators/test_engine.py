@@ -15,7 +15,13 @@ from unittest.mock import patch
 
 import lafleur.mutators.engine as engine_module
 from lafleur.mutators.engine import ASTMutator, SlicingMutator
-from lafleur.mutators.generic import ConstantPerturbator, OperatorSwapper
+from lafleur.mutators.generic import (
+    ConstantPerturbator,
+    ImportChaosMutator,
+    ImportPrunerMutator,
+    OperatorSwapper,
+)
+from lafleur.mutators.utils import RedundantStatementSanitizer
 from lafleur.mutators.utils import (
     FuzzerSetupNormalizer,
     genStatefulBoolObject,
@@ -396,6 +402,9 @@ class TestASTMutator(unittest.TestCase):
         excluded = {
             SlicingMutator,  # Meta-mutator, not a pool member
             ASTMutator,  # The engine itself (not a NodeTransformer, but just in case)
+            ImportChaosMutator,  # Hygiene mutator, applied separately
+            ImportPrunerMutator,  # Hygiene mutator, applied separately
+            RedundantStatementSanitizer,  # Hygiene mutator, applied separately
         }
         expected = imported_transformers - excluded
 

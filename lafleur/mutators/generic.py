@@ -1581,6 +1581,44 @@ class SysMonitoringMutator(ast.NodeTransformer):
         return node
 
 
+class ImportPrunerMutator(ast.NodeTransformer):
+    """
+    Removes import try/except blocks and bare imports at module level.
+
+    This is a hygiene mutator applied at fixed probability after the main
+    mutation pipeline. It counteracts ImportChaosMutator's accumulated bloat
+    by probabilistically removing top-level import statements (both bare
+    imports and try/except-wrapped imports).
+    """
+
+    def __init__(self, removal_probability: float = 0.5):
+        """
+        Initialize the pruner.
+
+        Args:
+            removal_probability: Per-node probability of removing an import (default 0.5).
+        """
+        self.removal_probability = removal_probability
+
+    def visit_Module(self, node: ast.Module) -> ast.Module:
+        new_body: list[ast.stmt] = []
+        for stmt in node.body:
+            if self._is_removable_import(stmt) and random.random() < self.removal_probability:
+                continue
+            new_body.append(stmt)
+        node.body = new_body
+        return node
+
+    @staticmethod
+    def _is_removable_import(stmt: ast.stmt) -> bool:
+        """Check if a statement is a bare import or try/except-wrapped import."""
+        if isinstance(stmt, (ast.Import, ast.ImportFrom)):
+            return True
+        if isinstance(stmt, ast.Try) and len(stmt.body) == 1:
+            return isinstance(stmt.body[0], (ast.Import, ast.ImportFrom))
+        return False
+
+
 class ImportChaosMutator(ast.NodeTransformer):
     """
     Injects random standard library imports to alter memory layout and global state.

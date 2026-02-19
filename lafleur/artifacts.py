@@ -28,6 +28,7 @@ from lafleur.utils import save_run_stats
 if TYPE_CHECKING:
     from lafleur.corpus_manager import CorpusManager
     from lafleur.coverage import CoverageManager
+    from lafleur.health import HealthMonitor
     from lafleur.learning import MutatorScoreTracker
 
 # Log processing constants
@@ -68,6 +69,7 @@ class ArtifactManager:
         max_timeout_log_bytes: int,
         max_crash_log_bytes: int,
         session_fuzz: bool = False,
+        health_monitor: "HealthMonitor | None" = None,
     ):
         """
         Initialize the ArtifactManager.
@@ -81,6 +83,7 @@ class ArtifactManager:
             max_timeout_log_bytes: Maximum size for timeout logs before truncation
             max_crash_log_bytes: Maximum size for crash logs before truncation
             session_fuzz: Whether session fuzzing mode is enabled
+            health_monitor: Optional HealthMonitor for adverse event tracking
         """
         self.crashes_dir = crashes_dir
         self.timeouts_dir = timeouts_dir
@@ -90,6 +93,7 @@ class ArtifactManager:
         self.max_timeout_log_bytes = max_timeout_log_bytes
         self.max_crash_log_bytes = max_crash_log_bytes
         self.session_fuzz = session_fuzz
+        self.health_monitor = health_monitor
 
         # Ensure directories exist
         self.crashes_dir.mkdir(parents=True, exist_ok=True)
@@ -495,6 +499,8 @@ class ArtifactManager:
             # These are usually caused by timeouts or OOM killers, not JIT bugs.
             if return_code in (-9, -15):
                 print(f"  [~] Ignoring signal {return_code} (SIGKILL/SIGTERM).", file=sys.stderr)
+                if self.health_monitor:
+                    self.health_monitor.record_ignored_crash("SIGKILL/SIGTERM", return_code)
                 return False
 
             crash_signature = self.fingerprinter.analyze(return_code, log_content)
@@ -505,6 +511,10 @@ class ArtifactManager:
                     f"  [~] Ignoring uninteresting crash: {crash_signature.fingerprint}",
                     file=sys.stderr,
                 )
+                if self.health_monitor:
+                    self.health_monitor.record_ignored_crash(
+                        crash_signature.fingerprint, return_code
+                    )
                 return False
 
             # Filter out mundane Python errors (Exit Code 1).
@@ -519,6 +529,10 @@ class ArtifactManager:
                     print(
                         "  [~] Ignoring SyntaxError/IndentationError from invalid mutation.",
                         file=sys.stderr,
+                    )
+                if self.health_monitor:
+                    self.health_monitor.record_ignored_crash(
+                        crash_signature.fingerprint, return_code
                     )
                 return False
 

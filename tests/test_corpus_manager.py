@@ -663,8 +663,8 @@ class TestFindSubsumerCandidates(unittest.TestCase):
         """Helper to build edge index from file metadata."""
         return self.corpus_manager._build_edge_index(all_files)
 
-    def test_returns_proper_supersets(self):
-        """Only files with strictly more edges should be returned."""
+    def test_returns_supersets_and_equal_coverage(self):
+        """Files with equal or more edges should be returned as candidates."""
         all_files = {
             "a.py": {"lineage_coverage_profile": {"f1": {"edges": {1, 2}}}},
             "b.py": {"lineage_coverage_profile": {"f1": {"edges": {1, 2, 3}}}},
@@ -674,7 +674,8 @@ class TestFindSubsumerCandidates(unittest.TestCase):
         candidates = self.corpus_manager._find_subsumer_candidates(
             "a.py", file_edges["a.py"], file_edges, edge_to_files, set()
         )
-        self.assertEqual(candidates, {"b.py"})
+        # Both b.py (superset) and c.py (equal coverage) are candidates
+        self.assertEqual(candidates, {"b.py", "c.py"})
 
     def test_excludes_self(self):
         """File A should not appear in its own candidate set."""
@@ -815,6 +816,49 @@ class TestPruneCorpusScalability(unittest.TestCase):
         """B has more edges but identical metrics — A should NOT be pruned."""
         self.state["per_file_coverage"]["a.py"] = {
             "lineage_coverage_profile": {"f1": {"edges": {1, 2}}},
+            "file_size_bytes": 500,
+            "execution_time_ms": 50,
+        }
+        self.state["per_file_coverage"]["b.py"] = {
+            "lineage_coverage_profile": {"f1": {"edges": {1, 2, 3}}},
+            "file_size_bytes": 500,
+            "execution_time_ms": 50,
+        }
+
+        self.corpus_manager.prune_corpus(dry_run=True)
+        self.assertEqual(len(self.state["per_file_coverage"]), 2)
+
+    @patch("lafleur.corpus_manager.save_coverage_state")
+    def test_prune_minimized_file_replaces_original(self, mock_save):
+        """Equal coverage but smaller/faster file should subsume the original."""
+        corpus_dir = self.temp_path / "corpus"
+        corpus_dir.mkdir(parents=True, exist_ok=True)
+        (corpus_dir / "original.py").write_text("# original")
+        (corpus_dir / "minimized.py").write_text("# min")
+
+        self.state["per_file_coverage"]["original.py"] = {
+            "lineage_coverage_profile": {"f1": {"edges": {1, 2, 3}}},
+            "file_size_bytes": 2000,
+            "execution_time_ms": 200,
+        }
+        self.state["per_file_coverage"]["minimized.py"] = {
+            "lineage_coverage_profile": {"f1": {"edges": {1, 2, 3}}},
+            "file_size_bytes": 500,
+            "execution_time_ms": 50,
+        }
+
+        with patch("lafleur.corpus_manager.CORPUS_DIR", corpus_dir):
+            self.corpus_manager.prune_corpus(dry_run=False)
+
+        # Original should be pruned — minimized has equal coverage and better metrics
+        self.assertFalse((corpus_dir / "original.py").exists())
+        self.assertNotIn("original.py", self.state["per_file_coverage"])
+        self.assertIn("minimized.py", self.state["per_file_coverage"])
+
+    def test_prune_equal_coverage_equal_metrics_not_subsumed(self):
+        """Equal coverage AND equal metrics — neither file should be pruned."""
+        self.state["per_file_coverage"]["a.py"] = {
+            "lineage_coverage_profile": {"f1": {"edges": {1, 2, 3}}},
             "file_size_bytes": 500,
             "execution_time_ms": 50,
         }

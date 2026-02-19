@@ -491,6 +491,51 @@ class TestMergeCoverageIntoGlobal(unittest.TestCase):
         self.assertEqual(state["global_coverage"]["edges"][10], 1)
         self.assertEqual(state["global_coverage"]["rare_events"][20], 2)
 
+    def test_merge_coverage_resolves_display_names(self):
+        """Test that discoveries use human-readable names from forward maps."""
+        state = self._make_state()
+        # Populate forward maps: string -> int
+        state["uop_map"] = {"LOAD_FAST": 0, "STORE_FAST": 1}
+        state["edge_map"] = {"LOAD_FAST->STORE_FAST": 10}
+        state["rare_event_map"] = {"deopt_guard_fail": 20}
+
+        coverage = {
+            "f1": {
+                "uops": Counter({0: 5}),
+                "edges": Counter({10: 2}),
+                "rare_events": Counter({20: 1}),
+            }
+        }
+
+        discoveries = merge_coverage_into_global(state, coverage)
+
+        self.assertEqual(len(discoveries), 3)
+        names = {d[1] for d in discoveries}
+        self.assertIn("LOAD_FAST", names)
+        self.assertIn("LOAD_FAST->STORE_FAST", names)
+        self.assertIn("deopt_guard_fail", names)
+
+    def test_merge_coverage_falls_back_to_id_string(self):
+        """Test that unknown IDs fall back to str(item_id)."""
+        state = self._make_state()
+        # Forward maps are empty — no reverse mapping available
+        state["uop_map"] = {}
+        state["edge_map"] = {}
+        state["rare_event_map"] = {}
+
+        coverage = {
+            "f1": {
+                "uops": Counter({99: 5}),
+                "edges": Counter(),
+                "rare_events": Counter(),
+            }
+        }
+
+        discoveries = merge_coverage_into_global(state, coverage)
+
+        self.assertEqual(len(discoveries), 1)
+        self.assertEqual(discoveries[0][1], "99")
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

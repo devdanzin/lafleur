@@ -207,7 +207,7 @@ class FrameManipulator(ast.NodeTransformer):
                 # This usage will fail if the JIT's type assumption isn't invalidated
                 try:
                     _ = {target_var} + 1
-                except TypeError:
+                except (TypeError, NameError):
                     pass
             """)
             ).body
@@ -281,6 +281,7 @@ class WeakRefCallbackChaos(ast.NodeTransformer):
             scenario_ast = ast.parse(
                 dedent(f"""
                 # Setup the global variable and weakref
+                global {var_name}
                 {var_name} = 100
                 {instance_name} = {class_name}()
                 callback = lambda ref: {callback_name}(ref, '{var_name}')
@@ -531,8 +532,9 @@ class SideEffectInjector(ast.NodeTransformer):
                 # Use the variable again, potentially hitting a corrupted state
                 try:
                     {use_after_str}
-                except TypeError:
-                    # If we get a TypeError, reset the variable so the loop can continue
+                except (TypeError, NameError):
+                    # TypeError: corruption changed the type (intended behavior)
+                    # NameError/UnboundLocalError: variable not yet assigned (injection before definition)
                     {target_var} = {loop_var}
             """)
 
@@ -608,10 +610,26 @@ class StressPatternInjector(ast.NodeTransformer):
             else:
                 snippet_nodes = action(target_var=target_var)  # type: ignore[call-arg]
 
-            # 4. Insert the snippet at a random point in the function body.
+            # 4. Wrap in try/except and insert at a random point.
+            # Operations like del x.value or x.__class__ = NewClass will
+            # raise AttributeError/TypeError on simple types (int, str).
+            # Wrapping ensures the harness continues executing so the JIT
+            # can still observe the rest of the function.
             if node.body:
+                try_node = ast.Try(
+                    body=snippet_nodes,
+                    handlers=[
+                        ast.ExceptHandler(
+                            type=ast.Name(id="Exception", ctx=ast.Load()),
+                            name=None,
+                            body=[ast.Pass()],
+                        )
+                    ],
+                    orelse=[],
+                    finalbody=[],
+                )
                 insert_pos = random.randint(0, len(node.body))
-                node.body[insert_pos:insert_pos] = snippet_nodes
+                node.body.insert(insert_pos, try_node)
 
         return node
 

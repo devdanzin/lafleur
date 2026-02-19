@@ -1128,7 +1128,7 @@ class PatternMatchingChaosMutator(ast.NodeTransformer):
                     values=[
                         ast.Call(
                             func=ast.Attribute(
-                                value=ast.Name(id="_chaos_side_effect", ctx=ast.Load()),
+                                value=ast.List(elts=[], ctx=ast.Load()),
                                 attr="append",
                                 ctx=ast.Load(),
                             ),

@@ -10,8 +10,12 @@ functions by operating on small, random slices of their body.
 from __future__ import annotations
 
 import ast
+import pickle
 import random
 import sys
+import traceback
+from datetime import datetime, timezone
+from pathlib import Path
 from textwrap import dedent
 
 # Import mutators from submodules
@@ -107,6 +111,103 @@ from lafleur.mutators.scenarios_types import (
 from lafleur.mutators.helper_injection import HelperFunctionInjector
 # Note: SniperMutator is NOT imported here - it's only used in orchestrator._run_sniper_stage
 # because it requires watched_keys parameter from Bloom introspection
+
+UNPARSE_DIAGNOSTICS_DIR = Path("diagnostics") / "unparse_errors"
+
+
+def _dump_unparse_diagnostics(
+    tree: ast.AST,
+    error: Exception,
+    transformers_used: list[type] | None = None,
+    source_hint: str | None = None,
+) -> Path | None:
+    """Dump rich diagnostics when ast.unparse() fails.
+
+    Captures the failing AST (pickle + text dump), full traceback,
+    transformer list, and a reproduction script for CPython bug reporting.
+
+    Args:
+        tree: The AST that failed to unparse.
+        error: The exception raised by ast.unparse().
+        transformers_used: Optional list of transformer classes that were applied.
+        source_hint: Optional label for which call site triggered the failure.
+
+    Returns:
+        Path to the diagnostic directory, or None if the dump failed.
+    """
+    try:
+        timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S_%f")
+        dump_dir = UNPARSE_DIAGNOSTICS_DIR / f"unparse_error_{timestamp}"
+        dump_dir.mkdir(parents=True, exist_ok=True)
+
+        # 1. Pickle the failing AST for exact reproduction
+        pickle_path = dump_dir / "failing_tree.pkl"
+        try:
+            with open(pickle_path, "wb") as f:
+                pickle.dump(tree, f)
+        except Exception as pkl_err:
+            with open(pickle_path.with_suffix(".pkl.err"), "w", encoding="utf-8") as f:
+                f.write(f"Pickle failed: {type(pkl_err).__name__}: {pkl_err}\n")
+
+        # 2. Human-readable text dump
+        info_path = dump_dir / "info.txt"
+        with open(info_path, "w", encoding="utf-8") as f:
+            f.write(f"Error: {type(error).__name__}: {error}\n")
+            f.write(f"Timestamp: {timestamp}\n")
+            if source_hint:
+                f.write(f"Source: {source_hint}\n")
+            if transformers_used:
+                names = [t.__name__ for t in transformers_used]
+                f.write(f"Transformers: {', '.join(names)}\n")
+            f.write("\n")
+
+            # Full traceback
+            f.write("Traceback:\n")
+            f.write(traceback.format_exc())
+            f.write("\n")
+
+            # AST dump
+            f.write("=" * 60 + "\n")
+            f.write("AST Dump:\n")
+            try:
+                f.write(ast.dump(tree, indent=2))
+            except Exception as dump_err:
+                f.write(f"(ast.dump also failed: {type(dump_err).__name__}: {dump_err})\n")
+                try:
+                    f.write(f"Tree type: {type(tree).__name__}\n")
+                    if hasattr(tree, "body"):
+                        f.write(f"Body length: {len(tree.body)}\n")
+                        for i, node in enumerate(tree.body[:10]):
+                            f.write(f"  [{i}] {type(node).__name__}\n")
+                except Exception:
+                    f.write("(Could not inspect tree structure)\n")
+
+        # 3. Reproduction script
+        repro_path = dump_dir / "reproduce.py"
+        with open(repro_path, "w", encoding="utf-8") as f:
+            f.write("#!/usr/bin/env python3\n")
+            f.write('"""Reproduction script for ast.unparse() failure."""\n')
+            f.write("import ast\nimport pickle\nfrom pathlib import Path\n\n")
+            f.write("tree = pickle.loads(Path('failing_tree.pkl').read_bytes())\n")
+            f.write("try:\n")
+            f.write("    result = ast.unparse(tree)\n")
+            f.write("    print('No error — could not reproduce.')\n")
+            f.write("except Exception as e:\n")
+            f.write("    print(f'Reproduced: {type(e).__name__}: {e}')\n")
+
+        print(
+            f"  [!] Unparse diagnostics saved to: {dump_dir}",
+            file=sys.stderr,
+        )
+        return dump_dir
+
+    except Exception as outer_err:
+        # Never let diagnostic capture crash the fuzzer
+        print(
+            f"  [!] Could not save unparse diagnostics: {outer_err}",
+            file=sys.stderr,
+        )
+        return None
 
 
 class SlicingMutator(ast.NodeTransformer):
@@ -308,10 +409,16 @@ class ASTMutator:
             commented_lines = "\n# ".join(code_string.splitlines())
             return f"# Original code failed to parse:\n# {commented_lines}"
 
-        mutated_tree, _ = self.mutate_ast(tree, seed=seed, mutations=mutations)
+        mutated_tree, transformers_used = self.mutate_ast(tree, seed=seed, mutations=mutations)
 
         try:
             return ast.unparse(mutated_tree)
-        except AttributeError:
+        except AttributeError as e:
+            _dump_unparse_diagnostics(
+                mutated_tree,
+                e,
+                transformers_used=transformers_used,
+                source_hint="ASTMutator.mutate",
+            )
             commented_lines = "\n# ".join(code_string.splitlines())
             return f"# AST unparsing failed. Original code was:\n# {commented_lines}"

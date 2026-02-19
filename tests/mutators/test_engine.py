@@ -8,13 +8,21 @@ lafleur/mutators/engine.py
 
 import ast
 import inspect
+import io
+import pickle
 import random
+import tempfile
 import unittest
+from pathlib import Path
 from textwrap import dedent
 from unittest.mock import patch
 
 import lafleur.mutators.engine as engine_module
-from lafleur.mutators.engine import ASTMutator, SlicingMutator
+from lafleur.mutators.engine import (
+    ASTMutator,
+    SlicingMutator,
+    _dump_unparse_diagnostics,
+)
 from lafleur.mutators.generic import (
     ConstantPerturbator,
     ImportChaosMutator,
@@ -159,12 +167,21 @@ class TestASTMutator(unittest.TestCase):
         self.assertNotIn("# AST unparsing failed", result)
 
     def test_mutate_unparse_error_comments_all_lines(self):
-        """Test that AttributeError fallback comments every line of multi-line input."""
+        """Test that AttributeError fallback comments every line and calls diagnostics."""
         code = "x = 1\ny = 2\nz = 3"
         mutator = ASTMutator()
 
         with patch("ast.unparse", side_effect=AttributeError("bad node")):
-            result = mutator.mutate(code, seed=42)
+            with patch("lafleur.mutators.engine._dump_unparse_diagnostics") as mock_dump:
+                result = mutator.mutate(code, seed=42)
+
+        # Verify diagnostics were called
+        mock_dump.assert_called_once()
+        call_kwargs = mock_dump.call_args
+        self.assertIsInstance(call_kwargs[0][0], ast.AST)  # tree
+        self.assertIsInstance(call_kwargs[0][1], AttributeError)  # error
+        self.assertIsNotNone(call_kwargs[1]["transformers_used"])
+        self.assertEqual(call_kwargs[1]["source_hint"], "ASTMutator.mutate")
 
         self.assertIn("# AST unparsing failed", result)
         lines = result.splitlines()
@@ -784,6 +801,194 @@ class TestSlicingMutator(unittest.TestCase):
                     ast.unparse(mutated)
                 except Exception as e:
                     self.fail(f"Slicing produced invalid structure: {e}")
+
+
+class TestUnparseDiagnostics(unittest.TestCase):
+    """Test _dump_unparse_diagnostics helper."""
+
+    def setUp(self):
+        """Create a temp directory and redirect UNPARSE_DIAGNOSTICS_DIR."""
+        self.tmpdir = tempfile.mkdtemp()
+        self.orig_dir = engine_module.UNPARSE_DIAGNOSTICS_DIR
+        engine_module.UNPARSE_DIAGNOSTICS_DIR = Path(self.tmpdir) / "unparse_errors"
+
+    def tearDown(self):
+        """Restore original directory."""
+        engine_module.UNPARSE_DIAGNOSTICS_DIR = self.orig_dir
+        import shutil
+
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+
+    def test_creates_diagnostic_directory(self):
+        """Test that a timestamped subdirectory is created."""
+        tree = ast.parse("x = 1")
+        error = AttributeError("bad node")
+
+        try:
+            raise error
+        except AttributeError:
+            with patch("sys.stderr", new_callable=io.StringIO):
+                result = _dump_unparse_diagnostics(tree, error)
+
+        self.assertIsNotNone(result)
+        self.assertTrue(result.is_dir())
+        self.assertTrue(result.name.startswith("unparse_error_"))
+
+    def test_creates_pickle_file(self):
+        """Test that the failing AST is saved as a pickle."""
+        tree = ast.parse("x = 1 + 2")
+        error = AttributeError("test pickle")
+
+        try:
+            raise error
+        except AttributeError:
+            with patch("sys.stderr", new_callable=io.StringIO):
+                result = _dump_unparse_diagnostics(tree, error)
+
+        pickle_path = result / "failing_tree.pkl"
+        self.assertTrue(pickle_path.exists())
+        loaded = pickle.loads(pickle_path.read_bytes())
+        self.assertIsInstance(loaded, ast.Module)
+
+    def test_creates_info_file_with_error_details(self):
+        """Test that info.txt contains error, traceback, and AST dump."""
+        tree = ast.parse("y = 42")
+        error = AttributeError("_Precedence missing")
+
+        try:
+            raise error
+        except AttributeError:
+            with patch("sys.stderr", new_callable=io.StringIO):
+                result = _dump_unparse_diagnostics(tree, error)
+
+        info_path = result / "info.txt"
+        self.assertTrue(info_path.exists())
+        content = info_path.read_text()
+        self.assertIn("AttributeError", content)
+        self.assertIn("_Precedence missing", content)
+        self.assertIn("Traceback", content)
+        self.assertIn("AST Dump:", content)
+        self.assertIn("Module", content)
+
+    def test_creates_reproduction_script(self):
+        """Test that reproduce.py is generated."""
+        tree = ast.parse("z = 0")
+        error = AttributeError("test repro")
+
+        try:
+            raise error
+        except AttributeError:
+            with patch("sys.stderr", new_callable=io.StringIO):
+                result = _dump_unparse_diagnostics(tree, error)
+
+        repro_path = result / "reproduce.py"
+        self.assertTrue(repro_path.exists())
+        content = repro_path.read_text()
+        self.assertIn("import ast", content)
+        self.assertIn("import pickle", content)
+        self.assertIn("ast.unparse(tree)", content)
+        self.assertIn("failing_tree.pkl", content)
+
+    def test_records_transformers_used(self):
+        """Test that transformer names are recorded in info.txt."""
+        from lafleur.mutators.generic import OperatorSwapper, ConstantPerturbator
+
+        tree = ast.parse("a = 1")
+        error = AttributeError("test transformers")
+
+        try:
+            raise error
+        except AttributeError:
+            with patch("sys.stderr", new_callable=io.StringIO):
+                result = _dump_unparse_diagnostics(
+                    tree, error, transformers_used=[OperatorSwapper, ConstantPerturbator]
+                )
+
+        content = (result / "info.txt").read_text()
+        self.assertIn("Transformers:", content)
+        self.assertIn("OperatorSwapper", content)
+        self.assertIn("ConstantPerturbator", content)
+
+    def test_records_source_hint(self):
+        """Test that source_hint is recorded in info.txt."""
+        tree = ast.parse("b = 2")
+        error = TypeError("unexpected type")
+
+        try:
+            raise error
+        except TypeError:
+            with patch("sys.stderr", new_callable=io.StringIO):
+                result = _dump_unparse_diagnostics(tree, error, source_hint="ASTMutator.mutate")
+
+        content = (result / "info.txt").read_text()
+        self.assertIn("Source: ASTMutator.mutate", content)
+
+    def test_handles_unpicklable_tree(self):
+        """Test that pickle failure doesn't crash the dump."""
+        tree = ast.parse("c = 3")
+        error = AttributeError("test unpicklable")
+
+        try:
+            raise error
+        except AttributeError:
+            with patch("pickle.dump", side_effect=TypeError("can't pickle")):
+                with patch("sys.stderr", new_callable=io.StringIO):
+                    result = _dump_unparse_diagnostics(tree, error)
+
+        # Should still succeed overall
+        self.assertIsNotNone(result)
+        # Should have error file instead of pickle
+        err_file = result / "failing_tree.pkl.err"
+        self.assertTrue(err_file.exists())
+        self.assertIn("can't pickle", err_file.read_text())
+        # info.txt should still be created
+        self.assertTrue((result / "info.txt").exists())
+
+    def test_handles_ast_dump_failure(self):
+        """Test graceful fallback when ast.dump() also fails."""
+        tree = ast.parse("d = 4")
+        error = AttributeError("bad dump")
+
+        try:
+            raise error
+        except AttributeError:
+            with patch("ast.dump", side_effect=Exception("dump broken")):
+                with patch("sys.stderr", new_callable=io.StringIO):
+                    result = _dump_unparse_diagnostics(tree, error)
+
+        self.assertIsNotNone(result)
+        content = (result / "info.txt").read_text()
+        self.assertIn("ast.dump also failed", content)
+        self.assertIn("Tree type: Module", content)
+
+    def test_returns_none_on_total_failure(self):
+        """Test that total failure returns None without crashing."""
+        tree = ast.parse("e = 5")
+        error = AttributeError("doomed")
+
+        try:
+            raise error
+        except AttributeError:
+            with patch("pathlib.Path.mkdir", side_effect=OSError("permission denied")):
+                with patch("sys.stderr", new_callable=io.StringIO) as mock_stderr:
+                    result = _dump_unparse_diagnostics(tree, error)
+
+        self.assertIsNone(result)
+        self.assertIn("Could not save unparse diagnostics", mock_stderr.getvalue())
+
+    def test_prints_path_to_stderr(self):
+        """Test that the diagnostic directory path is printed to stderr."""
+        tree = ast.parse("f = 6")
+        error = AttributeError("stderr test")
+
+        try:
+            raise error
+        except AttributeError:
+            with patch("sys.stderr", new_callable=io.StringIO) as mock_stderr:
+                result = _dump_unparse_diagnostics(tree, error)
+
+        self.assertIn("Unparse diagnostics saved to:", mock_stderr.getvalue())
+        self.assertIn(str(result), mock_stderr.getvalue())
 
 
 if __name__ == "__main__":

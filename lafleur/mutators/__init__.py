@@ -7,7 +7,7 @@ essential utility transformers like `FuzzerSetupNormalizer` and `EmptyBodySaniti
 for easy access by the orchestrator.
 """
 
-from lafleur.mutators.engine import ASTMutator, SlicingMutator
+from lafleur.mutators.engine import ASTMutator, SlicingMutator, _dump_unparse_diagnostics
 from lafleur.mutators.utils import (
     FuzzerSetupNormalizer,
     EmptyBodySanitizer,
@@ -19,6 +19,7 @@ from lafleur.mutators.generic import ImportPrunerMutator, StatementDuplicator, V
 __all__ = [
     "ASTMutator",
     "SlicingMutator",
+    "_dump_unparse_diagnostics",
     "FuzzerSetupNormalizer",
     "EmptyBodySanitizer",
     "HarnessInstrumentor",

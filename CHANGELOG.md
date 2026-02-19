@@ -38,6 +38,7 @@ All notable changes to this project should be documented in this file.
 
 ### Enhanced
 
+- **ast.unparse() diagnostic capture** with rich output: pickle dump of failing AST for exact reproduction, full traceback, transformer list, source hint, `ast.dump()` text, and a standalone `reproduce.py` script for CPython bug reporting. Replaces the previous text-only `_dump_failing_ast` approach and is now used in both `ASTMutator.mutate()` and `MutationController.prepare_child_script()`, by @devdanzin.
 - **TeeLogger** with repeat collapsing (consecutive identical lines collapsed to `(×N)` suffix), verbosity filtering (`--verbose` flag controls detail-level messages vs quiet mode showing only important events), and configurable log path (`--log-path` flag), by @devdanzin.
 - `BuiltinNamespaceCorruptor` with test_optimizer.py-inspired attacks: direct `__builtins__["KEY"]` style modifications, `ModuleType` vs dict representation handling, and high-frequency builtin corruption (corrupting `len`, `isinstance`, and `type` simultaneously), by @devdanzin.
 - `BloomFilterSaturator` with probe-based saturation detection, strategic global modifications, and multi-phase attacks (warmup, saturation, exploitation, verification) to better exploit the JIT's global variable tracking bloom filter, by @devdanzin.

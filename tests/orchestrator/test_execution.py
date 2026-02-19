@@ -14,7 +14,7 @@ import subprocess
 import unittest
 from pathlib import Path
 from textwrap import dedent
-from unittest.mock import MagicMock, mock_open, patch
+from unittest.mock import MagicMock, patch
 
 from lafleur.execution import ExecutionManager
 from lafleur.mutation_controller import MutationController
@@ -138,13 +138,18 @@ class TestPrepareChildScript(unittest.TestCase):
             side_effect=AttributeError("_Precedence has no attribute '_indent'"),
         ):
             with patch("sys.stderr", new_callable=io.StringIO) as mock_stderr:
-                with patch.object(self.controller, "_dump_failing_ast"):
+                with patch("lafleur.mutation_controller._dump_unparse_diagnostics") as mock_dump:
                     result = self.controller.prepare_child_script(
                         parent_tree, mutated_harness, runtime_seed=42
                     )
 
         self.assertIsNone(result)
         self.assertIn("AttributeError", mock_stderr.getvalue())
+        mock_dump.assert_called_once()
+        self.assertEqual(
+            mock_dump.call_args[1]["source_hint"],
+            "MutationController.prepare_child_script",
+        )
 
     def test_returns_none_on_type_error_during_unparse(self):
         """TypeError during ast.unparse returns None."""
@@ -153,43 +158,14 @@ class TestPrepareChildScript(unittest.TestCase):
 
         with patch("ast.unparse", side_effect=TypeError("unexpected type")):
             with patch("sys.stderr", new_callable=io.StringIO) as mock_stderr:
-                with patch.object(self.controller, "_dump_failing_ast"):
+                with patch("lafleur.mutation_controller._dump_unparse_diagnostics") as mock_dump:
                     result = self.controller.prepare_child_script(
                         parent_tree, mutated_harness, runtime_seed=42
                     )
 
         self.assertIsNone(result)
         self.assertIn("TypeError", mock_stderr.getvalue())
-
-    def test_dump_failing_ast_creates_file(self):
-        """_dump_failing_ast creates a diagnostic file in crashes/unparse_errors/."""
-        tree = ast.parse("x = 1")
-        error = AttributeError("test error")
-
-        with patch("builtins.open", mock_open()) as mock_file:
-            with patch("pathlib.Path.mkdir"):
-                self.controller._dump_failing_ast(tree, error)
-
-            mock_file.assert_called_once()
-            written = "".join(call.args[0] for call in mock_file().write.call_args_list)
-            self.assertIn("AttributeError", written)
-            self.assertIn("test error", written)
-            self.assertIn("AST Dump", written)
-
-    def test_dump_failing_ast_handles_dump_failure(self):
-        """_dump_failing_ast handles ast.dump failure gracefully."""
-        tree = MagicMock()
-        error = AttributeError("test error")
-
-        with patch("ast.dump", side_effect=Exception("dump also broken")):
-            with patch("pathlib.Path.mkdir"):
-                with patch("builtins.open", mock_open()) as mock_file:
-                    with patch("sys.stderr", new_callable=io.StringIO):
-                        # Should not raise
-                        self.controller._dump_failing_ast(tree, error)
-
-                    written = "".join(call.args[0] for call in mock_file().write.call_args_list)
-                    self.assertIn("ast.dump also failed", written)
+        mock_dump.assert_called_once()
 
     def test_runtime_seed_in_rng_setup(self):
         """Test that runtime seed is correctly embedded."""

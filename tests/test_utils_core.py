@@ -557,6 +557,49 @@ class TestTeeLoggerVerbosityFiltering(unittest.TestCase):
             self.assertNotIn("Removing", output)
             self.assertNotIn("Slicing", output)
 
+    def test_quiet_mode_suppresses_all_mutator_verbs(self):
+        """Test that verbose=False suppresses all known mutator log prefixes."""
+        stream = StringIO()
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            log_path = Path(tmp_dir) / "test.log"
+            logger = TeeLogger(log_path, stream, verbose=False)
+
+            mutator_lines = [
+                "    -> Mutating constant '0.0' to boundary value 'sys.float_info.max'\n",
+                "    -> Transposing block from index 3 to 1\n",
+                "    -> Normalizing call to random() to use fuzzer_rng.\n",
+                "    -> Sanitizing empty body with a 'pass' statement.\n",
+                "    -> Decorating nested function 'inner' with '@fuzzer_decorator_1234'\n",
+                "    -> Variable of wrong type found: var_name='x' val=42 type(val)=int\n",
+                "    -> Failed to pick a target for mutation.\n",
+                "    -> SyntaxError parsing ExitStresser attack code!\n",
+                "    -> Targeting existing variable 'x' (list) for rug pull attack\n",
+            ]
+
+            for line in mutator_lines:
+                logger.write(line)
+            logger.close()
+
+            output = stream.getvalue()
+            for line in mutator_lines:
+                key = line.strip().split()[2]  # The verb
+                self.assertNotIn(key, output, f"Mutator line not suppressed: {line.strip()}")
+
+    def test_quiet_mode_suppresses_mutator_warning_lines(self):
+        """Test that verbose=False suppresses mutator warning/error lines."""
+        stream = StringIO()
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            log_path = Path(tmp_dir) / "test.log"
+            logger = TeeLogger(log_path, stream, verbose=False)
+
+            logger.write(
+                "    [!] SyntaxError parsing t-string injection. Host python might be too old.\n"
+            )
+            logger.close()
+
+            output = stream.getvalue()
+            self.assertNotIn("SyntaxError", output)
+
     def test_quiet_mode_suppresses_boilerplate(self):
         """Test that verbose=False suppresses execution boilerplate."""
         stream = StringIO()
@@ -585,6 +628,7 @@ class TestTeeLoggerVerbosityFiltering(unittest.TestCase):
                 "[NEW RELATIVE EDGE] '('OPTIMIZED', '_SET_IP->_UNARY_NEGATIVE')' in harness 'f1'\n"
             )
             logger.write("[NEW RELATIVE UOP] '_UNARY_NEGATIVE' in harness 'f1'\n")
+            logger.write("[NEW RELATIVE RARE_EVENT] 'set_class' in harness 'f1'\n")
             logger.close()
 
             output = stream.getvalue()

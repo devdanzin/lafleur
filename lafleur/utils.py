@@ -117,7 +117,18 @@ class TeeLogger:
         "    -> Corrupting",
         "    -> Patching",
         "    -> Polluting",
+        "    -> Mutating",
+        "    -> Transposing",
+        "    -> Normalizing",
+        "    -> Sanitizing",
+        "    -> Decorating",
+        "    -> Variable",
+        "    -> Failed",
+        "    -> SyntaxError",
+        "    -> Targeting",
         "    -> Run #",
+        # Mutator error/warning lines (4-space indent + bracket)
+        "    [!] SyntaxError",
         # Stage notifications
         "  [~] Large AST detected",
         "  [~] Running HAVOC",
@@ -134,6 +145,7 @@ class TeeLogger:
         # Individual relative discoveries (globals are important, relatives are noisy)
         "[NEW RELATIVE EDGE]",
         "[NEW RELATIVE UOP]",
+        "[NEW RELATIVE RARE_EVENT]",
         # Non-interesting child results
         "  [+] Child IS NOT interesting",
         # Corpus score calculation (happens twice per mutation cycle)

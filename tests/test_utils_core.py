@@ -699,6 +699,86 @@ class TestTeeLoggerVerbosityFiltering(unittest.TestCase):
             self.assertTrue(logger.verbose)
             logger.close()
 
+    def test_suppressed_print_no_blank_lines(self):
+        """Test that print()-style writes (content + '\\n') leave no blank lines."""
+        stream = StringIO()
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            log_path = Path(tmp_dir) / "test.log"
+            logger = TeeLogger(log_path, stream, verbose=False)
+
+            # Simulate print() behavior: write content, then write "\n"
+            logger.write("Important before\n")
+            logger.write("    -> Injecting for loop around a statement.")
+            logger.write("\n")  # print()'s trailing newline
+            logger.write("    -> Removing fuzzer-injected guard.")
+            logger.write("\n")
+            logger.write("Important after\n")
+            logger.close()
+
+            output = stream.getvalue()
+            self.assertNotIn("Injecting", output)
+            self.assertNotIn("Removing", output)
+            # No blank lines between important lines
+            self.assertNotIn("\n\n", output)
+
+    def test_suppressed_print_no_blank_lines_in_log_file(self):
+        """Test that suppressed print() leaves no blank lines in the log file."""
+        stream = StringIO()
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            log_path = Path(tmp_dir) / "test.log"
+            logger = TeeLogger(log_path, stream, verbose=False)
+
+            logger.write("Before\n")
+            logger.write("[COVERAGE] Running child with JIT=True.")
+            logger.write("\n")
+            logger.write("[SESSION] Using session driver.")
+            logger.write("\n")
+            logger.write("After\n")
+            logger.close()
+
+            file_content = log_path.read_text()
+            self.assertNotIn("[COVERAGE]", file_content)
+            self.assertNotIn("[SESSION]", file_content)
+            self.assertNotIn("\n\n", file_content)
+
+    def test_many_suppressed_prints_no_blank_lines(self):
+        """Test that many consecutive suppressed print() calls produce no blank lines."""
+        stream = StringIO()
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            log_path = Path(tmp_dir) / "test.log"
+            logger = TeeLogger(log_path, stream, verbose=False)
+
+            logger.write("  \\-> Running mutation #1 (Seed: 107981) for 10909.py...\n")
+            # Simulate 20 suppressed print() calls (content + "\n")
+            for i in range(20):
+                logger.write(f"    -> Injecting for loop #{i}.")
+                logger.write("\n")
+            logger.write("  [+] Child is interesting with score: 12.00\n")
+            logger.close()
+
+            output = stream.getvalue()
+            self.assertNotIn("Injecting", output)
+            # Should have exactly two lines, no blanks between them
+            lines = output.strip().split("\n")
+            self.assertEqual(len(lines), 2)
+            self.assertIn("Running mutation", lines[0])
+            self.assertIn("interesting", lines[1])
+
+    def test_non_suppressed_newlines_still_pass_through(self):
+        """Test that bare newlines unrelated to suppression still work."""
+        stream = StringIO()
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            log_path = Path(tmp_dir) / "test.log"
+            logger = TeeLogger(log_path, stream, verbose=False)
+
+            # A non-suppressed line followed by a bare newline (e.g. print("", end="\n"))
+            logger.write("Important line")
+            logger.write("\n")
+            logger.close()
+
+            output = stream.getvalue()
+            self.assertIn("Important line\n", output)
+
 
 class TestTeeLoggerLogPath(unittest.TestCase):
     """Tests for --log-path CLI flag integration."""

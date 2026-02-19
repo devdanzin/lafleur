@@ -27,7 +27,9 @@ from lafleur.mutators.scenarios_data import (
     MagicMethodMutator,
     NumericMutator,
     ReentrantSideEffectMutator,
+    SliceObjectChaosMutator,
     StackCacheThrasher,
+    StarCallMutator,
     TypeShadowingMutator,
     UnpackingChaosMutator,
     ZombieTraceMutator,
@@ -3026,6 +3028,190 @@ class TestConstantNarrowingPoisonMutator(unittest.TestCase):
         original = ast.unparse(tree)
         with patch("random.random", return_value=0.9):
             mutator = ConstantNarrowingPoisonMutator()
+            mutated = mutator.visit(tree)
+        self.assertEqual(original, ast.unparse(mutated))
+
+
+class TestStarCallMutator(unittest.TestCase):
+    """Test StarCallMutator mutator."""
+
+    def setUp(self):
+        random.seed(42)
+
+    def test_injects_args_type_instability(self):
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+        with patch("random.random", return_value=0.05):
+            with patch("random.choice", return_value="args_type_instability"):
+                with patch("random.randint", return_value=5000):
+                    mutator = StarCallMutator()
+                    mutated = mutator.visit(tree)
+        result = ast.unparse(mutated)
+        self.assertIn("_target_starcall_5000", result)
+        self.assertIn("*_args_starcall_5000", result)
+
+    def test_injects_custom_mapping_kwargs(self):
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+        with patch("random.random", return_value=0.05):
+            with patch("random.choice", return_value="custom_mapping_kwargs"):
+                with patch("random.randint", return_value=6000):
+                    mutator = StarCallMutator()
+                    mutated = mutator.visit(tree)
+        result = ast.unparse(mutated)
+        self.assertIn("_EvilKwargs_starcall_6000", result)
+        self.assertIn("Mapping", result)
+
+    def test_injects_nested_star_delegation(self):
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+        with patch("random.random", return_value=0.05):
+            with patch("random.choice", return_value="nested_star_delegation"):
+                with patch("random.randint", return_value=7000):
+                    mutator = StarCallMutator()
+                    mutated = mutator.visit(tree)
+        result = ast.unparse(mutated)
+        self.assertIn("_inner_starcall_7000", result)
+        self.assertIn("_middle_starcall_7000", result)
+        self.assertIn("_outer_starcall_7000", result)
+
+    def test_all_attacks_produce_valid_code(self):
+        for attack in StarCallMutator.ATTACK_SCENARIOS:
+            with self.subTest(attack=attack):
+                code = dedent("""
+                    def uop_harness_test():
+                        x = 1
+                """)
+                tree = ast.parse(code)
+                with patch("random.random", return_value=0.05):
+                    with patch("random.choice", return_value=attack):
+                        with patch("random.randint", return_value=4000):
+                            mutator = StarCallMutator()
+                            mutated = mutator.visit(tree)
+                result = ast.unparse(mutated)
+                ast.parse(result)
+
+    def test_skips_non_harness(self):
+        code = dedent("""
+            def normal_function():
+                x = 1
+        """)
+        tree = ast.parse(code)
+        original = ast.unparse(tree)
+        with patch("random.random", return_value=0.05):
+            mutator = StarCallMutator()
+            mutated = mutator.visit(tree)
+        self.assertEqual(original, ast.unparse(mutated))
+
+    def test_respects_probability(self):
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+        original = ast.unparse(tree)
+        with patch("random.random", return_value=0.9):
+            mutator = StarCallMutator()
+            mutated = mutator.visit(tree)
+        self.assertEqual(original, ast.unparse(mutated))
+
+
+class TestSliceObjectChaosMutator(unittest.TestCase):
+    """Test SliceObjectChaosMutator mutator."""
+
+    def setUp(self):
+        random.seed(42)
+
+    def test_injects_slice_to_int_swap(self):
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+        with patch("random.random", return_value=0.05):
+            with patch("random.choice", return_value="slice_to_int_swap"):
+                with patch("random.randint", return_value=5000):
+                    mutator = SliceObjectChaosMutator()
+                    mutated = mutator.visit(tree)
+        result = ast.unparse(mutated)
+        self.assertIn("slice(", result)
+        self.assertIn("_lst_slchaos_5000", result)
+
+    def test_injects_guard_elimination_violation(self):
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+        with patch("random.random", return_value=0.05):
+            with patch("random.choice", return_value="guard_elimination_violation"):
+                with patch("random.randint", return_value=6000):
+                    mutator = SliceObjectChaosMutator()
+                    mutated = mutator.visit(tree)
+        result = ast.unparse(mutated)
+        self.assertIn("_double_access_slchaos_6000", result)
+
+    def test_injects_nested_slice(self):
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+        with patch("random.random", return_value=0.05):
+            with patch("random.choice", return_value="nested_slice"):
+                with patch("random.randint", return_value=7000):
+                    mutator = SliceObjectChaosMutator()
+                    mutated = mutator.visit(tree)
+        result = ast.unparse(mutated)
+        self.assertIn("_s1_slchaos_7000", result)
+        self.assertIn("_s2_slchaos_7000", result)
+
+    def test_all_attacks_produce_valid_code(self):
+        for attack in SliceObjectChaosMutator.ATTACK_SCENARIOS:
+            with self.subTest(attack=attack):
+                code = dedent("""
+                    def uop_harness_test():
+                        x = 1
+                """)
+                tree = ast.parse(code)
+                with patch("random.random", return_value=0.05):
+                    with patch("random.choice", return_value=attack):
+                        with patch("random.randint", return_value=4000):
+                            mutator = SliceObjectChaosMutator()
+                            mutated = mutator.visit(tree)
+                result = ast.unparse(mutated)
+                ast.parse(result)
+
+    def test_skips_non_harness(self):
+        code = dedent("""
+            def normal_function():
+                x = 1
+        """)
+        tree = ast.parse(code)
+        original = ast.unparse(tree)
+        with patch("random.random", return_value=0.05):
+            mutator = SliceObjectChaosMutator()
+            mutated = mutator.visit(tree)
+        self.assertEqual(original, ast.unparse(mutated))
+
+    def test_respects_probability(self):
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+        original = ast.unparse(tree)
+        with patch("random.random", return_value=0.9):
+            mutator = SliceObjectChaosMutator()
             mutated = mutator.visit(tree)
         self.assertEqual(original, ast.unparse(mutated))
 

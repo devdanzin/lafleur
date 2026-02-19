@@ -2499,3 +2499,672 @@ class ConstantNarrowingPoisonMutator(ast.NodeTransformer):
                 _s_{prefix}.add(1)                 # Re-add
         """)
         return ast.parse(code).body
+
+
+class StarCallMutator(ast.NodeTransformer):
+    """
+    Attack the JIT's CALL_FUNCTION_EX specialization (_PY_FRAME_EX).
+
+    Since Jan 2025, `f(*args, **kwargs)` calls are JIT-specialized with
+    optimized frames. This mutator transforms function calls into star-
+    unpacking patterns and introduces instability in the unpacked containers
+    to stress the specialization.
+
+    Attack vectors:
+    1. args_type_instability: The *args container alternates between tuple,
+       list, and custom iterables across loop iterations.
+    2. kwargs_mutation: The **kwargs dict is mutated (keys added/removed)
+       between calls in the same hot loop.
+    3. varargs_overflow: Star-call with progressively more arguments,
+       eventually exceeding the function's expected arity.
+    4. custom_mapping_kwargs: Use a custom Mapping subclass for **kwargs
+       that has side effects in __getitem__/__iter__.
+    5. mixed_star_explicit: Combine *args with explicit keyword arguments
+       that override kwargs entries, testing conflict resolution in the
+       specialized path.
+    6. nested_star_delegation: f(*args) where f itself does g(*args),
+       creating a chain of specialized CALL_FUNCTION_EX frames.
+    """
+
+    ATTACK_SCENARIOS = [
+        "args_type_instability",
+        "kwargs_mutation",
+        "varargs_overflow",
+        "custom_mapping_kwargs",
+        "mixed_star_explicit",
+        "nested_star_delegation",
+    ]
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> ast.FunctionDef:
+        self.generic_visit(node)
+
+        if not node.name.startswith("uop_harness") or not node.body:
+            return node
+
+        if random.random() < 0.12:  # 12% chance
+            attack = random.choice(self.ATTACK_SCENARIOS)
+            p_prefix = f"starcall_{random.randint(1000, 9999)}"
+
+            print(
+                f"    -> Injecting star call attack ({attack}) with prefix '{p_prefix}'",
+                file=sys.stderr,
+            )
+
+            scenario_ast = getattr(self, f"_create_{attack}")(p_prefix)
+
+            injection_point = random.randint(0, len(node.body))
+            node.body[injection_point:injection_point] = scenario_ast
+            ast.fix_missing_locations(node)
+
+        return node
+
+    def _create_args_type_instability(self, prefix: str) -> list[ast.stmt]:
+        """
+        Star-call where *args container alternates between types.
+
+        The JIT specializes _PY_FRAME_EX expecting a tuple for args.
+        Switching to list or custom iterable may break the specialization.
+        """
+        code = dedent(f"""
+            def _target_{prefix}(*args, **kwargs):
+                total = 0
+                for a in args:
+                    total += a if isinstance(a, (int, float)) else 0
+                return total
+
+            # Phase 1: Warm up with tuples — JIT specializes for tuple args
+            for _i_{prefix} in range(200):
+                _args_{prefix} = (1, 2, 3)
+                _kwargs_{prefix} = {{}}
+                _target_{prefix}(*_args_{prefix}, **_kwargs_{prefix})
+
+            # Phase 2: Switch to list args
+            for _j_{prefix} in range(100):
+                _args_{prefix} = [1, 2, 3]
+                _kwargs_{prefix} = {{}}
+                _target_{prefix}(*_args_{prefix}, **_kwargs_{prefix})
+
+            # Phase 3: Alternate rapidly
+            for _k_{prefix} in range(200):
+                if _k_{prefix} % 3 == 0:
+                    _args_{prefix} = (1, 2, 3)
+                elif _k_{prefix} % 3 == 1:
+                    _args_{prefix} = [4, 5, 6]
+                else:
+                    _args_{prefix} = range(1, 4)  # range object
+                try:
+                    _target_{prefix}(*_args_{prefix})
+                except TypeError:
+                    pass
+
+            # Phase 4: Custom iterable with __length_hint__ that lies
+            class _LyingArgs_{prefix}:
+                def __init__(self, items):
+                    self._items = items
+                def __iter__(self):
+                    return iter(self._items)
+                def __length_hint__(self):
+                    return 1  # Lie about length
+
+            for _m_{prefix} in range(100):
+                _la_{prefix} = _LyingArgs_{prefix}([1, 2, 3, 4, 5])
+                try:
+                    _target_{prefix}(*_la_{prefix})
+                except TypeError:
+                    pass
+        """)
+        return ast.parse(code).body
+
+    def _create_kwargs_mutation(self, prefix: str) -> list[ast.stmt]:
+        """Mutate **kwargs dict between calls in hot loop."""
+        code = dedent(f"""
+            def _kw_target_{prefix}(**kwargs):
+                return sum(v for v in kwargs.values() if isinstance(v, (int, float)))
+
+            _kw_{prefix} = {{"a": 1, "b": 2, "c": 3}}
+
+            # Phase 1: Warm up with stable kwargs
+            for _i_{prefix} in range(200):
+                _kw_target_{prefix}(**_kw_{prefix})
+
+            # Phase 2: Mutate kwargs between calls
+            for _j_{prefix} in range(200):
+                if _j_{prefix} % 10 == 0:
+                    _kw_{prefix}[f"extra_{{_j_{prefix}}}"] = _j_{prefix}
+                if _j_{prefix} % 15 == 0:
+                    _kw_{prefix}.pop("a", None)
+                    _kw_{prefix}["a"] = _j_{prefix}  # Re-add with different value
+                if _j_{prefix} % 20 == 0:
+                    _kw_{prefix}[f"extra_{{_j_{prefix} - 10}}"] = "string_val"
+                try:
+                    _kw_target_{prefix}(**_kw_{prefix})
+                except TypeError:
+                    pass
+
+            # Phase 3: Empty kwargs, then full
+            for _k_{prefix} in range(100):
+                if _k_{prefix} % 2 == 0:
+                    _kw_target_{prefix}(**{{}})
+                else:
+                    _kw_target_{prefix}(**{{"x": 1, "y": 2, "z": 3, "w": 4}})
+        """)
+        return ast.parse(code).body
+
+    def _create_varargs_overflow(self, prefix: str) -> list[ast.stmt]:
+        """Star-call with progressively more arguments, exceeding arity."""
+        code = dedent(f"""
+            def _fixed_{prefix}(a, b, c):
+                return a + b + c
+
+            def _with_defaults_{prefix}(a, b=2, c=3):
+                return a + b + c
+
+            # Phase 1: Warm up with correct arity
+            for _i_{prefix} in range(200):
+                _args_{prefix} = (1, 2, 3)
+                _fixed_{prefix}(*_args_{prefix})
+
+            # Phase 2: Wrong arity — too few, too many
+            for _j_{prefix} in range(100):
+                _nargs_{prefix} = (_j_{prefix} % 5) + 1
+                _args_{prefix} = tuple(range(_nargs_{prefix}))
+                try:
+                    _fixed_{prefix}(*_args_{prefix})
+                except TypeError:
+                    pass
+
+            # Phase 3: Overflow with defaults
+            for _k_{prefix} in range(200):
+                _nargs_{prefix} = (_k_{prefix} % 6)
+                _args_{prefix} = tuple(range(_nargs_{prefix}))
+                try:
+                    _with_defaults_{prefix}(*_args_{prefix})
+                except TypeError:
+                    pass
+
+            # Phase 4: Star-call with mixed args and kwargs
+            for _m_{prefix} in range(200):
+                _args_{prefix} = (1,)
+                _kwargs_{prefix} = {{"b": 2}}
+                if _m_{prefix} % 3 == 0:
+                    _kwargs_{prefix}["c"] = 3
+                if _m_{prefix} % 5 == 0:
+                    _kwargs_{prefix}["d"] = 4  # Extra kwarg — TypeError
+                try:
+                    _fixed_{prefix}(*_args_{prefix}, **_kwargs_{prefix})
+                except TypeError:
+                    pass
+        """)
+        return ast.parse(code).body
+
+    def _create_custom_mapping_kwargs(self, prefix: str) -> list[ast.stmt]:
+        """Custom Mapping for **kwargs with side effects in __getitem__/__iter__."""
+        code = dedent(f"""
+            from collections.abc import Mapping
+
+            class _EvilKwargs_{prefix}(Mapping):
+                def __init__(self, data):
+                    self._data = dict(data)
+                    self._access_count = 0
+
+                def __getitem__(self, key):
+                    self._access_count += 1
+                    # Every 20th access, change a value
+                    if self._access_count % 20 == 0:
+                        for k in list(self._data):
+                            self._data[k] = str(self._data[k])
+                    return self._data[key]
+
+                def __iter__(self):
+                    # Return keys in reverse order sometimes
+                    if self._access_count % 3 == 0:
+                        return reversed(list(self._data.keys()))
+                    return iter(self._data)
+
+                def __len__(self):
+                    return len(self._data)
+
+                def keys(self):
+                    return self._data.keys()
+
+            def _km_target_{prefix}(**kwargs):
+                return sum(v for v in kwargs.values() if isinstance(v, (int, float)))
+
+            # Phase 1: Warm up with regular dict
+            for _i_{prefix} in range(200):
+                _km_target_{prefix}(**{{"a": 1, "b": 2}})
+
+            # Phase 2: Use evil mapping
+            _ek_{prefix} = _EvilKwargs_{prefix}({{"a": 1, "b": 2, "c": 3}})
+            for _j_{prefix} in range(200):
+                try:
+                    _km_target_{prefix}(**_ek_{prefix})
+                except (TypeError, ValueError):
+                    pass
+        """)
+        return ast.parse(code).body
+
+    def _create_mixed_star_explicit(self, prefix: str) -> list[ast.stmt]:
+        """Combine *args with explicit keywords that override **kwargs entries."""
+        code = dedent(f"""
+            def _mx_target_{prefix}(a, b, c, d=4):
+                return a + b + c + d
+
+            # Phase 1: Warm up — *args + **kwargs, no conflict
+            for _i_{prefix} in range(200):
+                _args_{prefix} = (1, 2)
+                _kwargs_{prefix} = {{"c": 3, "d": 4}}
+                _mx_target_{prefix}(*_args_{prefix}, **_kwargs_{prefix})
+
+            # Phase 2: **kwargs conflicts with explicit keyword
+            for _j_{prefix} in range(200):
+                _args_{prefix} = (1,)
+                _kwargs_{prefix} = {{"b": 2, "c": 3}}
+                try:
+                    # Explicit d=10 plus **kwargs with d would be error
+                    if _j_{prefix} % 2 == 0:
+                        _mx_target_{prefix}(*_args_{prefix}, **_kwargs_{prefix}, d=10)
+                    else:
+                        _kwargs_{prefix}["d"] = 99
+                        _mx_target_{prefix}(*_args_{prefix}, **_kwargs_{prefix})
+                except TypeError:
+                    pass
+
+            # Phase 3: Args cover some positionals, kwargs cover rest + overlap
+            for _k_{prefix} in range(200):
+                _n_{prefix} = _k_{prefix} % 4
+                _args_{prefix} = tuple(range(_n_{prefix}))
+                _keys_{prefix} = ["a", "b", "c", "d"]
+                _kwargs_{prefix} = {{k: _k_{prefix} for k in _keys_{prefix}[_n_{prefix}:]}}
+                # Sometimes add overlapping key
+                if _k_{prefix} % 7 == 0 and _n_{prefix} > 0:
+                    _kwargs_{prefix}[_keys_{prefix}[0]] = 999  # Overlap with positional
+                try:
+                    _mx_target_{prefix}(*_args_{prefix}, **_kwargs_{prefix})
+                except TypeError:
+                    pass
+        """)
+        return ast.parse(code).body
+
+    def _create_nested_star_delegation(self, prefix: str) -> list[ast.stmt]:
+        """f(*args) calls g(*args) — chain of CALL_FUNCTION_EX frames."""
+        code = dedent(f"""
+            def _inner_{prefix}(*args, **kwargs):
+                total = 0
+                for a in args:
+                    total += a if isinstance(a, (int, float)) else 0
+                for v in kwargs.values():
+                    total += v if isinstance(v, (int, float)) else 0
+                return total
+
+            def _middle_{prefix}(*args, **kwargs):
+                # Forward everything — nested CALL_FUNCTION_EX
+                return _inner_{prefix}(*args, **kwargs)
+
+            def _outer_{prefix}(*args, **kwargs):
+                # Double nesting
+                return _middle_{prefix}(*args, **kwargs)
+
+            # Phase 1: Warm up the full chain
+            for _i_{prefix} in range(200):
+                _outer_{prefix}(1, 2, 3, x=4, y=5)
+
+            # Phase 2: Vary args at each level
+            for _j_{prefix} in range(200):
+                _nargs_{prefix} = (_j_{prefix} % 6) + 1
+                _args_{prefix} = tuple(range(_nargs_{prefix}))
+                _kwargs_{prefix} = {{f"k{{_j_{prefix} % 3}}": _j_{prefix}}}
+                try:
+                    _outer_{prefix}(*_args_{prefix}, **_kwargs_{prefix})
+                except TypeError:
+                    pass
+
+            # Phase 3: Swap inner function mid-loop
+            _orig_inner_{prefix} = _inner_{prefix}
+
+            def _replacement_inner_{prefix}(*args, **kwargs):
+                return "not_a_number"
+
+            for _k_{prefix} in range(200):
+                if _k_{prefix} == 100:
+                    # Monkey-patch inner — middle's *args forwarding now
+                    # goes to a function with different return type
+                    globals()[f"_inner_{prefix}"] = _replacement_inner_{prefix}
+                try:
+                    _outer_{prefix}(1, 2, 3)
+                except TypeError:
+                    pass
+
+            # Restore
+            globals()[f"_inner_{prefix}"] = _orig_inner_{prefix}
+        """)
+        return ast.parse(code).body
+
+
+class SliceObjectChaosMutator(ast.NodeTransformer):
+    """
+    Attack the JIT's slice type tracking and guard elimination.
+
+    Since Feb 2025, the optimizer eliminates redundant _GUARD_TOS_SLICE
+    when it knows the TOS is a slice, and optimizes _BINARY_OP_SUBSCR_LIST_SLICE.
+    This mutator creates scenarios where slice objects become non-slice
+    at runtime, or where slice behavior changes mid-loop.
+
+    Attack vectors:
+    1. slice_to_int_swap: Alternate between slice objects and integer indices
+       in the same subscript position to confuse type tracking.
+    2. slice_subclass: Use slice subclasses with dynamic start/stop/step
+       attributes or overridden __index__ methods.
+    3. guard_elimination_violation: After the first guarded slice access,
+       replace the slice variable with a non-slice object for the second
+       (unguarded) access.
+    4. mutating_slice: Slice-like objects whose start/stop/step change
+       between the guard check and the actual subscript operation.
+    5. slice_in_container_ops: Use slices in contexts where the optimizer
+       tracks their type — list slicing, tuple slicing, string slicing —
+       then corrupt them.
+    6. nested_slice: `x[s1][s2]` where the optimizer tracks both slice
+       objects; corrupt one after the first is guarded.
+    """
+
+    ATTACK_SCENARIOS = [
+        "slice_to_int_swap",
+        "slice_subclass",
+        "guard_elimination_violation",
+        "mutating_slice",
+        "slice_in_container_ops",
+        "nested_slice",
+    ]
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> ast.FunctionDef:
+        self.generic_visit(node)
+
+        if not node.name.startswith("uop_harness") or not node.body:
+            return node
+
+        if random.random() < 0.12:  # 12% chance
+            attack = random.choice(self.ATTACK_SCENARIOS)
+            p_prefix = f"slchaos_{random.randint(1000, 9999)}"
+
+            print(
+                f"    -> Injecting slice object chaos ({attack}) with prefix '{p_prefix}'",
+                file=sys.stderr,
+            )
+
+            scenario_ast = getattr(self, f"_create_{attack}")(p_prefix)
+
+            injection_point = random.randint(0, len(node.body))
+            node.body[injection_point:injection_point] = scenario_ast
+            ast.fix_missing_locations(node)
+
+        return node
+
+    def _create_slice_to_int_swap(self, prefix: str) -> list[ast.stmt]:
+        """Alternate between slice and int in the same subscript position."""
+        code = dedent(f"""
+            _lst_{prefix} = list(range(20))
+
+            # Phase 1: Warm up with slice — JIT tracks _GUARD_TOS_SLICE
+            _sl_{prefix} = slice(0, 5)
+            for _i_{prefix} in range(200):
+                _r_{prefix} = _lst_{prefix}[_sl_{prefix}]
+
+            # Phase 2: Replace slice var with integer
+            _sl_{prefix} = 3  # Now an int, not a slice
+            for _j_{prefix} in range(100):
+                try:
+                    _r_{prefix} = _lst_{prefix}[_sl_{prefix}]  # Guard skipped?
+                except TypeError:
+                    pass
+
+            # Phase 3: Rapid alternation
+            for _k_{prefix} in range(300):
+                if _k_{prefix} % 2 == 0:
+                    _idx_{prefix} = slice(0, 3)
+                else:
+                    _idx_{prefix} = _k_{prefix} % len(_lst_{prefix})
+                try:
+                    _r_{prefix} = _lst_{prefix}[_idx_{prefix}]
+                except (TypeError, IndexError):
+                    pass
+
+            # Phase 4: Alternate between slice and tuple (neither int nor slice)
+            for _m_{prefix} in range(200):
+                if _m_{prefix} % 3 == 0:
+                    _idx_{prefix} = slice(1, 4)
+                elif _m_{prefix} % 3 == 1:
+                    _idx_{prefix} = 2
+                else:
+                    _idx_{prefix} = (1, 2)  # Tuple index — different path
+                try:
+                    _r_{prefix} = _lst_{prefix}[_idx_{prefix}]
+                except (TypeError, IndexError):
+                    pass
+        """)
+        return ast.parse(code).body
+
+    def _create_slice_subclass(self, prefix: str) -> list[ast.stmt]:
+        """
+        Slice-like objects that the guard might accept as slices.
+
+        Note: slice itself cannot be subclassed in CPython, so we create
+        objects that behave like slices via __index__ on start/stop/step.
+        """
+        code = dedent(f"""
+            class _DynamicIndex_{prefix}:
+                '''Index that changes value on each access.'''
+                def __init__(self, start_val):
+                    self._val = start_val
+                    self._access_count = 0
+
+                def __index__(self):
+                    self._access_count += 1
+                    result = self._val
+                    # Shift value every 10 accesses
+                    if self._access_count % 10 == 0:
+                        self._val += 1
+                    return result
+
+            _lst_{prefix} = list(range(100))
+
+            # Phase 1: Warm up with normal slice
+            _sl_{prefix} = slice(0, 5)
+            for _i_{prefix} in range(200):
+                _r_{prefix} = _lst_{prefix}[_sl_{prefix}]
+
+            # Phase 2: Slice with dynamic indices
+            _start_{prefix} = _DynamicIndex_{prefix}(0)
+            _stop_{prefix} = _DynamicIndex_{prefix}(10)
+            for _j_{prefix} in range(300):
+                _sl_{prefix} = slice(_start_{prefix}, _stop_{prefix})
+                try:
+                    _r_{prefix} = _lst_{prefix}[_sl_{prefix}]
+                except (TypeError, ValueError, IndexError):
+                    pass
+
+            # Phase 3: Slice with step that changes
+            _step_{prefix} = _DynamicIndex_{prefix}(1)
+            for _k_{prefix} in range(200):
+                _sl_{prefix} = slice(0, 20, _step_{prefix})
+                try:
+                    _r_{prefix} = _lst_{prefix}[_sl_{prefix}]
+                except (TypeError, ValueError, IndexError):
+                    pass
+
+            # Phase 4: Slice with None/negative indices
+            for _m_{prefix} in range(200):
+                _start_val_{prefix} = None if _m_{prefix} % 3 == 0 else _m_{prefix} % 10
+                _stop_val_{prefix} = None if _m_{prefix} % 5 == 0 else -(_m_{prefix} % 5)
+                _sl_{prefix} = slice(_start_val_{prefix}, _stop_val_{prefix})
+                try:
+                    _r_{prefix} = _lst_{prefix}[_sl_{prefix}]
+                except (TypeError, IndexError):
+                    pass
+        """)
+        return ast.parse(code).body
+
+    def _create_guard_elimination_violation(self, prefix: str) -> list[ast.stmt]:
+        """
+        Reproduce the test pattern from test_remove_guard_for_known_type_slice.
+
+        First access is guarded, second skips guard. Replace the slice
+        variable between accesses.
+        """
+        code = dedent(f"""
+            _lst_{prefix} = list(range(50))
+
+            def _double_access_{prefix}(lst, idx):
+                # First access: guarded _GUARD_TOS_SLICE
+                r1 = lst[idx]
+                # Second access: guard eliminated — optimizer trusts idx is slice
+                r2 = lst[idx]
+                return r1, r2
+
+            # Phase 1: Warm up with slice — both accesses optimized
+            _sl_{prefix} = slice(0, 5)
+            for _i_{prefix} in range(200):
+                _double_access_{prefix}(_lst_{prefix}, _sl_{prefix})
+
+            # Phase 2: Call with a non-slice — second access skipped guard
+            for _j_{prefix} in range(100):
+                try:
+                    _double_access_{prefix}(_lst_{prefix}, _j_{prefix} % 10)
+                except (TypeError, IndexError):
+                    pass
+
+            # Phase 3: Alternate slice/non-slice rapidly
+            for _k_{prefix} in range(300):
+                if _k_{prefix} % 2 == 0:
+                    _idx_{prefix} = slice(1, 3)
+                else:
+                    _idx_{prefix} = _k_{prefix} % len(_lst_{prefix})
+                try:
+                    _double_access_{prefix}(_lst_{prefix}, _idx_{prefix})
+                except (TypeError, IndexError):
+                    pass
+        """)
+        return ast.parse(code).body
+
+    def _create_mutating_slice(self, prefix: str) -> list[ast.stmt]:
+        """
+        Slice objects created from mutable state that changes between
+        construction and use.
+        """
+        code = dedent(f"""
+            _lst_{prefix} = list(range(100))
+            _state_{prefix} = {{"start": 0, "stop": 10}}
+
+            def _make_slice_{prefix}():
+                return slice(_state_{prefix}["start"], _state_{prefix}["stop"])
+
+            # Phase 1: Warm up with stable state
+            for _i_{prefix} in range(200):
+                _sl_{prefix} = _make_slice_{prefix}()
+                _r_{prefix} = _lst_{prefix}[_sl_{prefix}]
+
+            # Phase 2: Mutate state between slice creation and use
+            for _j_{prefix} in range(300):
+                _sl_{prefix} = _make_slice_{prefix}()
+                # Mutate state AFTER creating slice but BEFORE using it
+                _state_{prefix}["start"] = (_j_{prefix} % 20)
+                _state_{prefix}["stop"] = ((_j_{prefix} % 20) + 10)
+                # The slice was created with OLD values but state now differs
+                try:
+                    _r_{prefix} = _lst_{prefix}[_sl_{prefix}]
+                except (IndexError, TypeError):
+                    pass
+
+            # Phase 3: Create slice, use once (guarded), mutate, use again (unguarded)
+            for _k_{prefix} in range(200):
+                _sl_{prefix} = slice(0, 5)
+                _r1_{prefix} = _lst_{prefix}[_sl_{prefix}]  # Guarded
+                # "Mutate" by rebinding to a different slice
+                if _k_{prefix} % 3 == 0:
+                    _sl_{prefix} = slice(5, 10)  # Different slice
+                elif _k_{prefix} % 3 == 1:
+                    _sl_{prefix} = 3  # Not a slice at all!
+                _r2_{prefix} = _lst_{prefix}[_sl_{prefix}] if isinstance(_sl_{prefix}, (slice, int)) else None
+        """)
+        return ast.parse(code).body
+
+    def _create_slice_in_container_ops(self, prefix: str) -> list[ast.stmt]:
+        """
+        Slices across different container types — list, tuple, string, bytes.
+        The optimizer may specialize differently for each.
+        """
+        code = dedent(f"""
+            _list_{prefix} = list(range(50))
+            _tuple_{prefix} = tuple(range(50))
+            _string_{prefix} = "abcdefghijklmnopqrstuvwxyz" * 2
+            _bytes_{prefix} = bytes(range(50))
+
+            _sl_{prefix} = slice(5, 15)
+
+            # Phase 1: Warm up list slicing
+            for _i_{prefix} in range(200):
+                _r_{prefix} = _list_{prefix}[_sl_{prefix}]
+
+            # Phase 2: Switch to tuple — same slice, different container type
+            for _j_{prefix} in range(200):
+                _r_{prefix} = _tuple_{prefix}[_sl_{prefix}]
+
+            # Phase 3: Switch to string
+            for _k_{prefix} in range(200):
+                _r_{prefix} = _string_{prefix}[_sl_{prefix}]
+
+            # Phase 4: Rapid container rotation with same slice
+            _containers_{prefix} = [_list_{prefix}, _tuple_{prefix}, _string_{prefix}, _bytes_{prefix}]
+            for _m_{prefix} in range(400):
+                _c_{prefix} = _containers_{prefix}[_m_{prefix} % 4]
+                _r_{prefix} = _c_{prefix}[_sl_{prefix}]
+
+            # Phase 5: STORE_SLICE — list only
+            for _n_{prefix} in range(200):
+                _list_{prefix}[_sl_{prefix}] = [99] * 10  # STORE_SLICE
+                if _n_{prefix} % 20 == 0:
+                    _list_{prefix} = list(range(50))  # Reset
+        """)
+        return ast.parse(code).body
+
+    def _create_nested_slice(self, prefix: str) -> list[ast.stmt]:
+        """Nested slicing: x[s1][s2] where optimizer tracks both slice types."""
+        code = dedent(f"""
+            _lst_{prefix} = [list(range(20)) for _ in range(20)]
+
+            _s1_{prefix} = slice(2, 8)
+            _s2_{prefix} = slice(0, 3)
+
+            # Phase 1: Warm up nested slicing
+            for _i_{prefix} in range(200):
+                _sub_{prefix} = _lst_{prefix}[_s1_{prefix}]  # Guarded: list of lists
+                _r_{prefix} = _sub_{prefix}[_s2_{prefix}]    # Guarded: sublist
+
+            # Phase 2: Corrupt s2 after s1 is guarded
+            for _j_{prefix} in range(200):
+                _sub_{prefix} = _lst_{prefix}[_s1_{prefix}]
+                if _j_{prefix} % 3 == 0:
+                    _s2_{prefix} = slice(1, 4)  # Different slice
+                elif _j_{prefix} % 3 == 1:
+                    _s2_{prefix} = 2  # Not a slice
+                else:
+                    _s2_{prefix} = slice(0, 3)  # Original
+                try:
+                    _r_{prefix} = _sub_{prefix}[_s2_{prefix}]
+                except (TypeError, IndexError):
+                    pass
+
+            # Phase 3: Flat list with chained slice
+            _flat_{prefix} = list(range(100))
+            for _k_{prefix} in range(200):
+                _r_{prefix} = _flat_{prefix}[slice(10, 50)][slice(0, 5)]
+                # Now same but with variable that changes
+                if _k_{prefix} % 2 == 0:
+                    _inner_{prefix} = slice(0, 5)
+                else:
+                    _inner_{prefix} = 3
+                try:
+                    _r_{prefix} = _flat_{prefix}[slice(10, 50)][_inner_{prefix}]
+                except (TypeError, IndexError):
+                    pass
+        """)
+        return ast.parse(code).body

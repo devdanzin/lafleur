@@ -34,7 +34,6 @@ from lafleur.mutators.generic import (
     OperatorSwapper,
     PatternMatchingMutator,
     SliceMutator,
-    # StatementDuplicator,
     StringInterpolationMutator,
     SysMonitoringMutator,
     UnpackingMutator,
@@ -166,7 +165,7 @@ class ASTMutator:
             GuardExhaustionGenerator,
             InlineCachePolluter,
             SideEffectInjector,
-            # StatementDuplicator,
+            # StatementDuplicator — moved to hygiene layer (MutationController.HYGIENE_MUTATORS)
             ForLoopInjector,
             GlobalInvalidator,
             LoadAttrPolluter,

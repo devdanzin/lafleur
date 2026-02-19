@@ -971,35 +971,43 @@ class TestHygienePass(unittest.TestCase):
 
     def test_hygiene_mutators_applied_when_random_below_threshold(self):
         """Test that hygiene mutators run when RANDOM.random() < probability."""
-        # 3 hygiene mutators with probabilities 0.15, 0.20, 0.25
+        # 4 hygiene mutators with probabilities 0.15, 0.20, 0.08, 0.05
         # Provide values below all thresholds so all fire
-        info = self._run_strategy([0.01, 0.01, 0.01])
+        info = self._run_strategy([0.01, 0.01, 0.01, 0.01])
         transformers = info.get("transformers", [])
         self.assertIn("ImportChaosMutator", transformers)
         self.assertIn("ImportPrunerMutator", transformers)
+        self.assertIn("StatementDuplicator", transformers)
         self.assertIn("RedundantStatementSanitizer", transformers)
 
     def test_hygiene_mutators_skipped_when_random_above_threshold(self):
         """Test that hygiene mutators are skipped when random is high."""
-        info = self._run_strategy([0.99, 0.99, 0.99])
+        info = self._run_strategy([0.99, 0.99, 0.99, 0.99])
         transformers = info.get("transformers", [])
         for cls, _ in MutationController.HYGIENE_MUTATORS:
             self.assertNotIn(cls.__name__, transformers)
 
     def test_hygiene_mutators_partial_application(self):
         """Test that only some hygiene mutators fire based on probability."""
-        # First below 0.15, second above 0.20, third below 0.25
-        info = self._run_strategy([0.10, 0.50, 0.10])
+        # First below 0.15, second above 0.20, third below 0.08, fourth above 0.05
+        info = self._run_strategy([0.10, 0.50, 0.05, 0.50])
         transformers = info.get("transformers", [])
         self.assertIn("ImportChaosMutator", transformers)
         self.assertNotIn("ImportPrunerMutator", transformers)
-        self.assertIn("RedundantStatementSanitizer", transformers)
+        self.assertIn("StatementDuplicator", transformers)
+        self.assertNotIn("RedundantStatementSanitizer", transformers)
 
     def test_hygiene_class_constant_has_expected_entries(self):
         """Test HYGIENE_MUTATORS constant has exactly the expected mutators."""
         names = [cls.__name__ for cls, _ in MutationController.HYGIENE_MUTATORS]
         self.assertEqual(
-            names, ["ImportChaosMutator", "ImportPrunerMutator", "RedundantStatementSanitizer"]
+            names,
+            [
+                "ImportChaosMutator",
+                "ImportPrunerMutator",
+                "StatementDuplicator",
+                "RedundantStatementSanitizer",
+            ],
         )
 
 
@@ -1023,6 +1031,7 @@ class TestRecordSuccessHygieneFiltering(unittest.TestCase):
                     "OperatorSwapper",
                     "ImportChaosMutator",
                     "ImportPrunerMutator",
+                    "StatementDuplicator",
                     "RedundantStatementSanitizer",
                 ],
             },

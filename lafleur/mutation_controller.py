@@ -25,7 +25,7 @@ from lafleur.mutators import (
     RedundantStatementSanitizer,
     SlicingMutator,
 )
-from lafleur.mutators.generic import ImportChaosMutator, ImportPrunerMutator
+from lafleur.mutators.generic import ImportChaosMutator, ImportPrunerMutator, StatementDuplicator
 from lafleur.mutators.sniper import SniperMutator
 from lafleur.mutators.helper_injection import HelperFunctionInjector
 
@@ -56,7 +56,8 @@ class MutationController:
     HYGIENE_MUTATORS: list[tuple[type[ast.NodeTransformer], float]] = [
         (ImportChaosMutator, 0.15),
         (ImportPrunerMutator, 0.20),
-        (RedundantStatementSanitizer, 0.25),
+        (StatementDuplicator, 0.08),
+        (RedundantStatementSanitizer, 0.05),
     ]
 
     def __init__(

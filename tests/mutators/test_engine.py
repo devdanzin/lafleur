@@ -20,6 +20,7 @@ from lafleur.mutators.generic import (
     ImportChaosMutator,
     ImportPrunerMutator,
     OperatorSwapper,
+    StatementDuplicator,
 )
 from lafleur.mutators.utils import RedundantStatementSanitizer
 from lafleur.mutators.utils import (
@@ -405,6 +406,7 @@ class TestASTMutator(unittest.TestCase):
             ImportChaosMutator,  # Hygiene mutator, applied separately
             ImportPrunerMutator,  # Hygiene mutator, applied separately
             RedundantStatementSanitizer,  # Hygiene mutator, applied separately
+            StatementDuplicator,  # Hygiene mutator, applied separately
         }
         expected = imported_transformers - excluded
 

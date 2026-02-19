@@ -26,6 +26,7 @@ from lafleur.utils import ExecutionResult
 if TYPE_CHECKING:
     from lafleur.artifacts import ArtifactManager
     from lafleur.corpus_manager import CorpusManager
+    from lafleur.health import HealthMonitor
 
 # Coverage types tracked by the fuzzer
 COVERAGE_TYPES = ("uops", "edges", "rare_events")
@@ -249,6 +250,7 @@ class ScoringManager:
         corpus_manager: "CorpusManager | None" = None,
         get_core_code_func: Callable[[str], str] | None = None,
         run_stats: dict | None = None,
+        health_monitor: "HealthMonitor | None" = None,
     ):
         """
         Initialize the ScoringManager.
@@ -260,6 +262,7 @@ class ScoringManager:
             corpus_manager: CorpusManager for known_hashes lookup
             get_core_code_func: Function to extract core code from source
             run_stats: Run statistics dictionary for updating counters
+            health_monitor: Optional HealthMonitor for adverse event tracking
         """
         self.coverage_manager = coverage_manager
         self.timing_fuzz = timing_fuzz
@@ -267,6 +270,7 @@ class ScoringManager:
         self.corpus_manager = corpus_manager
         self._get_core_code = get_core_code_func
         self.run_stats = run_stats
+        self.health_monitor = health_monitor
 
     def find_new_coverage(
         self,
@@ -675,6 +679,8 @@ class ScoringManager:
                 f"Discarding to prevent corpus poisoning.",
                 file=sys.stderr,
             )
+            if self.health_monitor:
+                self.health_monitor.record_core_code_syntax_error(parent_id, str(e))
             return {"status": "NO_CHANGE"}
 
         content_hash = hashlib.sha256(core_code_to_save.encode("utf-8")).hexdigest()
@@ -685,6 +691,8 @@ class ScoringManager:
                 f"  [~] New coverage found, but this is a known duplicate behavior (ContentHash: {content_hash[:10]}, CoverageHash: {coverage_hash[:10]}). Skipping.",
                 file=sys.stderr,
             )
+            if self.health_monitor:
+                self.health_monitor.record_duplicate_rejected(content_hash, coverage_hash)
             return {"status": "NO_CHANGE"}
 
         # This is the crucial step: if it's new and not a duplicate, we commit the coverage.

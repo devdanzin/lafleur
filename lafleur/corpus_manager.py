@@ -15,10 +15,14 @@ import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable
+from typing import TYPE_CHECKING, Any, Callable
 
 from lafleur.coverage import save_coverage_state, CoverageManager
+from lafleur.health import FILE_SIZE_WARNING_THRESHOLD
 from lafleur.utils import ExecutionResult, FUZZING_ENV
+
+if TYPE_CHECKING:
+    from lafleur.health import HealthMonitor
 
 TMP_DIR = Path("tmp_fuzz_run")
 CORPUS_DIR = Path("corpus") / "jit_interesting_tests"
@@ -138,6 +142,8 @@ class CorpusManager:
         self.scheduler = CorpusScheduler(self.coverage_state)
         self.known_hashes: set[tuple[str, str]] = set()
         self.corpus_file_counter = self.run_stats.get("corpus_file_counter", 0)
+
+        self.health_monitor: HealthMonitor | None = None
 
         self.fusil_path_is_valid = False
         if self.fusil_path:
@@ -352,6 +358,11 @@ class CorpusManager:
         corpus_filepath = CORPUS_DIR / new_filename
         corpus_filepath.write_text(core_code)
         print(f"[+] Added minimized file to corpus: {new_filename}")
+
+        # Check file size for health monitoring
+        core_size = len(core_code.encode("utf-8"))
+        if self.health_monitor and core_size > FILE_SIZE_WARNING_THRESHOLD:
+            self.health_monitor.record_file_size_warning(new_filename, core_size)
 
         parent_metadata = (
             self.coverage_state.state["per_file_coverage"].get(parent_id, {}) if parent_id else {}

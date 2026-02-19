@@ -381,6 +381,7 @@ class TestExecuteMutationAndAnalysisCycle(unittest.TestCase):
         self.orchestrator.use_dynamic_runs = False
         self.orchestrator.base_runs = 3
         self.orchestrator._last_heartbeat_time = float("inf")
+        self.orchestrator.health_monitor = MagicMock()
         self.orchestrator.corpus_manager = MagicMock()
         self.orchestrator.execution_manager = MagicMock()
         self.orchestrator.mutation_controller = MagicMock()
@@ -742,6 +743,7 @@ class TestRunStatsKeyErrorWithEmptyStats(unittest.TestCase):
         self.orchestrator.base_runs = 1
         self.orchestrator.keep_tmp_logs = False
         self.orchestrator._last_heartbeat_time = float("inf")
+        self.orchestrator.health_monitor = MagicMock()
         self.orchestrator.corpus_manager = MagicMock()
         self.orchestrator.corpus_manager.add_new_file.return_value = "new_child.py"
         self.orchestrator.corpus_manager.scheduler = MagicMock()
@@ -859,6 +861,7 @@ class TestHandleAnalysisDataFlowControl(unittest.TestCase):
         self.orchestrator.artifact_manager = MagicMock()
         self.orchestrator.score_tracker = MagicMock()
         self.orchestrator.timing_fuzz = False
+        self.orchestrator.health_monitor = MagicMock()
         self.parent_metadata = {}
 
     def test_divergence_returns_break_with_filename(self):
@@ -951,6 +954,7 @@ class TestPrepareParentContext(unittest.TestCase):
                 }
             }
         }
+        self.orchestrator.health_monitor = MagicMock()
         self.orchestrator.mutation_controller = MagicMock()
         self.orchestrator.use_dynamic_runs = False
         self.orchestrator.base_runs = 3
@@ -1133,6 +1137,7 @@ class TestExecuteSingleMutation(unittest.TestCase):
         self.orchestrator.keep_tmp_logs = False
         self.orchestrator.differential_testing = False
         self.orchestrator.timing_fuzz = False
+        self.orchestrator.health_monitor = MagicMock()
         self.orchestrator.corpus_manager = MagicMock()
         self.orchestrator.corpus_manager.add_new_file.return_value = "new_child.py"
         self.orchestrator.execution_manager = MagicMock()

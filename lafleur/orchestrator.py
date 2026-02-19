@@ -27,6 +27,7 @@ from pathlib import Path
 from textwrap import dedent
 
 from lafleur.corpus_manager import CORPUS_DIR, CorpusManager
+from lafleur.health import HealthMonitor
 from lafleur.coverage import CoverageManager, load_coverage_state
 from lafleur.analysis import CrashFingerprinter
 from lafleur.artifacts import ArtifactManager, TelemetryManager
@@ -176,6 +177,11 @@ class LafleurOrchestrator:
             RUN_LOGS_DIR.mkdir(exist_ok=True)
             print(f"[+] Retaining temporary run logs in: {RUN_LOGS_DIR}")
 
+        # Initialize the health monitor for adverse event tracking
+        self.health_monitor = HealthMonitor(log_path=LOGS_DIR / "health_events.jsonl")
+        self.mutation_controller.health_monitor = self.health_monitor
+        self.corpus_manager.health_monitor = self.health_monitor
+
         run_timestamp = self.run_stats.get("start_time", datetime.now(timezone.utc).isoformat())
         # Sanitize timestamp for use in filename
         safe_timestamp = run_timestamp.replace(":", "-").replace("+", "Z")
@@ -194,6 +200,7 @@ class LafleurOrchestrator:
             max_timeout_log_bytes=max_timeout_log_bytes,
             max_crash_log_bytes=max_crash_log_bytes,
             session_fuzz=session_fuzz,
+            health_monitor=self.health_monitor,
         )
 
         # Initialize the telemetry manager for run stats and time-series logging
@@ -213,6 +220,7 @@ class LafleurOrchestrator:
             corpus_manager=self.corpus_manager,
             get_core_code_func=self.mutation_controller._get_core_code,
             run_stats=self.run_stats,
+            health_monitor=self.health_monitor,
         )
 
         # Initialize the execution manager for running child processes
@@ -363,7 +371,12 @@ class LafleurOrchestrator:
             self.score_tracker.save_state()
 
     def _handle_analysis_data(
-        self, analysis_data: dict, i: int, parent_metadata: dict, nojit_cv: float | None
+        self,
+        analysis_data: dict,
+        i: int,
+        parent_metadata: dict,
+        nojit_cv: float | None,
+        parent_id: str = "unknown",
     ) -> tuple[FlowControl, str | None]:
         """Process the result from analyze_run and update fuzzer state.
 
@@ -413,6 +426,10 @@ class LafleurOrchestrator:
             )
             if parent_metadata["mutations_since_last_find"] > CORPUS_STERILITY_LIMIT:
                 parent_metadata["is_sterile"] = True
+                self.health_monitor.record_corpus_sterility(
+                    parent_id=parent_id,
+                    mutations_since_last_find=parent_metadata["mutations_since_last_find"],
+                )
             return FlowControl.NONE, None
 
     def _check_timing_regression(
@@ -509,6 +526,9 @@ class LafleurOrchestrator:
                     f"  [!] Marking {parent_id} as sterile (unparseable or missing harness).",
                     file=sys.stderr,
                 )
+            self.health_monitor.record_parent_parse_failure(
+                parent_id, "unparseable or missing harness"
+            )
             return None
 
         # Retrieve watched dependencies from parent metadata
@@ -587,6 +607,7 @@ class LafleurOrchestrator:
                     runtime_seed,
                 )
                 if not child_source:
+                    self.health_monitor.record_child_script_none(ctx.parent_id, mutation_seed)
                     continue
 
                 exec_result, stat_key = self.execution_manager.execute_child(
@@ -594,6 +615,10 @@ class LafleurOrchestrator:
                 )
                 if stat_key:
                     self.run_stats[stat_key] = self.run_stats.get(stat_key, 0) + 1
+                if stat_key == "timeout_count":
+                    self.health_monitor.record_timeout(ctx.parent_id)
+                else:
+                    self.health_monitor.reset_timeout_streak()
                 if not exec_result:
                     continue
 
@@ -609,7 +634,11 @@ class LafleurOrchestrator:
 
                 nojit_cv = exec_result.nojit_cv
                 flow_control, returned_filename = self._handle_analysis_data(
-                    analysis_data, mutation_index, ctx.parent_metadata, nojit_cv
+                    analysis_data,
+                    mutation_index,
+                    ctx.parent_metadata,
+                    nojit_cv,
+                    ctx.parent_id,
                 )
 
                 if flow_control in (FlowControl.BREAK, FlowControl.CONTINUE):
@@ -685,6 +714,11 @@ class LafleurOrchestrator:
                 ):
                     print(
                         "  [~] Deepening session became sterile. Returning to breadth-first search."
+                    )
+                    self.health_monitor.record_deepening_sterility(
+                        parent_id=ctx.parent_id,
+                        depth=ctx.parent_metadata.get("lineage_depth", 0),
+                        mutations_attempted=mutations_since_last_find_in_session,
                     )
                     return
 

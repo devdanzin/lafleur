@@ -31,6 +31,7 @@ class TestPrepareChildScript(unittest.TestCase):
         self.controller = MutationController.__new__(MutationController)
         self.controller.boilerplate_code = "# Boilerplate\n"
         self.controller.differential_testing = False
+        self.controller.health_monitor = None
 
     def test_assembles_complete_script(self):
         """Test that script includes boilerplate, RNG setup, and core code."""

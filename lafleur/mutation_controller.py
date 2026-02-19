@@ -29,6 +29,7 @@ from lafleur.mutators.helper_injection import HelperFunctionInjector
 
 if TYPE_CHECKING:
     from lafleur.corpus_manager import CorpusManager
+    from lafleur.health import HealthMonitor
     from lafleur.learning import MutatorScoreTracker
 
 # Module-level RNG for mutation operations
@@ -72,6 +73,7 @@ class MutationController:
         self.corpus_manager: CorpusManager | None = corpus_manager
         self.differential_testing = differential_testing
         self.boilerplate_code: str | None = None
+        self.health_monitor: HealthMonitor | None = None
 
     def get_boilerplate(self) -> str:
         """Return the cached boilerplate code."""
@@ -435,6 +437,8 @@ class MutationController:
                 "  [!] Warning: Skipping mutation due to RecursionError during AST transformation.",
                 file=sys.stderr,
             )
+            if self.health_monitor:
+                self.health_monitor.record_mutation_recursion_error("unknown")
             return None, None
 
     def prepare_child_script(
@@ -482,6 +486,8 @@ class MutationController:
                 "  [!] Warning: Skipping mutation due to RecursionError during ast.unparse.",
                 file=sys.stderr,
             )
+            if self.health_monitor:
+                self.health_monitor.record_unparse_recursion_error("unknown")
             return None
 
         except (AttributeError, TypeError, ValueError) as e:

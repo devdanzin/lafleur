@@ -73,7 +73,15 @@ class MyMutator(ast.NodeTransformer):
 1. Add the import to `lafleur/mutators/engine.py` in the appropriate import block (sorted alphabetically within the block for the source module)
 2. Add the class to the `self.transformers` list in `ASTMutator.__init__()`, placed near related mutators
 
-## Step 4: Write tests
+## Step 4: Update CHANGELOG.md
+
+Add an entry under `## [0.1.x] - Unreleased` → `### Added` describing what the mutator does and what JIT weakness it targets. Follow the existing format:
+
+```
+- A `MyMutator` that <what it does> to <JIT weakness targeted>, by @devdanzin.
+```
+
+## Step 5: Write tests
 
 Add tests to the matching test file under `tests/mutators/`:
 
@@ -119,7 +127,7 @@ class TestMyMutator(unittest.TestCase):
         self.assertEqual(ast.dump(mutated), original)
 ```
 
-## Step 5: Verify
+## Step 6: Verify
 
 Run these commands:
 

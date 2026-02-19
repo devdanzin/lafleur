@@ -306,6 +306,15 @@ The mutators are organized into several submodules under `lafleur/mutators/`:
 - Line length: 100 characters
 - Python 3.14+ features are acceptable
 
+### Changelog
+Every user-visible change (new feature, enhancement, bug fix, documentation update) must have a corresponding entry in `CHANGELOG.md` under `## [0.1.x] - Unreleased`. Place the entry in the appropriate section:
+- **Added** — new features, mutators, CLI flags, report sections
+- **Enhanced** — improvements to existing features
+- **Fixed** — bug fixes
+- **Documentation** — documentation-only changes
+
+Format: `- Description of the change, by @devdanzin.`
+
 ### Commit Messages
 Follow Conventional Commits specification:
 - `feat: Add new SideEffectInjector mutator`
@@ -325,7 +334,8 @@ When reviewing AI-generated code:
 2. Create a class inheriting from `ast.NodeTransformer`
 3. Implement visitor methods (`visit_*`) for target AST node types
 4. Import and register in `lafleur/mutators/engine.py`
-5. The learning system will automatically track its effectiveness
+5. Add a CHANGELOG.md entry under Added
+6. The learning system will automatically track its effectiveness
 
 ### Pattern 1: Scenario Injection (preferred for complex mutations)
 ```python

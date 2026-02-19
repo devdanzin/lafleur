@@ -42,6 +42,7 @@ Read existing code before modifying it. Follow patterns already established in t
 - Double quotes for strings
 - Complete type hints on all functions
 - Docstrings on classes and public methods
+- Add an entry to `CHANGELOG.md` under `## [0.1.x] - Unreleased` in the appropriate section (Added/Enhanced/Fixed/Documentation). Format: `- Description, by @devdanzin.`
 
 ## Step 4: Verify
 
@@ -107,3 +108,4 @@ Tell the user:
 - PR URL (merged)
 - Summary of changes made
 - Test results (pass count)
+- Changelog entry

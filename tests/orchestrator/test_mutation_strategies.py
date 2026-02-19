@@ -911,5 +911,127 @@ class TestRunSlicing(unittest.TestCase):
             mock_choices.assert_called_with([mock_t1, mock_t2], weights=custom_weights, k=2)
 
 
+class TestHygienePass(unittest.TestCase):
+    """Test the hygiene mutator pass in apply_mutation_strategy."""
+
+    def setUp(self):
+        """Set up a MutationController with mocked dependencies."""
+        self.controller = MutationController.__new__(MutationController)
+        self.controller.ast_mutator = MagicMock()
+        self.controller.ast_mutator.transformers = [MagicMock, MagicMock]
+        self.controller.score_tracker = MagicMock()
+        self.controller.score_tracker.attempts = defaultdict(int)
+        self.controller.score_tracker.record_attempt.side_effect = (
+            lambda name: self.controller.score_tracker.attempts.__setitem__(
+                name, self.controller.score_tracker.attempts[name] + 1
+            )
+        )
+        self.controller.score_tracker.get_weights.return_value = [1.0, 1.0, 1.0, 1.0]
+        self.controller.corpus_manager = None
+        self.controller.differential_testing = False
+        self.controller.health_monitor = None
+
+        # Set up mock strategy methods
+        self.dummy_tree = ast.parse("x = 1")
+        self.mock_det = MagicMock(
+            return_value=(self.dummy_tree, {"strategy": "deterministic", "transformers": ["Op"]})
+        )
+        self.mock_det.__name__ = "_run_deterministic_stage"
+        self.mock_havoc = MagicMock(
+            return_value=(self.dummy_tree, {"strategy": "havoc", "transformers": ["Op"]})
+        )
+        self.mock_havoc.__name__ = "_run_havoc_stage"
+        self.mock_spam = MagicMock(
+            return_value=(self.dummy_tree, {"strategy": "spam", "transformers": ["Op"]})
+        )
+        self.mock_spam.__name__ = "_run_spam_stage"
+        self.mock_helper = MagicMock(
+            return_value=(self.dummy_tree, {"strategy": "helper_sniper", "transformers": ["Op"]})
+        )
+        self.mock_helper.__name__ = "_run_helper_sniper_stage"
+
+        self.controller._run_deterministic_stage = self.mock_det
+        self.controller._run_havoc_stage = self.mock_havoc
+        self.controller._run_spam_stage = self.mock_spam
+        self.controller._run_helper_sniper_stage = self.mock_helper
+
+    def _run_strategy(self, hygiene_random_values):
+        """Run apply_mutation_strategy with controlled hygiene RANDOM.random() calls."""
+        tree = ast.parse("x = 1")
+
+        with patch("lafleur.mutation_controller.RANDOM") as mock_rng:
+            # RANDOM.seed is called, no-op
+            mock_rng.seed = MagicMock()
+            # RANDOM.choices selects strategy: pick deterministic
+            mock_rng.choices.return_value = [self.mock_det]
+            # RANDOM.random is called once per hygiene mutator
+            mock_rng.random.side_effect = hygiene_random_values
+            _, info = self.controller.apply_mutation_strategy(tree, seed=42)
+        return info
+
+    def test_hygiene_mutators_applied_when_random_below_threshold(self):
+        """Test that hygiene mutators run when RANDOM.random() < probability."""
+        # 3 hygiene mutators with probabilities 0.15, 0.20, 0.25
+        # Provide values below all thresholds so all fire
+        info = self._run_strategy([0.01, 0.01, 0.01])
+        transformers = info.get("transformers", [])
+        self.assertIn("ImportChaosMutator", transformers)
+        self.assertIn("ImportPrunerMutator", transformers)
+        self.assertIn("RedundantStatementSanitizer", transformers)
+
+    def test_hygiene_mutators_skipped_when_random_above_threshold(self):
+        """Test that hygiene mutators are skipped when random is high."""
+        info = self._run_strategy([0.99, 0.99, 0.99])
+        transformers = info.get("transformers", [])
+        for cls, _ in MutationController.HYGIENE_MUTATORS:
+            self.assertNotIn(cls.__name__, transformers)
+
+    def test_hygiene_mutators_partial_application(self):
+        """Test that only some hygiene mutators fire based on probability."""
+        # First below 0.15, second above 0.20, third below 0.25
+        info = self._run_strategy([0.10, 0.50, 0.10])
+        transformers = info.get("transformers", [])
+        self.assertIn("ImportChaosMutator", transformers)
+        self.assertNotIn("ImportPrunerMutator", transformers)
+        self.assertIn("RedundantStatementSanitizer", transformers)
+
+    def test_hygiene_class_constant_has_expected_entries(self):
+        """Test HYGIENE_MUTATORS constant has exactly the expected mutators."""
+        names = [cls.__name__ for cls, _ in MutationController.HYGIENE_MUTATORS]
+        self.assertEqual(
+            names, ["ImportChaosMutator", "ImportPrunerMutator", "RedundantStatementSanitizer"]
+        )
+
+
+class TestRecordSuccessHygieneFiltering(unittest.TestCase):
+    """Test that hygiene mutators are filtered from record_success calls."""
+
+    def test_hygiene_names_filtered_from_record_success(self):
+        """Verify hygiene mutator names are stripped before record_success."""
+        from lafleur.orchestrator import LafleurOrchestrator
+
+        orch = LafleurOrchestrator.__new__(LafleurOrchestrator)
+        orch.run_stats = {}
+        orch.mutations_since_last_find = 0
+        orch.score_tracker = MagicMock()
+
+        analysis_data = {
+            "status": "DIVERGENCE",
+            "mutation_info": {
+                "strategy": "havoc",
+                "transformers": [
+                    "OperatorSwapper",
+                    "ImportChaosMutator",
+                    "ImportPrunerMutator",
+                    "RedundantStatementSanitizer",
+                ],
+            },
+        }
+
+        orch._handle_analysis_data(analysis_data, i=0, parent_metadata={}, nojit_cv=None)
+
+        orch.score_tracker.record_success.assert_called_once_with("havoc", ["OperatorSwapper"])
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

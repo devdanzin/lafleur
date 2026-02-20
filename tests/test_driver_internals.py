@@ -14,6 +14,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from lafleur.driver import (
+    _emit_stats,
     get_jit_stats,
     run_session,
     snapshot_executor_state,
@@ -846,6 +847,155 @@ class TestRunSessionNoEkg(unittest.TestCase):
         for line in stats_lines:
             stats = json.loads(line.split("[DRIVER:STATS] ", 1)[1])
             self.assertTrue(stats["ekg_disabled"])
+
+
+class TestEmitStats(unittest.TestCase):
+    """Tests for the _emit_stats safety wrapper."""
+
+    def test_normal_dict_emits_json(self):
+        """Normal dict produces valid [DRIVER:STATS] JSON line."""
+        captured = StringIO()
+        with patch("sys.stdout", captured):
+            _emit_stats({"file": "test.py", "status": "success", "max_exit_count": 42})
+
+        output = captured.getvalue().strip()
+        self.assertTrue(output.startswith("[DRIVER:STATS]"))
+        json_str = output.split("[DRIVER:STATS] ", 1)[1]
+        parsed = json.loads(json_str)
+        self.assertEqual(parsed["max_exit_count"], 42)
+        self.assertEqual(parsed["status"], "success")
+
+    def test_non_serializable_value_emits_fallback(self):
+        """Dict with non-serializable value triggers fallback path."""
+        bad_value = ctypes.c_int(999)
+
+        captured = StringIO()
+        with patch("sys.stdout", captured):
+            _emit_stats({"file": "test.py", "status": "success", "bad": bad_value})
+
+        output = captured.getvalue()
+        lines = output.strip().splitlines()
+
+        warn_lines = [line for line in lines if "[DRIVER:WARN]" in line]
+        stats_lines = [line for line in lines if "[DRIVER:STATS]" in line]
+
+        self.assertEqual(len(warn_lines), 1, f"Expected 1 WARN line, got: {lines}")
+        self.assertGreaterEqual(len(stats_lines), 1, f"Expected >=1 STATS line, got: {lines}")
+        self.assertIn("serialization failed", warn_lines[0])
+        self.assertIn("c_int", warn_lines[0])
+
+        # The fallback STATS line should be valid JSON
+        last_stats = stats_lines[-1]
+        json_str = last_stats.split("[DRIVER:STATS] ", 1)[1]
+        parsed = json.loads(json_str)
+        self.assertTrue(parsed["_serialization_fallback"])
+        self.assertEqual(parsed["file"], "test.py")
+        self.assertEqual(parsed["status"], "success")
+        self.assertIsInstance(parsed["bad"], str)
+        self.assertIn("c_int", parsed["bad"])
+
+    def test_nan_value_passes_through_normal_path(self):
+        """float('nan') is handled by Python's json module without error."""
+        captured = StringIO()
+        with patch("sys.stdout", captured):
+            _emit_stats({"file": "test.py", "value": float("nan")})
+
+        output = captured.getvalue()
+        # NaN is accepted by Python's json.dumps (outputs NaN literal)
+        # so the normal path should succeed without triggering fallback
+        self.assertNotIn("[DRIVER:WARN]", output)
+        stats_lines = [line for line in output.strip().splitlines() if "[DRIVER:STATS]" in line]
+        self.assertEqual(len(stats_lines), 1)
+
+    def test_empty_dict_emits_valid_json(self):
+        """Empty dict still produces valid output."""
+        captured = StringIO()
+        with patch("sys.stdout", captured):
+            _emit_stats({})
+
+        output = captured.getvalue().strip()
+        self.assertTrue(output.startswith("[DRIVER:STATS]"))
+        json_str = output.split("[DRIVER:STATS] ", 1)[1]
+        parsed = json.loads(json_str)
+        self.assertEqual(parsed, {})
+
+    def test_mixed_serializable_and_non_serializable(self):
+        """Serializable values are preserved, only bad ones get repr'd."""
+        captured = StringIO()
+        with patch("sys.stdout", captured):
+            _emit_stats(
+                {
+                    "file": "test.py",
+                    "count": 42,
+                    "rate": 3.14,
+                    "bad": ctypes.c_void_p(0),
+                }
+            )
+
+        output = captured.getvalue()
+        stats_lines = [line for line in output.strip().splitlines() if "[DRIVER:STATS]" in line]
+        last_stats = stats_lines[-1]
+        json_str = last_stats.split("[DRIVER:STATS] ", 1)[1]
+        parsed = json.loads(json_str)
+
+        # Good values preserved as-is
+        self.assertEqual(parsed["file"], "test.py")
+        self.assertEqual(parsed["count"], 42)
+        self.assertAlmostEqual(parsed["rate"], 3.14)
+        # Bad value repr'd
+        self.assertIsInstance(parsed["bad"], str)
+
+
+class TestRunSessionSerializationFailure(unittest.TestCase):
+    """Test that run_session handles stats serialization failure gracefully."""
+
+    def setUp(self):
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.temp_path = Path(self.temp_dir.name)
+
+    def tearDown(self):
+        self.temp_dir.cleanup()
+
+    def test_success_path_survives_non_serializable_stats(self):
+        """If get_jit_stats returns non-serializable values, run still succeeds."""
+        good_script = self.temp_path / "good.py"
+        good_script.write_text("x = 1 + 2")
+
+        fake_stats = {
+            "executors": 5,
+            "bad_ptr": ctypes.c_void_p(0xDEAD),
+            "functions_scanned": 3,
+            "jit_available": True,
+            "valid_traces": 2,
+            "warm_traces": 1,
+            "zombie_traces": 0,
+            "max_exit_count": 10,
+            "max_chain_depth": 2,
+            "min_code_size": 100,
+            "max_exit_density": 0.5,
+        }
+
+        captured = StringIO()
+        with patch("sys.stdout", captured):
+            with patch("lafleur.driver.get_jit_stats", return_value=fake_stats):
+                result = run_session([str(good_script)])
+
+        # Should still return 0 (success), NOT fall into except Exception
+        self.assertEqual(result, 0)
+
+        output = captured.getvalue()
+        # Should have a WARN line about serialization
+        self.assertIn("[DRIVER:WARN]", output)
+        # Should still have a parseable STATS line
+        stats_lines = [line for line in output.splitlines() if "[DRIVER:STATS]" in line]
+        self.assertGreaterEqual(len(stats_lines), 1)
+
+        last_stats = stats_lines[-1]
+        json_str = last_stats.split("[DRIVER:STATS] ", 1)[1]
+        parsed = json.loads(json_str)
+        self.assertEqual(parsed["status"], "success")
+        self.assertEqual(parsed["executors"], 5)
+        self.assertTrue(parsed["_serialization_fallback"])
 
 
 if __name__ == "__main__":

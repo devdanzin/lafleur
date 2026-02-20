@@ -81,12 +81,12 @@ class TestJITParsing(unittest.TestCase):
 
     def test_parse_jit_stats_malformed_json(self):
         """Test that malformed JSON in driver stats is ignored gracefully."""
-        # The JSON is cut off mid-stream
-        log_content = """
-        [DRIVER:START] script.py
-        [DRIVER:STATS] {"max_exit_count": 100, "max_chain_depth": 
-        [DRIVER:ERROR] Process killed
-        """
+        # The JSON is cut off mid-stream — no leading whitespace so it gets matched
+        log_content = (
+            "[DRIVER:START] script.py\n"
+            '[DRIVER:STATS] {"max_exit_count": 100, "max_chain_depth": \n'
+            "[DRIVER:ERROR] Process killed\n"
+        )
 
         # Should not raise JSONDecodeError
         stats = self.orch.scoring_manager.parse_jit_stats(log_content)
@@ -224,6 +224,79 @@ class TestJITParsing(unittest.TestCase):
         self.assertEqual(parsed["child_delta_total_exits"], 0)
         self.assertEqual(parsed["child_delta_new_executors"], 0)
         self.assertEqual(parsed["child_delta_new_zombies"], 0)
+
+    def test_ignores_indented_stats_lines(self):
+        """Indented lines containing [DRIVER:STATS] are skipped (traceback source)."""
+        valid_stats = {"max_exit_count": 42}
+        log_content = (
+            '    print(f"[DRIVER:STATS] {json.dumps(stats)}", flush=True)\n'
+            f"[DRIVER:STATS] {json.dumps(valid_stats)}\n"
+        )
+
+        stderr_capture = io.StringIO()
+        with patch("sys.stderr", stderr_capture):
+            parsed = self.orch.scoring_manager.parse_jit_stats(log_content)
+
+        # Should parse only the non-indented line
+        self.assertEqual(parsed["max_exit_count"], 42)
+        # Should NOT have warned about the indented line
+        self.assertNotIn("Failed to parse", stderr_capture.getvalue())
+
+    def test_ignores_tab_indented_stats_lines(self):
+        """Tab-indented lines containing [DRIVER:STATS] are also skipped."""
+        log_content = '\tprint(f"[DRIVER:STATS] {json.dumps(stats)}", flush=True)\n'
+
+        stderr_capture = io.StringIO()
+        with patch("sys.stderr", stderr_capture):
+            parsed = self.orch.scoring_manager.parse_jit_stats(log_content)
+
+        self.assertEqual(parsed["max_exit_count"], 0)
+        self.assertNotIn("Failed to parse", stderr_capture.getvalue())
+
+    def test_parses_interleaved_stats_line(self):
+        """Stats line with interleaved prefix (not at column 0) is still parsed."""
+        valid_stats = {"max_exit_count": 99, "zombie_traces": 3}
+        log_content = f"child output[DRIVER:STATS] {json.dumps(valid_stats)}\n"
+
+        parsed = self.orch.scoring_manager.parse_jit_stats(log_content)
+
+        self.assertEqual(parsed["max_exit_count"], 99)
+        self.assertEqual(parsed["zombie_traces"], 3)
+
+    def test_ignores_indented_ekg_watched_lines(self):
+        """Indented lines containing [EKG] WATCHED: are skipped."""
+        log_content = '    if "[EKG] WATCHED:" in line:\n[EKG] WATCHED: real_var\n'
+
+        parsed = self.orch.scoring_manager.parse_jit_stats(log_content)
+
+        # Should only pick up the non-indented line
+        self.assertEqual(parsed["watched_dependencies"], ["real_var"])
+
+    def test_parses_interleaved_ekg_watched_line(self):
+        """EKG line with interleaved prefix is still parsed."""
+        log_content = "debug noise[EKG] WATCHED: var1, var2\n"
+
+        parsed = self.orch.scoring_manager.parse_jit_stats(log_content)
+
+        self.assertEqual(sorted(parsed["watched_dependencies"]), ["var1", "var2"])
+
+    def test_fallback_stats_with_serialization_flag(self):
+        """Stats with _serialization_fallback flag are still parsed correctly."""
+        stats = {
+            "file": "test.py",
+            "status": "success",
+            "executors": 5,
+            "bad_ptr": "c_void_p(0xdead)",
+            "_serialization_fallback": True,
+            "max_exit_count": 10,
+            "zombie_traces": 0,
+        }
+        log_content = f"[DRIVER:STATS] {json.dumps(stats)}\n"
+
+        parsed = self.orch.scoring_manager.parse_jit_stats(log_content)
+
+        self.assertEqual(parsed["max_exit_count"], 10)
+        self.assertEqual(parsed["zombie_traces"], 0)
 
 
 if __name__ == "__main__":

@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING, Any, Callable
 
 from lafleur.coverage import save_coverage_state, CoverageManager
 from lafleur.health import FILE_SIZE_WARNING_THRESHOLD
+from lafleur.types import MutationInfo
 from lafleur.utils import ExecutionResult, FUZZING_ENV
 
 if TYPE_CHECKING:
@@ -348,7 +349,7 @@ class CorpusManager:
         baseline_coverage: dict[str, Any],
         execution_time_ms: int,
         parent_id: str | None,
-        mutation_info: dict[str, Any],
+        mutation_info: MutationInfo,
         mutation_seed: int,
         content_hash: str,
         coverage_hash: str,

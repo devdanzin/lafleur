@@ -6,6 +6,8 @@ This module provides:
 - TelemetryManager: run statistics persistence and time-series logging
 """
 
+from __future__ import annotations
+
 import difflib
 import json
 import random
@@ -31,6 +33,7 @@ if TYPE_CHECKING:
     from lafleur.coverage import CoverageManager
     from lafleur.health import HealthMonitor
     from lafleur.learning import MutatorScoreTracker
+    from lafleur.types import MutationInfo
 
 # Log processing constants
 TIMEOUT_LOG_COMPRESSION_THRESHOLD = 1_048_576  # 1 MB
@@ -472,7 +475,7 @@ class ArtifactManager:
         session_files: list[Path] | None = None,
         *,
         parent_id: str | None = None,
-        mutation_info: dict | None = None,
+        mutation_info: MutationInfo | None = None,
     ) -> bool:
         """
         Check for crashes, determine the cause (Signal/Retcode/Keyword), and save artifacts.

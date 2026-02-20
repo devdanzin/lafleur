@@ -516,7 +516,7 @@ class LafleurOrchestrator:
             parent_id: Starting corpus filename to trace back from.
 
         Returns:
-            List of mutation info dicts, ordered parent -> grandparent -> ...
+            List of MutationInfo dicts, ordered parent -> grandparent -> ...
         """
         per_file = self.coverage_manager.state.get("per_file_coverage", {})
         lineage: list[dict] = []

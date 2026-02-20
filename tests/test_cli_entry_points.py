@@ -410,5 +410,26 @@ class TestMinimizeMain(unittest.TestCase):
                 self.assertTrue(args[0][2])  # force_overwrite is third arg
 
 
+class TestListMutatorsFlag(unittest.TestCase):
+    """Test --list-mutators prints mutator list and exits."""
+
+    def test_list_mutators_prints_and_exits(self):
+        """--list-mutators prints all mutators and exits with code 0."""
+        with patch("sys.argv", ["lafleur", "--list-mutators"]):
+            from lafleur.orchestrator import main
+
+            captured = StringIO()
+            with patch("sys.stdout", captured):
+                with self.assertRaises(SystemExit) as ctx:
+                    main()
+
+            self.assertEqual(ctx.exception.code, 0)
+            output = captured.getvalue()
+            self.assertIn("OperatorSwapper", output)
+            self.assertIn("GCInjector", output)
+            self.assertIn("TypeInstabilityInjector", output)
+            self.assertIn("total", output)
+
+
 if __name__ == "__main__":
     unittest.main()

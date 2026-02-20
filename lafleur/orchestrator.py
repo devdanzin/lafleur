@@ -125,6 +125,8 @@ class LafleurOrchestrator:
         no_ekg: bool = False,
         max_sessions: int | None = None,
         max_mutations_per_session: int | None = None,
+        keep_children: bool = False,
+        dry_run: bool = False,
     ):
         """Initialize the orchestrator and the corpus manager."""
         self.differential_testing = differential_testing
@@ -139,6 +141,8 @@ class LafleurOrchestrator:
         self.deepening_probability = deepening_probability
         self.max_sessions = max_sessions
         self.max_mutations_per_session = max_mutations_per_session
+        self.keep_children = keep_children
+        self.dry_run = dry_run
         ast_mutator = ASTMutator()
         max_timeout_log_bytes = max_timeout_log_size * 1024 * 1024
         max_crash_log_bytes = max_crash_log_size * 1024 * 1024
@@ -667,6 +671,27 @@ class LafleurOrchestrator:
                 new_child_filename=None,
             )
 
+        # --- DRY RUN: generate child script but skip execution ---
+        if self.dry_run:
+            runtime_seed = mutation_seed + 1
+            child_source = self.mutation_controller.prepare_child_script(
+                ctx.parent_core_tree,
+                mutated_harness_node,
+                runtime_seed,
+            )
+            if child_source:
+                child_path = TMP_DIR / f"child_{session_id}_{mutation_id}_dryrun.py"
+                child_path.write_text(child_source)
+                print(
+                    f"    [DRY-RUN] Wrote {child_path.name} "
+                    f"(strategy: {mutation_info.get('strategy', '?')})"
+                )
+            return MutationOutcome(
+                flow_control=FlowControl.NONE,
+                found_new_coverage=False,
+                new_child_filename=None,
+            )
+
         flow_control = FlowControl.NONE
         found_new_coverage = False
         new_child_filename: str | None = None
@@ -747,7 +772,7 @@ class LafleurOrchestrator:
                         new_child_filename = returned_filename
                     break  # Break inner multi-run loop
             finally:
-                if child_source_path.exists():
+                if child_source_path.exists() and not self.keep_children:
                     child_source_path.unlink()
                 self._cleanup_log_file(child_log_path, ctx.parent_id, mutation_seed, run_num)
 
@@ -1044,6 +1069,23 @@ def main():
         "Created if it doesn't exist. Defaults to current working directory.",
     )
     parser.add_argument(
+        "--keep-children",
+        action="store_true",
+        help="Retain all generated child scripts in tmp_fuzz_run/, not just interesting ones. "
+        "Useful for inspecting mutation output.",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Generate mutated children but skip subprocess execution and analysis. "
+        "Implies --keep-children. Children are written to tmp_fuzz_run/ for inspection.",
+    )
+    parser.add_argument(
+        "--list-mutators",
+        action="store_true",
+        help="Print all available mutators with descriptions and exit.",
+    )
+    parser.add_argument(
         "-v",
         "--verbose",
         action="store_true",
@@ -1057,6 +1099,23 @@ def main():
         help="Path for the orchestrator log file. Default: logs/deep_fuzzer_run_{timestamp}.log",
     )
     args = parser.parse_args()
+
+    if args.list_mutators:
+        ast_mutator = ASTMutator()
+        print(f"Available mutators ({len(ast_mutator.transformers)} total):\n")
+        for t in sorted(ast_mutator.transformers, key=lambda x: x.__name__):
+            doc = (t.__doc__ or "").strip().split("\n")[0] if t.__doc__ else "(no description)"
+            print(f"  {t.__name__:45s} {doc}")
+        sys.exit(0)
+
+    if args.dry_run:
+        args.keep_children = True
+        if args.max_sessions is None:
+            print(
+                "[!] Warning: --dry-run without --max-sessions will run forever. "
+                "Consider adding --max-sessions.",
+                file=sys.stderr,
+            )
 
     if args.workdir is not None:
         workdir = args.workdir.resolve()
@@ -1131,6 +1190,8 @@ def main():
             no_ekg=args.no_ekg,
             max_sessions=args.max_sessions,
             max_mutations_per_session=args.max_mutations_per_session,
+            keep_children=args.keep_children,
+            dry_run=args.dry_run,
         )
         if args.prune_corpus:
             orchestrator.corpus_manager.prune_corpus(dry_run=not args.force)

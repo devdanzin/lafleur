@@ -726,6 +726,11 @@ class TestVerifyTargetCapabilities(unittest.TestCase):
                 # Check environment variables
                 call_kwargs = mock_run.call_args[1]
                 self.assertIn("env", call_kwargs)
+                env = call_kwargs["env"]
+                self.assertEqual(env["PYTHON_JIT"], "1")
+                self.assertEqual(env["PYTHON_LLTRACE"], "2")
+                self.assertEqual(env["PYTHON_OPT_DEBUG"], "4")
+                self.assertEqual(env["ASAN_OPTIONS"], "detect_leaks=0")
 
 
 class TestMakeDivergenceResult(unittest.TestCase):

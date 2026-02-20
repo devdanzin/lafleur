@@ -208,35 +208,16 @@ class HelperFunctionInjector(ast.NodeTransformer):
         # Select a random helper to call
         helper_name = random.choice(self.helpers_injected)
 
-        # Create a call to the helper
-        # Pattern: _result = helper_name(loop_var, 10)
+        # Create a try-wrapped call to the helper
         loop_var = node.target.id if isinstance(node.target, ast.Name) else "i"
-        call_stmt = ast.Assign(
-            targets=[ast.Name(id="_helper_result", ctx=ast.Store())],
-            value=ast.Call(
-                func=ast.Name(id=helper_name, ctx=ast.Load()),
-                args=[
-                    ast.Name(id=loop_var, ctx=ast.Load()),
-                    ast.Constant(value=10),
-                ],
-                keywords=[],
-            ),
-        )
-
-        # Wrap in try/except to handle type mismatches when loop_var
-        # is not a compatible type (e.g., string in `for name in names:`)
-        wrapped_call = ast.Try(
-            body=[call_stmt],
-            handlers=[
-                ast.ExceptHandler(
-                    type=ast.Name(id="Exception", ctx=ast.Load()),
-                    name=None,
-                    body=[ast.Pass()],
-                )
-            ],
-            orelse=[],
-            finalbody=[],
-        )
+        wrapped_call = ast.parse(
+            dedent(f"""
+            try:
+                _helper_result = {helper_name}({loop_var}, 10)
+            except Exception:
+                pass
+        """)
+        ).body[0]
 
         # Insert the call at the start of the loop body
         node.body = [wrapped_call] + node.body
@@ -256,33 +237,15 @@ class HelperFunctionInjector(ast.NodeTransformer):
         # Select a random helper to call
         helper_name = random.choice(self.helpers_injected)
 
-        # Create a call to the helper
-        call_stmt = ast.Assign(
-            targets=[ast.Name(id="_helper_result", ctx=ast.Store())],
-            value=ast.Call(
-                func=ast.Name(id=helper_name, ctx=ast.Load()),
-                args=[
-                    ast.Constant(value=42),
-                    ast.Constant(value=10),
-                ],
-                keywords=[],
-            ),
-        )
-
-        # Wrap in try/except in case the helper has been sniped or
-        # is otherwise unavailable
-        wrapped_call = ast.Try(
-            body=[call_stmt],
-            handlers=[
-                ast.ExceptHandler(
-                    type=ast.Name(id="Exception", ctx=ast.Load()),
-                    name=None,
-                    body=[ast.Pass()],
-                )
-            ],
-            orelse=[],
-            finalbody=[],
-        )
+        # Create a try-wrapped call to the helper
+        wrapped_call = ast.parse(
+            dedent(f"""
+            try:
+                _helper_result = {helper_name}(42, 10)
+            except Exception:
+                pass
+        """)
+        ).body[0]
 
         # Insert the call at the start of the loop body
         node.body = [wrapped_call] + node.body

@@ -784,7 +784,6 @@ class YieldFromInjector(ast.NodeTransformer):
             finally:
                 pass
         """
-        # Create the if statement: if depth > 5: return
         depth_check = ast.If(
             test=ast.Compare(
                 left=ast.Name(id="depth", ctx=ast.Load()),
@@ -901,7 +900,6 @@ class MaxOperandMutator(ast.NodeTransformer):
             file=sys.stderr,
         )
 
-        # Create a padding block of 200 statements
         padding_block: list[ast.stmt] = []
         for i in range(200):
             assign = ast.Assign(

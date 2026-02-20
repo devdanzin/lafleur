@@ -150,7 +150,6 @@ class LafleurOrchestrator:
             strategies=["deterministic", "havoc", "spam", "helper_sniper", "sniper"],
         )
 
-        # Initialize the mutation controller for managing mutation strategies
         self.mutation_controller = MutationController(
             ast_mutator=ast_mutator,
             score_tracker=self.score_tracker,
@@ -167,32 +166,28 @@ class LafleurOrchestrator:
             target_python=target_python,
         )
 
-        # Set the corpus_manager after CorpusManager is created (breaks circular dependency)
+        # Break circular dependency: MutationController needs the corpus for splicing
         self.mutation_controller.corpus_manager = self.corpus_manager
 
         fingerprinter = CrashFingerprinter()
 
-        # Ensure temporary and log directories exist first (needed for timeseries path)
         TMP_DIR.mkdir(exist_ok=True)
         LOGS_DIR.mkdir(exist_ok=True)
         if self.keep_tmp_logs:
             RUN_LOGS_DIR.mkdir(exist_ok=True)
             print(f"[+] Retaining temporary run logs in: {RUN_LOGS_DIR}")
 
-        # Initialize the health monitor for adverse event tracking
         self.health_monitor = HealthMonitor(log_path=LOGS_DIR / "health_events.jsonl")
         self.mutation_controller.health_monitor = self.health_monitor
         self.corpus_manager.health_monitor = self.health_monitor
 
         run_timestamp = self.run_stats.get("start_time", datetime.now(timezone.utc).isoformat())
-        # Sanitize timestamp for use in filename
         safe_timestamp = run_timestamp.replace(":", "-").replace("+", "Z")
         self.timeseries_log_path = LOGS_DIR / f"timeseries_{safe_timestamp}.jsonl"
         print(
             f"[+] Time-series analytics for this run will be saved to: {self.timeseries_log_path}"
         )
 
-        # Initialize the artifact manager for handling crashes, timeouts, divergences
         self.artifact_manager = ArtifactManager(
             crashes_dir=CRASHES_DIR,
             timeouts_dir=TIMEOUTS_DIR,
@@ -205,7 +200,6 @@ class LafleurOrchestrator:
             health_monitor=self.health_monitor,
         )
 
-        # Initialize the telemetry manager for run stats and time-series logging
         self.telemetry_manager = TelemetryManager(
             run_stats=self.run_stats,
             coverage_manager=self.coverage_manager,
@@ -214,7 +208,6 @@ class LafleurOrchestrator:
             timeseries_log_path=self.timeseries_log_path,
         )
 
-        # Initialize the scoring manager for analyzing coverage and interestingness
         self.scoring_manager = ScoringManager(
             coverage_manager=self.coverage_manager,
             timing_fuzz=self.timing_fuzz,
@@ -225,7 +218,6 @@ class LafleurOrchestrator:
             health_monitor=self.health_monitor,
         )
 
-        # Initialize the execution manager for running child processes
         self.execution_manager = ExecutionManager(
             target_python=target_python,
             timeout=timeout,

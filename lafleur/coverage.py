@@ -65,7 +65,6 @@ RARE_EVENT_REGEX = re.compile(
 # passes through because the spurious-UOP check only applies to current_uop.
 _START_OF_HARNESS = "_START_OF_HARNESS_"
 
-# Define paths for the coverage directory and the new state file.
 COVERAGE_DIR = Path("coverage")
 COVERAGE_STATE_FILE = COVERAGE_DIR / "coverage_state.pkl"
 

@@ -1003,17 +1003,12 @@ class ReentrantSideEffectMutator(ast.NodeTransformer):
                     file=sys.stderr,
                 )
 
-            # Create unique prefix
             prefix = f"{random.randint(1000, 9999)}"
             class_name = f"RugPuller_{prefix}"
 
-            # Create the RugPuller class
             rug_puller_class = self._create_rug_puller_class(var_name, type_name, prefix)
-
-            # Create the trigger statement
             trigger_stmts = self._create_trigger_statement(var_name, type_name, class_name)
 
-            # Inject into the function
             injection_point = random.randint(0, len(node.body))
             full_injection = [rug_puller_class] + trigger_stmts
             node.body[injection_point:injection_point] = full_injection

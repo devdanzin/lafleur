@@ -156,29 +156,23 @@ def calculate_duration(
     Returns (duration_seconds, end_time_source) where end_time_source indicates
     how the end time was determined.
     """
-    # Get start time - check multiple sources
     start_time = None
     start_time_str = None
 
-    # First, check stats file (most reliable source)
     if stats:
         start_time_str = stats.get("start_time")
 
-    # Then check metadata
     if not start_time_str and metadata:
         start_time_str = metadata.get("start_time")
         if not start_time_str and "configuration" in metadata:
-            # Check if stored in args
             args = metadata.get("configuration", {}).get("args", {})
             start_time_str = args.get("start_time")
 
-    # Also check stats file modification time as fallback for start
     stats_path = instance_dir / "fuzz_run_stats.json"
 
     if start_time_str:
         start_time = parse_timestamp(start_time_str)
 
-    # Get end time from stats
     end_time = None
     end_source = "now"
 
@@ -188,7 +182,6 @@ def calculate_duration(
             end_time = parse_timestamp(last_update_str)
             end_source = "last_update"
 
-    # Fallback to file modification time or now
     if not end_time:
         if stats_path.exists():
             try:
@@ -317,8 +310,7 @@ def generate_report(instance_dir: Path) -> str:
 
     uptime_str = format_duration(duration_seconds) if duration_seconds >= 0 else "N/A"
 
-    # Get memory and disk from timeseries (preferred) or stats
-    # These metrics are recorded in the timeseries log, not fuzz_run_stats.json
+    # These metrics come from the timeseries log, not fuzz_run_stats.json
     process_rss = None
     corpus_size_mb = None
     disk_usage = None
@@ -586,7 +578,6 @@ def generate_report(instance_dir: Path) -> str:
 
             first_seen = earliest_time.strftime("%Y-%m-%d %H:%M:%S") if earliest_time else "N/A"
 
-            # Get reproduce.sh path
             if sample_crash_dir:
                 repro_path = str(Path(sample_crash_dir) / "reproduce.sh")
                 repro_path = truncate_string(repro_path, 30)
@@ -635,7 +626,6 @@ Examples:
         print(f"Error: Instance directory does not exist: {instance_dir}", file=sys.stderr)
         sys.exit(1)
 
-    # Check if this looks like a lafleur instance
     has_stats = (instance_dir / "fuzz_run_stats.json").exists()
     has_metadata = (instance_dir / "logs" / "run_metadata.json").exists()
     has_corpus = (instance_dir / "corpus").exists()

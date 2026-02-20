@@ -98,13 +98,11 @@ class CrashRegistry:
                 )
             """)
 
-            # Create index for faster sighting lookups
             cursor.execute("""
                 CREATE INDEX IF NOT EXISTS idx_sightings_fingerprint
                 ON sightings(fingerprint)
             """)
 
-            # Create unique index to prevent duplicate sightings
             cursor.execute("""
                 CREATE UNIQUE INDEX IF NOT EXISTS idx_sightings_unique
                 ON sightings(fingerprint, run_id, timestamp)

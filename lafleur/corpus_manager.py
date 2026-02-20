@@ -372,7 +372,6 @@ class CorpusManager:
         corpus_filepath.write_text(core_code)
         print(f"[+] Added minimized file to corpus: {new_filename}")
 
-        # Check file size for health monitoring
         core_size = len(core_code.encode("utf-8"))
         if self.health_monitor and core_size > FILE_SIZE_WARNING_THRESHOLD:
             self.health_monitor.record_file_size_warning(new_filename, core_size)
@@ -626,7 +625,6 @@ class CorpusManager:
                 filename_a, edges_a, file_edges, edge_to_files, files_to_prune
             )
 
-            # Check Pareto efficiency against each candidate
             meta_a = all_files[filename_a]
             size_a = meta_a.get("file_size_bytes", float("inf"))
             time_a = meta_a.get("execution_time_ms", float("inf"))

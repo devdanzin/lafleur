@@ -214,10 +214,7 @@ def generate_docker_style_name() -> str:
 def get_git_info() -> dict[str, str | bool]:
     """Get git commit hash and dirty status for the lafleur repository."""
     try:
-        # Get the directory where this file is located (lafleur package)
         package_dir = Path(__file__).parent.parent
-
-        # Get commit hash
         result = subprocess.run(
             ["git", "rev-parse", "HEAD"],
             cwd=package_dir,
@@ -227,7 +224,6 @@ def get_git_info() -> dict[str, str | bool]:
         )
         commit_hash = result.stdout.strip() if result.returncode == 0 else "unknown"
 
-        # Check if dirty
         result = subprocess.run(
             ["git", "status", "--porcelain"],
             cwd=package_dir,
@@ -377,11 +373,9 @@ def generate_run_metadata(output_dir: Path, args: argparse.Namespace) -> dict:
     output_dir.mkdir(parents=True, exist_ok=True)
     metadata_path = output_dir / "run_metadata.json"
 
-    # Check for existing metadata to preserve identity
     existing_metadata = load_existing_metadata(metadata_path)
 
     if existing_metadata:
-        # Preserve existing identity
         run_id = existing_metadata.get("run_id", str(uuid.uuid4()))
         instance_name = existing_metadata.get("instance_name") or generate_docker_style_name()
         print(
@@ -389,7 +383,6 @@ def generate_run_metadata(output_dir: Path, args: argparse.Namespace) -> dict:
             file=sys.stderr,
         )
     else:
-        # Generate new identity
         run_id = str(uuid.uuid4())
         instance_name = getattr(args, "instance_name", None) or generate_docker_style_name()
         print(
@@ -397,10 +390,7 @@ def generate_run_metadata(output_dir: Path, args: argparse.Namespace) -> dict:
             file=sys.stderr,
         )
 
-    # Determine target Python (the interpreter being fuzzed)
     target_python = getattr(args, "target_python", None) or sys.executable
-
-    # Get target interpreter info (version, config, packages)
     target_info = get_target_python_info(target_python)
 
     metadata = {

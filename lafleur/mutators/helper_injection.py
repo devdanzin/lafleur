@@ -86,7 +86,6 @@ class HelperFunctionInjector(ast.NodeTransformer):
         if not harness_funcs:
             return node
 
-        # Check for existing helpers to avoid duplicates
         existing_helpers = {
             n.name
             for n in node.body

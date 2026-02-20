@@ -367,7 +367,7 @@ class ScoringManager:
         watched_dependencies: set[str] = set()
 
         for line in log_content.splitlines():
-            if "[DRIVER:STATS]" in line:
+            if "[DRIVER:STATS]" in line and line[:1] not in (" ", "\t"):
                 try:
                     json_str = line.split("[DRIVER:STATS]", 1)[1].strip()
                     stats = json.loads(json_str)
@@ -417,7 +417,7 @@ class ScoringManager:
                         f"Line content: {line[:200]}",
                         file=sys.stderr,
                     )
-            elif line.startswith("[EKG] WATCHED:"):
+            elif "[EKG] WATCHED:" in line and line[:1] not in (" ", "\t"):
                 try:
                     variables = line.split("[EKG] WATCHED:", 1)[1].strip()
                     if variables:

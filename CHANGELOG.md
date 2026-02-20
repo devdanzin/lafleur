@@ -64,6 +64,8 @@ All notable changes to this project should be documented in this file.
 
 ### Fixed
 
+- `parse_jit_stats()` matched Python traceback source lines containing `[DRIVER:STATS]` as a substring, producing false parse warnings. Now filters out lines with leading whitespace (traceback source is always indented), by @devdanzin.
+- `driver.py` had no safety wrapper around `json.dumps(stats)` — if `get_jit_stats()` returned non-serializable values (ctypes pointers, etc.), the success path fell into the exception handler, silently reclassifying successful runs as errors and losing all JIT statistics, by @devdanzin.
 - TeeLogger verbosity filtering leaving blank lines where suppressed lines were: `print()` sends two writes (content + `"\n"`) and the trailing newline was passing through after the content was suppressed, by @devdanzin.
 - TeeLogger verbosity filtering missing suppression prefixes for `Mutating`, `Transposing`, `Normalizing`, `Sanitizing`, `Decorating`, `Variable`, `Failed`, `SyntaxError`, `Targeting` mutator verbs, `    [!] SyntaxError` mutator warnings, and `[NEW RELATIVE RARE_EVENT]` coverage lines, by @devdanzin.
 - Filter SyntaxError/IndentationError crashes from invalid mutations, by @devdanzin.

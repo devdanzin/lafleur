@@ -172,6 +172,37 @@ def scan_watched_variables(
     return watched
 
 
+def _emit_stats(stats: dict) -> None:
+    """Safely emit a [DRIVER:STATS] JSON line to stdout.
+
+    Handles serialization failures gracefully by:
+    1. Logging a [DRIVER:WARN] line with repr() of the raw dict for debugging
+    2. Emitting a sanitized [DRIVER:STATS] line with non-serializable values
+       converted to their repr() strings
+    3. Flagging the fallback with a _serialization_fallback key
+
+    This prevents json.dumps() failures from causing the entire success path
+    to fall into the except Exception handler, which would silently reclassify
+    successful runs as errors and lose all JIT statistics.
+    """
+    try:
+        print(f"[DRIVER:STATS] {json.dumps(stats)}", flush=True)
+    except (TypeError, ValueError, OverflowError) as ser_err:
+        print(
+            f"[DRIVER:WARN] Stats serialization failed: {ser_err}. Raw dict: {repr(stats)[:500]}",
+            flush=True,
+        )
+        safe: dict = {}
+        for k, v in stats.items():
+            try:
+                json.dumps(v)
+                safe[k] = v
+            except (TypeError, ValueError, OverflowError):
+                safe[k] = repr(v)
+        safe["_serialization_fallback"] = True
+        print(f"[DRIVER:STATS] {json.dumps(safe)}", flush=True)
+
+
 def walk_code_objects(
     code_obj: CodeType, visited: set | None = None
 ) -> collections.abc.Generator[CodeType, None, None]:
@@ -500,13 +531,13 @@ def run_session(files: list[str], *, no_ekg: bool = False) -> int:
                 stats = get_jit_stats(shared_globals, baseline=baseline)
                 stats["file"] = path.name
                 stats["status"] = "success"
-            print(f"[DRIVER:STATS] {json.dumps(stats)}", flush=True)
+            _emit_stats(stats)
 
         except SyntaxError as e:
             # Syntax errors are compilation failures
             print(f"[DRIVER:ERROR] {filepath}: SyntaxError: {e}", flush=True)
             stats = {"file": path.name, "status": "syntax_error", "error": str(e)}
-            print(f"[DRIVER:STATS] {json.dumps(stats)}", flush=True)
+            _emit_stats(stats)
             errors_occurred = True
             # Continue to next script
 
@@ -523,16 +554,13 @@ def run_session(files: list[str], *, no_ekg: bool = False) -> int:
                 "status": "exit",
                 "code": e.code,
             }
-            print(f"[DRIVER:STATS] {json.dumps(stats)}", flush=True)
+            _emit_stats(stats)
             errors_occurred = True
             # Continue to next script — don't kill the session
 
         except KeyboardInterrupt:
             # User interrupted
-            print(
-                f"[DRIVER:STATS] {json.dumps({'file': path.name, 'status': 'interrupted'})}",
-                flush=True,
-            )
+            _emit_stats({"file": path.name, "status": "interrupted"})
             raise
 
         except Exception as e:
@@ -545,7 +573,7 @@ def run_session(files: list[str], *, no_ekg: bool = False) -> int:
                 "error": str(e),
                 "type": type(e).__name__,
             }
-            print(f"[DRIVER:STATS] {json.dumps(stats)}", flush=True)
+            _emit_stats(stats)
             errors_occurred = True
             # Continue to next script - don't stop the session
 

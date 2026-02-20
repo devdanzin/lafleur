@@ -137,6 +137,7 @@ class TestSniperMutator(unittest.TestCase):
         generated = ast.unparse(mutated)
         # Must be parseable
         ast.parse(generated)
+        compile(generated, "<test>", "exec")
 
 
 if __name__ == "__main__":

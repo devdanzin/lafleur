@@ -213,6 +213,7 @@ class TestRecursionWrappingMutator(unittest.TestCase):
         result = ast.unparse(mutated)
         reparsed = ast.parse(result)
         self.assertIsInstance(reparsed, ast.Module)
+        compile(result, "<test>", "exec")
 
     def test_skips_functions_with_too_few_statements(self):
         """Test that functions with < 5 statements are not mutated."""
@@ -302,6 +303,7 @@ class TestRecursionWrappingMutator(unittest.TestCase):
         self.assertIn("except Exception", result)
         # Verify the code is valid Python
         ast.parse(result)
+        compile(result, "<test>", "exec")
 
     def test_no_remainder_wrapper_when_block_at_end(self):
         """Test that no remainder wrapper is added when the block is at the end."""
@@ -496,6 +498,7 @@ class TestExceptionHandlerMaze(unittest.TestCase):
         result = ast.unparse(mutated)
         reparsed = ast.parse(result)
         self.assertIsInstance(reparsed, ast.Module)
+        compile(result, "<test>", "exec")
 
     def test_unique_class_names(self):
         """Test that unique class names are generated."""
@@ -554,6 +557,7 @@ class TestExceptionHandlerMaze(unittest.TestCase):
         # Should still be valid
         reparsed = ast.parse(result)
         self.assertIsInstance(reparsed, ast.Module)
+        compile(result, "<test>", "exec")
 
 
 class TestCoroutineStateCorruptor(unittest.TestCase):
@@ -755,6 +759,7 @@ class TestCoroutineStateCorruptor(unittest.TestCase):
         result = ast.unparse(mutated)
         reparsed = ast.parse(result)
         self.assertIsInstance(reparsed, ast.Module)
+        compile(result, "<test>", "exec")
 
     def test_unique_function_names(self):
         """Test that unique function names are generated."""
@@ -813,6 +818,7 @@ class TestCoroutineStateCorruptor(unittest.TestCase):
         # Should still be valid
         reparsed = ast.parse(result)
         self.assertIsInstance(reparsed, ast.Module)
+        compile(result, "<test>", "exec")
 
 
 class TestStressPatternMutators(unittest.TestCase):
@@ -1188,6 +1194,7 @@ class TestContextManagerInjector(unittest.TestCase):
         # Should be valid Python
         reparsed = ast.parse(result)
         self.assertIsInstance(reparsed, ast.Module)
+        compile(result, "<test>", "exec")
 
 
 class TestYieldFromInjector(unittest.TestCase):
@@ -1334,6 +1341,7 @@ class TestYieldFromInjector(unittest.TestCase):
         # Should be parseable
         reparsed = ast.parse(result)
         self.assertIsInstance(reparsed, ast.Module)
+        compile(result, "<test>", "exec")
 
     def test_produces_valid_code_recursive(self):
         """Test that recursive generator produces valid, parseable Python."""
@@ -1353,6 +1361,7 @@ class TestYieldFromInjector(unittest.TestCase):
         # Should be parseable
         reparsed = ast.parse(result)
         self.assertIsInstance(reparsed, ast.Module)
+        compile(result, "<test>", "exec")
 
     def test_unique_naming(self):
         """Test that generated names use unique suffixes."""
@@ -1522,6 +1531,7 @@ class TestMaxOperandMutator(unittest.TestCase):
         # Should be parseable
         reparsed = ast.parse(result)
         self.assertIsInstance(reparsed, ast.Module)
+        compile(result, "<test>", "exec")
 
 
 class TestExitStresser(unittest.TestCase):
@@ -1549,6 +1559,7 @@ class TestExitStresser(unittest.TestCase):
         self.assertIn("res_es_5", result)
         # Check that it produces valid python
         ast.parse(result)
+        compile(result, "<test>", "exec")
 
 
 class TestPatternMatchingChaosMutator(unittest.TestCase):
@@ -1781,6 +1792,7 @@ class TestPatternMatchingChaosMutator(unittest.TestCase):
         # Should NOT reference the undefined _chaos_side_effect
         self.assertNotIn("_chaos_side_effect", result)
         ast.parse(result)  # Ensure valid
+        compile(result, "<test>", "exec")
 
     def test_transforms_existing_match_with_nested(self):
         """Test that existing match statements get nested match."""
@@ -1858,6 +1870,7 @@ class TestPatternMatchingChaosMutator(unittest.TestCase):
         # Should be parseable
         reparsed = ast.parse(result)
         self.assertIsInstance(reparsed, ast.Module)
+        compile(result, "<test>", "exec")
 
     def test_skips_existing_helper_class(self):
         """Test that helper is not re-injected if already present."""

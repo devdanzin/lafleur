@@ -147,6 +147,7 @@ class TestHelperFunctionInjector(unittest.TestCase):
         self.assertIn("_helper_result", result)
         # Code should be valid Python
         ast.parse(result)
+        compile(result, "<test>", "exec")
 
     def test_probability_controls_injection(self):
         """Test that probability parameter controls whether mutation is applied."""

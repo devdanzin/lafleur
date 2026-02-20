@@ -82,6 +82,10 @@ All notable changes to this project should be documented in this file.
 - `verify_target_capabilities()`: Fixed typo in error message — `PYTHON_LLTRACE=4` corrected to `PYTHON_LLTRACE=2`, by @devdanzin.
 - `_find_subsumer_candidates()`: Changed `>` to `>=` so files with equal coverage are considered as subsumption candidates. Previously, a minimized file with identical coverage but smaller size and faster execution could never replace the original because the strict greater-than excluded equal-sized edge sets from the candidate pool, by @devdanzin.
 - `merge_coverage_into_global()`: Discovery log entries now resolve integer IDs to human-readable names (e.g. `LOAD_FAST` instead of `42`) by building reverse maps from the forward ID tables, with fallback to `str(id)` for unmapped IDs, by @devdanzin.
+- `check_crash.sh`: Exit code matching now mirrors the Python `check_reproduction()` logic — signal crashes check for `128+N` (not raw Python `-N`), ASAN accepts any non-zero, others do exact match. Previously any non-zero exit (including `SyntaxError=1`) was treated as crash reproduction, by @devdanzin.
+- `_concatenate_scripts()`: Removed `rename_harnesses()` call that changed function names (e.g. `uop_harness_f1` → `uop_harness_f1_0`), breaking crash reproduction by altering the global dict keys the JIT watches, by @devdanzin.
+- `_generate_bash_scripts()`: `target_python` and script paths are now shell-escaped with `shlex.quote()` to handle paths containing spaces, by @devdanzin.
+- `upsert_reported_issues()`: Replaced `INSERT OR REPLACE` (which deletes entire rows on conflict, wiping existing fields) with `INSERT ... ON CONFLICT DO UPDATE SET ... COALESCE` to preserve existing values when incoming data has NULL/missing fields, by @devdanzin.
 
 
 ### Documentation

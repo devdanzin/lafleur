@@ -216,9 +216,8 @@ def _concatenate_scripts(
     combined_path = crash_dir / "combined_repro.py"
     combined_content = ""
 
-    for i, script in enumerate(necessary_scripts):
+    for script in necessary_scripts:
         content = script.read_text()
-        content = rename_harnesses(content, str(i))
         combined_content += f"\n# --- Source: {script.name} ---\n"
         combined_content += content + "\n"
 
@@ -284,19 +283,49 @@ def _generate_bash_scripts(
     driver_cmd = ""
     repro_cmd_display = ""
     if use_concatenation:
-        driver_cmd = f"{target_python} -m lafleur.driver {target_file.name}"
+        driver_cmd = (
+            f"{shlex.quote(target_python)} -m lafleur.driver {shlex.quote(target_file.name)}"
+        )
         repro_cmd_display = driver_cmd
     else:
-        cmd_parts = [target_python, "-m", "lafleur.driver"]
+        cmd_parts = [shlex.quote(target_python), "-m", "lafleur.driver"]
         for s in necessary_scripts[:-1]:
-            cmd_parts.append(str(s.resolve()))
-        cmd_parts.append(target_file.name)
+            cmd_parts.append(shlex.quote(str(s.resolve())))
+        cmd_parts.append(shlex.quote(target_file.name))
         driver_cmd = " ".join(cmd_parts)
-        repro_parts = [target_python, "-m", "lafleur.driver"]
-        repro_parts.extend([s.name for s in necessary_scripts])
+        repro_parts = [shlex.quote(target_python), "-m", "lafleur.driver"]
+        repro_parts.extend([shlex.quote(s.name) for s in necessary_scripts])
         repro_cmd_display = " ".join(repro_parts)
 
     safe_pattern = shlex.quote(grep_pattern) if grep_pattern else "''"
+
+    # Build exit code validation logic matching check_reproduction() behavior.
+    # Python signals (e.g. -11) become bash exit codes (128 + abs(signal)).
+    target_returncode = metadata.get("returncode", 0)
+    is_asan = "ASAN" in metadata.get("type", "")
+
+    if is_asan:
+        # ASAN exit codes vary (1, 77, etc.) — any non-zero is acceptable
+        exit_check = """\
+# ASAN crash: accept any non-zero exit code
+if [ $EXIT_CODE -eq 0 ]; then
+    exit 1
+fi"""
+    elif target_returncode < 0:
+        # Signal crash: Python -N becomes bash 128+N
+        expected_bash_code = 128 + abs(target_returncode)
+        exit_check = f"""\
+# Signal crash: expected bash exit code {expected_bash_code} (Python {target_returncode})
+if [ $EXIT_CODE -ne {expected_bash_code} ]; then
+    exit 1
+fi"""
+    else:
+        # Exact match for other crash types
+        exit_check = f"""\
+# Exact exit code match
+if [ $EXIT_CODE -ne {target_returncode} ]; then
+    exit 1
+fi"""
 
     check_script_content = f"""#!/bin/bash
 export PYTHON_JIT=1
@@ -307,11 +336,7 @@ export ASAN_OPTIONS=detect_leaks=0
 OUTPUT=$({driver_cmd} 2>&1)
 EXIT_CODE=$?
 
-# Verify Exit Code matches {metadata.get("returncode")}
-# (Logic simplified for bash: check for non-zero if ASan/Signal)
-if [ {metadata.get("returncode")} -ne 0 ] && [ $EXIT_CODE -eq 0 ]; then
-    exit 1
-fi
+{exit_check}
 
 # Verify Grep Pattern (fixed-string match, safely quoted)
 GREP_PATTERN={safe_pattern}

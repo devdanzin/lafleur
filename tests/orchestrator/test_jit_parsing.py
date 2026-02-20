@@ -183,7 +183,6 @@ class TestJITParsing(unittest.TestCase):
         self.assertAlmostEqual(parsed["child_delta_max_exit_density"], 3.0)
         self.assertEqual(parsed["child_delta_total_exits"], 20)
 
-
     def test_parse_jit_stats_null_min_code_size(self):
         """None value for min_code_size should not crash."""
         stats = {"min_code_size": None, "max_exit_count": 5}

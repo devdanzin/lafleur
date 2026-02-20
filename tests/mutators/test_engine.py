@@ -1004,9 +1004,7 @@ class TestMutatorPoolFiltering(unittest.TestCase):
         original_count = len(mutator.transformers)
         self.assertGreater(original_count, 1)
 
-        mutator.transformers = [
-            t for t in mutator.transformers if t.__name__ == "OperatorSwapper"
-        ]
+        mutator.transformers = [t for t in mutator.transformers if t.__name__ == "OperatorSwapper"]
 
         self.assertEqual(len(mutator.transformers), 1)
         self.assertEqual(mutator.transformers[0].__name__, "OperatorSwapper")

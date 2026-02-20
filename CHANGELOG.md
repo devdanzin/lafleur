@@ -105,6 +105,7 @@ All notable changes to this project should be documented in this file.
 
 ### Documentation
 
+- Added **[09\_diagnostic\_mode.md](doc/dev/09_diagnostic_mode.md)** developer documentation covering diagnostic mode workflows, CLI reference, reproducibility, and CI integration examples, by @devdanzin.
 - Complete rewrite of **README.md** with proper project description, architecture overview, quick start guide, and campaign workflow documentation, by @devdanzin.
 - Enriched **CREDITS.md** with detailed contributor attributions and contribution descriptions, by @devdanzin.
 - Updated **CONTRIBUTING.md** with quality-gate checklist, AI-assisted development guidance, and changelog/credits update instructions, by @devdanzin.

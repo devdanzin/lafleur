@@ -135,6 +135,24 @@ lafleur --fusil-path /path/to/fusil/fuzzers/fusil-python-threaded --target-pytho
 | `--prune-corpus` | Analyze and report redundant corpus files, then exit |
 | `--keep-tmp-logs` | Retain temporary log files for debugging |
 
+### Diagnostic Mode
+
+For quick smoke tests and mutator development:
+
+```bash
+# Bounded smoke test (3 sessions, 2 mutations each, reproducible)
+python -m lafleur --max-sessions 3 --max-mutations-per-session 2 --seed 42
+
+# Test a specific mutator in dry-run mode
+python -m lafleur --mutators GCInjector --strategy spam \
+    --max-sessions 1 --max-mutations-per-session 5 --dry-run --keep-children
+
+# List all available mutators
+python -m lafleur --list-mutators
+```
+
+See [Diagnostic Mode documentation](doc/dev/09_diagnostic_mode.md) for details.
+
 -----
 
 ## Analysis & Triage

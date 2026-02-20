@@ -434,6 +434,8 @@ def generate_run_metadata(output_dir: Path, args: argparse.Namespace) -> dict:
     metadata["workdir"] = (
         str(getattr(args, "workdir", None)) if getattr(args, "workdir", None) else None
     )
+    metadata["keep_children"] = getattr(args, "keep_children", False)
+    metadata["dry_run"] = getattr(args, "dry_run", False)
 
     with open(metadata_path, "w", encoding="utf-8") as f:
         json.dump(metadata, f, indent=2, default=str)

@@ -444,6 +444,8 @@ class TestExecuteMutationAndAnalysisCycle(unittest.TestCase):
         self.orchestrator.execution_manager = MagicMock()
         self.orchestrator.mutation_controller = MagicMock()
         self.orchestrator.max_mutations_per_session = None
+        self.orchestrator.keep_children = False
+        self.orchestrator.dry_run = False
 
     def test_calculates_max_mutations(self):
         """Test that _calculate_mutations is called."""
@@ -816,6 +818,8 @@ class TestRunStatsKeyErrorWithEmptyStats(unittest.TestCase):
         self.orchestrator.timing_fuzz = False
         self.orchestrator.max_mutations_per_session = None
         self.orchestrator.differential_testing = False
+        self.orchestrator.keep_children = False
+        self.orchestrator.dry_run = False
 
     def test_no_keyerror_on_empty_run_stats_with_new_coverage(self):
         """Empty run_stats must not raise KeyError when NEW_COVERAGE is found."""
@@ -1219,6 +1223,8 @@ class TestMaxMutationsPerSessionOverride(unittest.TestCase):
         self.orchestrator.use_dynamic_runs = False
         self.orchestrator.timing_fuzz = False
         self.orchestrator.keep_tmp_logs = False
+        self.orchestrator.keep_children = False
+        self.orchestrator.dry_run = False
         self.orchestrator.deepening_probability = 0.0
         self.orchestrator._last_heartbeat_time = float("inf")
 
@@ -1242,6 +1248,106 @@ class TestMaxMutationsPerSessionOverride(unittest.TestCase):
         self.assertEqual(self.orchestrator.run_stats["total_mutations"], 3)
 
 
+class TestDryRun(unittest.TestCase):
+    """Test --dry-run behavior."""
+
+    def setUp(self):
+        self.tmp_dir = Path(tempfile.mkdtemp())
+        self.orchestrator = LafleurOrchestrator.__new__(LafleurOrchestrator)
+        self.orchestrator.dry_run = True
+        self.orchestrator.keep_children = True
+        self.orchestrator.keep_tmp_logs = False
+        self.orchestrator.run_stats = {}
+        self.orchestrator.mutations_since_last_find = 0
+        self.orchestrator.global_seed_counter = 100
+        self.orchestrator.health_monitor = MagicMock()
+        self.orchestrator.mutation_controller = MagicMock()
+        self.orchestrator.execution_manager = MagicMock()
+        self.orchestrator.scoring_manager = MagicMock()
+        self.orchestrator.artifact_manager = MagicMock()
+        self.orchestrator.score_tracker = MagicMock()
+        self.orchestrator.timing_fuzz = False
+        self.orchestrator.base_runs = 1
+        self.orchestrator.use_dynamic_runs = False
+        self.orchestrator.max_sessions = None
+        self.orchestrator.max_mutations_per_session = None
+        self.orchestrator.deepening_probability = 0.0
+        self.orchestrator._last_heartbeat_time = float("inf")
+        self.orchestrator.coverage_manager = MagicMock()
+        self.orchestrator.coverage_manager.state = {
+            "per_file_coverage": {
+                "parent.py": {
+                    "lineage_coverage_profile": {},
+                    "file_size_bytes": 1000,
+                }
+            }
+        }
+        self.orchestrator.corpus_manager = MagicMock()
+        self.orchestrator.telemetry_manager = MagicMock()
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp_dir)
+
+    def test_dry_run_does_not_call_execute_child(self):
+        """In dry-run mode, execute_child is never called."""
+        parent_path = Path("/corpus/parent.py")
+        mock_harness = MagicMock()
+        mock_harness.name = "uop_harness_test"
+
+        self.orchestrator.mutation_controller._calculate_mutations.return_value = 2
+        self.orchestrator.mutation_controller._get_nodes_from_parent.return_value = (
+            mock_harness,
+            MagicMock(),
+            [],
+        )
+        self.orchestrator.mutation_controller.get_mutated_harness.return_value = (
+            mock_harness,
+            {"strategy": "havoc", "transformers": ["Op"]},
+        )
+        self.orchestrator.mutation_controller.prepare_child_script.return_value = "x = 1"
+
+        with patch("lafleur.orchestrator.TMP_DIR", self.tmp_dir):
+            self.tmp_dir.mkdir(exist_ok=True)
+            with patch("sys.stdout", new_callable=io.StringIO):
+                with patch("sys.stderr", new_callable=io.StringIO):
+                    self.orchestrator.execute_mutation_and_analysis_cycle(
+                        parent_path, 100.0, 1, False
+                    )
+
+        self.orchestrator.execution_manager.execute_child.assert_not_called()
+
+    def test_dry_run_writes_child_files(self):
+        """Dry-run mode writes child scripts to disk."""
+        parent_path = Path("/corpus/parent.py")
+        mock_harness = MagicMock()
+        mock_harness.name = "uop_harness_test"
+
+        self.orchestrator.mutation_controller._calculate_mutations.return_value = 1
+        self.orchestrator.mutation_controller._get_nodes_from_parent.return_value = (
+            mock_harness,
+            MagicMock(),
+            [],
+        )
+        self.orchestrator.mutation_controller.get_mutated_harness.return_value = (
+            mock_harness,
+            {"strategy": "havoc", "transformers": ["Op"]},
+        )
+        self.orchestrator.mutation_controller.prepare_child_script.return_value = "x = 42"
+
+        with patch("lafleur.orchestrator.TMP_DIR", self.tmp_dir):
+            self.tmp_dir.mkdir(exist_ok=True)
+            with patch("sys.stdout", new_callable=io.StringIO) as mock_stdout:
+                with patch("sys.stderr", new_callable=io.StringIO):
+                    self.orchestrator.execute_mutation_and_analysis_cycle(
+                        parent_path, 100.0, 1, False
+                    )
+
+        children = list(self.tmp_dir.glob("child_*_dryrun.py"))
+        self.assertGreaterEqual(len(children), 1)
+        self.assertEqual(children[0].read_text(), "x = 42")
+        self.assertIn("DRY-RUN", mock_stdout.getvalue())
+
+
 class TestExecuteSingleMutation(unittest.TestCase):
     """Test _execute_single_mutation method."""
 
@@ -1250,6 +1356,8 @@ class TestExecuteSingleMutation(unittest.TestCase):
         self.orchestrator.run_stats = {"total_mutations": 0}
         self.orchestrator.mutations_since_last_find = 5
         self.orchestrator.keep_tmp_logs = False
+        self.orchestrator.keep_children = False
+        self.orchestrator.dry_run = False
         self.orchestrator.differential_testing = False
         self.orchestrator.timing_fuzz = False
         self.orchestrator.health_monitor = MagicMock()
@@ -2033,6 +2141,33 @@ class TestMainCLIPlumbing(unittest.TestCase):
         _, kwargs = self._run_main(["--fusil-path", "/fake", "--max-mutations-per-session", "3"])
         self.assertEqual(kwargs["max_mutations_per_session"], 3)
 
+    # --- Introspection flags ---
+
+    def test_keep_children_default_false(self):
+        """--keep-children defaults to False."""
+        _, kwargs = self._run_main(["--fusil-path", "/fake"])
+        self.assertFalse(kwargs["keep_children"])
+
+    def test_keep_children_enabled(self):
+        """--keep-children=True reaches constructor."""
+        _, kwargs = self._run_main(["--fusil-path", "/fake", "--keep-children"])
+        self.assertTrue(kwargs["keep_children"])
+
+    def test_dry_run_default_false(self):
+        """--dry-run defaults to False."""
+        _, kwargs = self._run_main(["--fusil-path", "/fake"])
+        self.assertFalse(kwargs["dry_run"])
+
+    def test_dry_run_enabled(self):
+        """--dry-run=True reaches constructor."""
+        _, kwargs = self._run_main(["--fusil-path", "/fake", "--dry-run"])
+        self.assertTrue(kwargs["dry_run"])
+
+    def test_dry_run_implies_keep_children(self):
+        """--dry-run forces keep_children=True in constructor."""
+        _, kwargs = self._run_main(["--fusil-path", "/fake", "--dry-run"])
+        self.assertTrue(kwargs["keep_children"])
+
     # --- Value flags ---
 
     def test_fusil_path_passed(self):
@@ -2147,6 +2282,8 @@ class TestMainCLIPlumbing(unittest.TestCase):
                 "10",
                 "--max-mutations-per-session",
                 "5",
+                "--keep-children",
+                "--dry-run",
             ]
         )
         self.assertEqual(kwargs["fusil_path"], "/my/fusil")
@@ -2165,6 +2302,8 @@ class TestMainCLIPlumbing(unittest.TestCase):
         self.assertTrue(kwargs["no_ekg"])
         self.assertEqual(kwargs["max_sessions"], 10)
         self.assertEqual(kwargs["max_mutations_per_session"], 5)
+        self.assertTrue(kwargs["keep_children"])
+        self.assertTrue(kwargs["dry_run"])
 
     # --- run_stats deep copy ---
 

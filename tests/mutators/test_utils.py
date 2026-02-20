@@ -44,6 +44,8 @@ class TestEvilObjectGenerators(unittest.TestCase):
         # Test it's valid Python
         tree = ast.parse(code)
         self.assertIsInstance(tree, ast.Module)
+        # Verify it actually runs — catches runtime issues ast.parse misses
+        exec(code, {})
 
     def test_genStatefulLenObject(self):
         """Test stateful len object generation."""
@@ -55,6 +57,8 @@ class TestEvilObjectGenerators(unittest.TestCase):
         # Test it's valid Python
         tree = ast.parse(code)
         self.assertIsInstance(tree, ast.Module)
+        # Verify it actually runs — catches runtime issues ast.parse misses
+        exec(code, {})
 
     def test_genUnstableHashObject(self):
         """Test unstable hash object generation."""
@@ -66,6 +70,8 @@ class TestEvilObjectGenerators(unittest.TestCase):
         # Test it's valid Python
         tree = ast.parse(code)
         self.assertIsInstance(tree, ast.Module)
+        # Verify it actually runs — catches runtime issues ast.parse misses
+        exec(code, {})
 
     def test_genSimpleObject(self):
         """Test simple object generation."""
@@ -74,6 +80,12 @@ class TestEvilObjectGenerators(unittest.TestCase):
         self.assertIn("self.x = 1", code)
         self.assertIn("self.y = 'y'", code)
         self.assertIn("def get_value", code)
+
+        # Test it's valid Python
+        tree = ast.parse(code)
+        self.assertIsInstance(tree, ast.Module)
+        # Verify it actually runs — catches runtime issues ast.parse misses
+        exec(code, {})
 
     def test_genStatefulStrReprObject(self):
         """Test stateful str/repr object generation."""
@@ -87,6 +99,8 @@ class TestEvilObjectGenerators(unittest.TestCase):
         # Test it's valid Python
         tree = ast.parse(code)
         self.assertIsInstance(tree, ast.Module)
+        # Verify it actually runs — catches runtime issues ast.parse misses
+        exec(code, {})
 
     def test_genStatefulGetitemObject(self):
         """Test stateful getitem object generation."""
@@ -100,6 +114,8 @@ class TestEvilObjectGenerators(unittest.TestCase):
         # Test it's valid Python
         tree = ast.parse(code)
         self.assertIsInstance(tree, ast.Module)
+        # Verify it actually runs — catches runtime issues ast.parse misses
+        exec(code, {})
 
     def test_genStatefulGetattrObject(self):
         """Test stateful getattr object generation."""
@@ -113,6 +129,8 @@ class TestEvilObjectGenerators(unittest.TestCase):
         # Test it's valid Python
         tree = ast.parse(code)
         self.assertIsInstance(tree, ast.Module)
+        # Verify it actually runs — catches runtime issues ast.parse misses
+        exec(code, {})
 
     def test_genStatefulBoolObject(self):
         """Test stateful bool object generation."""
@@ -126,6 +144,8 @@ class TestEvilObjectGenerators(unittest.TestCase):
         # Test it's valid Python
         tree = ast.parse(code)
         self.assertIsInstance(tree, ast.Module)
+        # Verify it actually runs — catches runtime issues ast.parse misses
+        exec(code, {})
 
     def test_genStatefulIterObject(self):
         """Test stateful iter object generation."""
@@ -139,6 +159,8 @@ class TestEvilObjectGenerators(unittest.TestCase):
         # Test it's valid Python
         tree = ast.parse(code)
         self.assertIsInstance(tree, ast.Module)
+        # Verify it actually runs — catches runtime issues ast.parse misses
+        exec(code, {})
 
     def test_genStatefulIndexObject(self):
         """Test stateful index object generation."""
@@ -152,6 +174,33 @@ class TestEvilObjectGenerators(unittest.TestCase):
         # Test it's valid Python
         tree = ast.parse(code)
         self.assertIsInstance(tree, ast.Module)
+        # Verify it actually runs — catches runtime issues ast.parse misses
+        exec(code, {})
+
+    def test_all_evil_objects_are_executable(self):
+        """Verify every evil object generator produces code that runs cleanly."""
+        generators = [
+            (genLyingEqualityObject, "obj_eq"),
+            (genStatefulLenObject, "obj_len"),
+            (genUnstableHashObject, "obj_hash"),
+            (genSimpleObject, "obj_simple"),
+            (genStatefulStrReprObject, "obj_str"),
+            (genStatefulGetitemObject, "obj_getitem"),
+            (genStatefulGetattrObject, "obj_getattr"),
+            (genStatefulBoolObject, "obj_bool"),
+            (genStatefulIterObject, "obj_iter"),
+            (genStatefulIndexObject, "obj_index"),
+        ]
+        for gen_func, var_name in generators:
+            with self.subTest(generator=gen_func.__name__):
+                code = gen_func(var_name)
+                # Must parse
+                ast.parse(code)
+                # Must execute and instantiate
+                namespace = {}
+                exec(code, namespace)
+                # Variable should exist in namespace after exec
+                self.assertIn(var_name, namespace)
 
 
 class TestFuzzerSetupNormalizer(unittest.TestCase):

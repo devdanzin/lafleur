@@ -955,6 +955,9 @@ class TestSliceMutator(unittest.TestCase):
 
     def test_injects_slice_read_operation(self):
         """Test slice read operation injection is wrapped in try/except."""
+        # NOTE: side_effect sequence is coupled to internal random call order.
+        # If this breaks after a refactor, update the sequence or rely on
+        # test_produces_valid_code for behavioral coverage.
         code = dedent("""
             def uop_harness_test():
                 x = [1, 2, 3, 4, 5]
@@ -976,6 +979,9 @@ class TestSliceMutator(unittest.TestCase):
 
     def test_injects_slice_write_operation(self):
         """Test slice write operation injection is wrapped in try/except."""
+        # NOTE: side_effect sequence is coupled to internal random call order.
+        # If this breaks after a refactor, update the sequence or rely on
+        # test_produces_valid_code for behavioral coverage.
         code = dedent("""
             def uop_harness_test():
                 x = [1, 2, 3, 4, 5]
@@ -997,6 +1003,9 @@ class TestSliceMutator(unittest.TestCase):
 
     def test_injects_slice_delete_operation(self):
         """Test slice delete operation injection is wrapped in try/except."""
+        # NOTE: side_effect sequence is coupled to internal random call order.
+        # If this breaks after a refactor, update the sequence or rely on
+        # test_produces_valid_code for behavioral coverage.
         code = dedent("""
             def uop_harness_test():
                 x = [1, 2, 3, 4, 5]
@@ -1018,6 +1027,9 @@ class TestSliceMutator(unittest.TestCase):
 
     def test_injects_slice_object_read(self):
         """Test slice object read operation injection."""
+        # NOTE: side_effect sequence is coupled to internal random call order.
+        # If this breaks after a refactor, update the sequence or rely on
+        # test_produces_valid_code for behavioral coverage.
         code = dedent("""
             def uop_harness_test():
                 x = [1, 2, 3, 4, 5]
@@ -1034,9 +1046,15 @@ class TestSliceMutator(unittest.TestCase):
         # Should have slice object
         self.assertIn("slice_obj_8000", result)
         self.assertIn("slice(", result)
+        # Safety wrapper must be present — slice operations can raise
+        self.assertIn("try:", result)
+        self.assertIn("except Exception:", result)
 
     def test_slice_object_read_not_double_wrapped(self):
         """Test that read_slice_obj is not double-wrapped in try/except."""
+        # NOTE: side_effect sequence is coupled to internal random call order.
+        # If this breaks after a refactor, update the sequence or rely on
+        # test_produces_valid_code for behavioral coverage.
         code = dedent("""
             def uop_harness_test():
                 x = [1, 2, 3, 4, 5]
@@ -1225,6 +1243,9 @@ class TestArithmeticSpamMutator(unittest.TestCase):
 
     def test_injects_float_add_spam(self):
         """Test float addition spam injection."""
+        # NOTE: side_effect sequence is coupled to internal random call order.
+        # If this breaks after a refactor, update the sequence or rely on
+        # test_produces_valid_code for behavioral coverage.
         code = dedent("""
             def uop_harness_test():
                 x = 1.5
@@ -1243,6 +1264,9 @@ class TestArithmeticSpamMutator(unittest.TestCase):
 
     def test_injects_float_multiply_spam(self):
         """Test float multiplication spam injection."""
+        # NOTE: side_effect sequence is coupled to internal random call order.
+        # If this breaks after a refactor, update the sequence or rely on
+        # test_produces_valid_code for behavioral coverage.
         code = dedent("""
             def uop_harness_test():
                 x = 0.25
@@ -1260,6 +1284,9 @@ class TestArithmeticSpamMutator(unittest.TestCase):
 
     def test_injects_string_spam(self):
         """Test string concatenation spam injection."""
+        # NOTE: side_effect sequence is coupled to internal random call order.
+        # If this breaks after a refactor, update the sequence or rely on
+        # test_produces_valid_code for behavioral coverage.
         code = dedent("""
             def uop_harness_test():
                 x = "hello"
@@ -1335,6 +1362,9 @@ class TestStringInterpolationMutator(unittest.TestCase):
 
     def test_injects_fstring_with_int_format(self):
         """Test f-string with integer format spec injection."""
+        # NOTE: side_effect sequence is coupled to internal random call order.
+        # If this breaks after a refactor, update the sequence or rely on
+        # test_produces_valid_code for behavioral coverage.
         code = dedent("""
             def uop_harness_test():
                 x = 42
@@ -1350,9 +1380,15 @@ class TestStringInterpolationMutator(unittest.TestCase):
         # Should have f-string with format spec
         self.assertIn("f'", result)
         self.assertIn(":04d", result)
+        # Safety wrapper must be present
+        self.assertIn("try:", result)
+        self.assertIn("except Exception:", result)
 
     def test_injects_fstring_with_float_format(self):
         """Test f-string with float format spec injection."""
+        # NOTE: side_effect sequence is coupled to internal random call order.
+        # If this breaks after a refactor, update the sequence or rely on
+        # test_produces_valid_code for behavioral coverage.
         code = dedent("""
             def uop_harness_test():
                 x = 3.14
@@ -1369,9 +1405,15 @@ class TestStringInterpolationMutator(unittest.TestCase):
         # Should have f-string with float formatting
         self.assertIn("f'", result)
         self.assertIn(":.2f", result)
+        # Safety wrapper must be present
+        self.assertIn("try:", result)
+        self.assertIn("except Exception:", result)
 
     def test_creates_variables_when_none_exist(self):
         """Test that variables are created when none exist."""
+        # NOTE: side_effect sequence is coupled to internal random call order.
+        # If this breaks after a refactor, update the sequence or rely on
+        # test_produces_valid_code for behavioral coverage.
         code = dedent("""
             def uop_harness_test():
                 pass
@@ -1425,6 +1467,9 @@ class TestStringInterpolationMutator(unittest.TestCase):
     @unittest.skipIf(sys.version_info < (3, 14), "t-strings require Python 3.14+")
     def test_injects_tstring(self):
         """Test t-string template injection (Python 3.14+)."""
+        # NOTE: side_effect sequence is coupled to internal random call order.
+        # If this breaks after a refactor, update the sequence or rely on
+        # test_produces_valid_code for behavioral coverage.
         code = dedent("""
             def uop_harness_test():
                 x = 42

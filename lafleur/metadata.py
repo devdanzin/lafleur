@@ -428,7 +428,13 @@ def generate_run_metadata(output_dir: Path, args: argparse.Namespace) -> dict:
         },
     }
 
-    # Save metadata to file
+    metadata["max_sessions"] = getattr(args, "max_sessions", None)
+    metadata["max_mutations_per_session"] = getattr(args, "max_mutations_per_session", None)
+    metadata["global_seed"] = getattr(args, "seed", None)
+    metadata["workdir"] = (
+        str(getattr(args, "workdir", None)) if getattr(args, "workdir", None) else None
+    )
+
     with open(metadata_path, "w", encoding="utf-8") as f:
         json.dump(metadata, f, indent=2, default=str)
 

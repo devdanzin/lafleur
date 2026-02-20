@@ -700,5 +700,63 @@ class TestStatePersistenceIntegration(unittest.TestCase):
         self.assertEqual(metadata["depth"], 0)
 
 
+class TestBoundedRunIntegration(unittest.TestCase):
+    """Integration tests for bounded diagnostic runs."""
+
+    def setUp(self):
+        self.original_cwd = os.getcwd()
+        self.test_dir = Path(tempfile.mkdtemp())
+        os.chdir(self.test_dir)
+
+        Path("corpus").mkdir()
+        Path("coverage").mkdir()
+        Path("crashes").mkdir()
+
+        seed_file = Path("corpus/seed_0.py")
+        seed_file.write_text("def uop_harness_test():\n    x = 1 + 2\n    return x\n")
+
+        with patch.object(ExecutionManager, "verify_target_capabilities"):
+            with patch.object(CorpusManager, "synchronize"):
+                self.orchestrator = LafleurOrchestrator(
+                    fusil_path=None,
+                    min_corpus_files=0,
+                    target_python=sys.executable,
+                    max_sessions=3,
+                    max_mutations_per_session=2,
+                )
+
+        seed_path = str(seed_file.resolve())
+        self.orchestrator.coverage_manager.state["per_file_coverage"][seed_path] = {
+            "metadata": {
+                "parent_id": None,
+                "is_seed": True,
+                "mutators_applied": [],
+                "depth": 0,
+            },
+            "harness_profiles": {},
+        }
+
+    def tearDown(self):
+        os.chdir(self.original_cwd)
+        shutil.rmtree(self.test_dir)
+
+    def test_stops_after_max_sessions(self):
+        """Orchestrator stops cleanly after max_sessions without KeyboardInterrupt."""
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
+            self.orchestrator.run_evolutionary_loop()
+
+        self.assertEqual(self.orchestrator.run_stats["total_sessions"], 3)
+
+    def test_respects_mutations_per_session_cap(self):
+        """Each session does at most max_mutations_per_session mutations."""
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
+            self.orchestrator.run_evolutionary_loop()
+
+        # 3 sessions x 2 mutations = 6 total max
+        self.assertLessEqual(self.orchestrator.run_stats.get("total_mutations", 0), 6)
+
+
 if __name__ == "__main__":
     unittest.main()

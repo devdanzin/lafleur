@@ -995,5 +995,45 @@ class TestUnparseDiagnostics(unittest.TestCase):
         self.assertIn(str(result), mock_stderr.getvalue())
 
 
+class TestMutatorPoolFiltering(unittest.TestCase):
+    """Test that ASTMutator.transformers can be filtered for diagnostic mode."""
+
+    def test_filter_to_single_mutator(self):
+        """Filtering to one mutator leaves only that mutator."""
+        mutator = ASTMutator()
+        original_count = len(mutator.transformers)
+        self.assertGreater(original_count, 1)
+
+        mutator.transformers = [
+            t for t in mutator.transformers if t.__name__ == "OperatorSwapper"
+        ]
+
+        self.assertEqual(len(mutator.transformers), 1)
+        self.assertEqual(mutator.transformers[0].__name__, "OperatorSwapper")
+
+    def test_filter_to_multiple_mutators(self):
+        """Filtering to multiple mutators keeps only those."""
+        mutator = ASTMutator()
+        keep = {"OperatorSwapper", "GCInjector", "ConstantPerturbator"}
+
+        mutator.transformers = [t for t in mutator.transformers if t.__name__ in keep]
+
+        self.assertEqual(len(mutator.transformers), 3)
+        names = {t.__name__ for t in mutator.transformers}
+        self.assertEqual(names, keep)
+
+    def test_filtered_mutator_still_works(self):
+        """A filtered pool still produces valid mutations."""
+        mutator = ASTMutator()
+        mutator.transformers = [
+            t for t in mutator.transformers if t.__name__ == "ConstantPerturbator"
+        ]
+
+        code = "def uop_harness_test():\n    x = 42\n    return x\n"
+        result = mutator.mutate(code, seed=42, mutations=3)
+
+        ast.parse(result)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

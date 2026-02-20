@@ -758,5 +758,48 @@ class TestBoundedRunIntegration(unittest.TestCase):
         self.assertLessEqual(self.orchestrator.run_stats.get("total_mutations", 0), 6)
 
 
+class TestMutatorFilterValidation(unittest.TestCase):
+    """Test that invalid mutator names are caught at construction time."""
+
+    def setUp(self):
+        self.original_cwd = os.getcwd()
+        self.test_dir = Path(tempfile.mkdtemp())
+        os.chdir(self.test_dir)
+        Path("corpus").mkdir()
+        Path("coverage").mkdir()
+        Path("crashes").mkdir()
+        Path("corpus/seed_0.py").write_text("def uop_harness_test():\n    x = 1\n")
+
+    def tearDown(self):
+        os.chdir(self.original_cwd)
+        shutil.rmtree(self.test_dir)
+
+    def test_unknown_mutator_raises_valueerror(self):
+        """Passing unknown mutator names raises ValueError."""
+        with patch.object(ExecutionManager, "verify_target_capabilities"):
+            with patch.object(CorpusManager, "synchronize"):
+                with self.assertRaises(ValueError) as ctx:
+                    LafleurOrchestrator(
+                        fusil_path=None,
+                        min_corpus_files=0,
+                        target_python=sys.executable,
+                        mutator_filter=["OperatorSwapper", "TotallyFakeMutator"],
+                    )
+                self.assertIn("TotallyFakeMutator", str(ctx.exception))
+
+    def test_valid_mutator_filter_accepted(self):
+        """Known mutator names are accepted and pool is filtered."""
+        with patch.object(ExecutionManager, "verify_target_capabilities"):
+            with patch.object(CorpusManager, "synchronize"):
+                orch = LafleurOrchestrator(
+                    fusil_path=None,
+                    min_corpus_files=0,
+                    target_python=sys.executable,
+                    mutator_filter=["OperatorSwapper", "GCInjector"],
+                )
+        names = [t.__name__ for t in orch.mutation_controller.ast_mutator.transformers]
+        self.assertEqual(sorted(names), ["GCInjector", "OperatorSwapper"])
+
+
 if __name__ == "__main__":
     unittest.main()

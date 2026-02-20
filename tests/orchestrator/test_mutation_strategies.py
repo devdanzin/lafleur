@@ -53,6 +53,7 @@ class TestApplyMutationStrategy(unittest.TestCase):
         self.controller._run_havoc_stage = self.mock_havoc
         self.controller._run_spam_stage = self.mock_spam
         self.controller._run_helper_sniper_stage = self.mock_helper
+        self.controller.forced_strategy = None
 
     def test_seeds_random_generator(self):
         """Test that the dedicated RNG is seeded correctly."""
@@ -931,6 +932,7 @@ class TestHygienePass(unittest.TestCase):
         self.controller._run_havoc_stage = self.mock_havoc
         self.controller._run_spam_stage = self.mock_spam
         self.controller._run_helper_sniper_stage = self.mock_helper
+        self.controller.forced_strategy = None
 
     def _run_strategy(self, hygiene_random_values):
         """Run apply_mutation_strategy with controlled hygiene RANDOM.random() calls."""
@@ -1017,6 +1019,111 @@ class TestRecordSuccessHygieneFiltering(unittest.TestCase):
         orch._handle_analysis_data(analysis_data, i=0, parent_metadata={}, nojit_cv=None)
 
         orch.score_tracker.record_success.assert_called_once_with("havoc", ["OperatorSwapper"])
+
+
+class TestForcedStrategy(unittest.TestCase):
+    """Test --strategy forcing in MutationController."""
+
+    def setUp(self):
+        self.controller = MutationController.__new__(MutationController)
+        self.controller.ast_mutator = MagicMock()
+        self.controller.ast_mutator.transformers = [MagicMock, MagicMock]
+        self.controller.score_tracker = MagicMock()
+        self.controller.score_tracker.attempts = defaultdict(int)
+        self.controller.score_tracker.record_attempt = MagicMock()
+        self.controller.score_tracker.get_weights.return_value = [1.0, 1.0]
+        self.controller.corpus_manager = None
+        self.controller.differential_testing = False
+        self.controller.health_monitor = None
+
+        self.dummy_tree = ast.parse("x = 1")
+
+    def test_forced_havoc_always_selects_havoc(self):
+        """forced_strategy='havoc' bypasses adaptive selection."""
+        self.controller.forced_strategy = "havoc"
+
+        mock_havoc = MagicMock(
+            return_value=(self.dummy_tree, {"strategy": "havoc", "transformers": ["Op"]})
+        )
+        mock_havoc.__name__ = "_run_havoc_stage"
+        self.controller._run_havoc_stage = mock_havoc
+
+        with patch("lafleur.mutation_controller.RANDOM") as mock_rng:
+            mock_rng.seed = MagicMock()
+            mock_rng.random.side_effect = [1.0, 1.0, 1.0, 1.0]
+            _, info = self.controller.apply_mutation_strategy(self.dummy_tree, seed=42)
+
+        mock_havoc.assert_called_once()
+        mock_rng.choices.assert_not_called()
+
+    def test_forced_spam_always_selects_spam(self):
+        """forced_strategy='spam' bypasses adaptive selection."""
+        self.controller.forced_strategy = "spam"
+
+        mock_spam = MagicMock(
+            return_value=(self.dummy_tree, {"strategy": "spam", "transformers": ["Op"]})
+        )
+        mock_spam.__name__ = "_run_spam_stage"
+        self.controller._run_spam_stage = mock_spam
+
+        with patch("lafleur.mutation_controller.RANDOM") as mock_rng:
+            mock_rng.seed = MagicMock()
+            mock_rng.random.side_effect = [1.0, 1.0, 1.0, 1.0]
+            _, info = self.controller.apply_mutation_strategy(self.dummy_tree, seed=42)
+
+        mock_spam.assert_called_once()
+        self.assertEqual(info["strategy"], "spam")
+
+    def test_forced_strategy_records_attempt(self):
+        """Forced strategy still records an attempt for score tracking."""
+        self.controller.forced_strategy = "deterministic"
+
+        mock_det = MagicMock(
+            return_value=(
+                self.dummy_tree,
+                {"strategy": "deterministic", "transformers": ["Op"]},
+            )
+        )
+        mock_det.__name__ = "_run_deterministic_stage"
+        self.controller._run_deterministic_stage = mock_det
+
+        with patch("lafleur.mutation_controller.RANDOM") as mock_rng:
+            mock_rng.seed = MagicMock()
+            mock_rng.random.side_effect = [1.0, 1.0, 1.0, 1.0]
+            self.controller.apply_mutation_strategy(self.dummy_tree, seed=42)
+
+        self.controller.score_tracker.record_attempt.assert_called_with("deterministic")
+
+    def test_no_forced_strategy_uses_adaptive_selection(self):
+        """forced_strategy=None falls through to normal adaptive selection."""
+        self.controller.forced_strategy = None
+
+        mock_det = MagicMock(
+            return_value=(
+                self.dummy_tree,
+                {"strategy": "deterministic", "transformers": ["Op"]},
+            )
+        )
+        mock_det.__name__ = "_run_deterministic_stage"
+        mock_havoc = MagicMock()
+        mock_havoc.__name__ = "_run_havoc_stage"
+        mock_spam = MagicMock()
+        mock_spam.__name__ = "_run_spam_stage"
+        mock_helper = MagicMock()
+        mock_helper.__name__ = "_run_helper_sniper_stage"
+
+        self.controller._run_deterministic_stage = mock_det
+        self.controller._run_havoc_stage = mock_havoc
+        self.controller._run_spam_stage = mock_spam
+        self.controller._run_helper_sniper_stage = mock_helper
+
+        with patch("lafleur.mutation_controller.RANDOM") as mock_rng:
+            mock_rng.seed = MagicMock()
+            mock_rng.choices.return_value = [mock_det]
+            mock_rng.random.side_effect = [1.0, 1.0, 1.0, 1.0]
+            self.controller.apply_mutation_strategy(self.dummy_tree, seed=42)
+
+        mock_rng.choices.assert_called_once()
 
 
 if __name__ == "__main__":

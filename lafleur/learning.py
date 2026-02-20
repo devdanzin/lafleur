@@ -21,7 +21,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-# Define paths for the new state and log files
 MUTATOR_SCORES_FILE = Path("coverage/mutator_scores.json")
 MUTATOR_TELEMETRY_LOG = Path("logs/mutator_effectiveness.jsonl")
 CRASH_ATTRIBUTION_LOG = Path("logs/crash_attribution.jsonl")

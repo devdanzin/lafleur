@@ -116,7 +116,6 @@ def check_reproduction(
 
     ret, _, stderr = run_session(scripts, target_python)
 
-    # Check exit code match
     code_match = False
     if is_asan:
         # ASan typically exits with 1 or a specific code like 77
@@ -128,7 +127,6 @@ def check_reproduction(
         # Exact code match
         code_match = ret == target_code
 
-    # Check grep pattern match
     grep_match = True
     if grep_pattern:
         grep_match = grep_pattern in stderr

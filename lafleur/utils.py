@@ -239,7 +239,6 @@ class TeeLogger:
             self._do_flush()
             return
 
-        # Check verbosity suppression
         if self._is_suppressed(message):
             self._last_was_suppressed = True
             return

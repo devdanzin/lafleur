@@ -18,7 +18,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 from textwrap import dedent
 
-# Import mutators from submodules
 from lafleur.mutators.generic import (
     ArithmeticSpamMutator,
     AsyncConstructMutator,

@@ -404,7 +404,6 @@ class MutationController:
         chosen_name = chosen_strategy.__name__.replace("_run_", "").replace("_stage", "")
         self.score_tracker.record_attempt(chosen_name)
 
-        # Check if the AST is large enough to require slicing
         len_body = (
             len(tree_copy.body) if isinstance(tree_copy, (ast.Module, ast.FunctionDef)) else 0
         )

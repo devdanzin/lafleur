@@ -383,13 +383,11 @@ class ArtifactManager:
             metadata["timestamp"] = timestamp
             metadata_path.write_text(json.dumps(metadata, indent=2))
 
-        # Copy the triggering script
         dest_name = "crash_script.py"
         self._safe_copy(
             source_path, crash_dir / dest_name, "crash source file", preserve_metadata=True
         )
 
-        # Create reproduce.sh
         reproduce_script = crash_dir / "reproduce.sh"
         reproduce_content = dedent(f"""\
             #!/bin/bash
@@ -422,22 +420,18 @@ class ArtifactManager:
         Returns:
             Path to the created crash directory (stat key: "crashes_found" handled by caller)
         """
-        # Generate unique directory name with timestamp
         timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
         random_suffix = random.randint(1000, 9999)
         crash_dir = self.crashes_dir / f"session_crash_{timestamp}_{random_suffix}"
 
-        # Create the crash directory
         crash_dir.mkdir(parents=True, exist_ok=True)
 
-        # Write metadata.json if signature is provided
         if crash_signature:
             metadata_path = crash_dir / "metadata.json"
             metadata = crash_signature.to_dict()
             metadata["timestamp"] = timestamp
             metadata_path.write_text(json.dumps(metadata, indent=2))
 
-        # Copy scripts with sequential prefixes
         script_names = []
         for i, script_path in enumerate(scripts):
             if i == len(scripts) - 1:
@@ -453,7 +447,6 @@ class ArtifactManager:
             )
             script_names.append(dest_name)
 
-        # Create reproduce.sh script
         reproduce_script = crash_dir / "reproduce.sh"
         reproduce_content = dedent(f"""
             #!/bin/bash
@@ -639,20 +632,17 @@ class ArtifactManager:
         """
         print(f"  [!!!] JIT DIVERGENCE DETECTED ({reason})! Saving test case.", file=sys.stderr)
 
-        # Create a subdirectory for this type of divergence
         dest_dir = self.divergences_dir / reason
         dest_dir.mkdir(parents=True, exist_ok=True)
 
         base_filename = f"divergence_{source_path.stem}"
         dest_source_path = dest_dir / f"{base_filename}.py"
 
-        # Create a .diff file to show the difference
         diff_path = dest_dir / f"{base_filename}.diff"
 
         if not self._safe_copy(source_path, dest_source_path, "divergence source file"):
             return
 
-        # Use difflib to create a clear diff of the outputs
         diff = difflib.unified_diff(
             nojit_output.splitlines(keepends=True),
             jit_output.splitlines(keepends=True),
@@ -681,7 +671,6 @@ class ArtifactManager:
         """
         print("  [!!!] JIT PERFORMANCE REGRESSION DETECTED! Saving test case.", file=sys.stderr)
 
-        # Create a descriptive filename with the timing data
         filename = f"regression_jit_{jit_time:.0f}ms_nojit_{nojit_time:.0f}ms_{source_path.name}"
         dest_path = self.regressions_dir / filename
 

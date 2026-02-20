@@ -70,7 +70,6 @@ SERIALIZATION_SNIPPET = dedent("""
             except TypeError:
                 return f"<unserializable type: {type(o).__name__}>"
 
-    # Filter out keys we don't care about before serialization
     state_dict = locals().copy()
     IGNORE_KEYS = {
         '__name__', '__doc__', '__package__', '__loader__',
@@ -79,7 +78,6 @@ SERIALIZATION_SNIPPET = dedent("""
     }
     filtered_state = {k: v for k, v in state_dict.items() if k not in IGNORE_KEYS and not k.startswith('__')}
 
-    # Check if the harness loop actually ran and produced a result
     if 'final_harness_locals' in filtered_state:
         print(json.dumps(filtered_state['final_harness_locals'], sort_keys=True, indent=2, cls=LafleurStateEncoder))
     # --- END INJECTED SERIALIZATION CODE ---

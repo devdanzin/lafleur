@@ -56,6 +56,7 @@ All notable changes to this project should be documented in this file.
 - `StatementDuplicator` uncommented and added to the hygiene layer at 8% fixed probability, providing controlled JIT warming pressure through statement duplication without the unbounded growth that caused it to be disabled, by @devdanzin.
 - Learning system now filters hygiene mutators from `record_success()` calls, preventing corpus-maintenance operations from accumulating misleading reward signals, by @devdanzin.
 - Health event logging enriched with `parent_id`, mutation strategy, error excerpts, and sterile-file filtering in parent selection, by @devdanzin.
+- Removed ~55 obvious/redundant comments that merely restated the adjacent code (e.g. `# Create the crash directory` before `crash_dir.mkdir()`) across 17 source files, by @devdanzin.
 
 
 ### Fixed

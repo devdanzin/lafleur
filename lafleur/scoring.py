@@ -472,7 +472,6 @@ class ScoringManager:
         Returns:
             True if the child is considered interesting
         """
-        # Handle the special case for seed files first.
         if parent_id is None:
             is_seed = "seed" in mutation_info.get("strategy", "")
             if coverage_info.is_interesting() or is_seed:
@@ -764,13 +763,11 @@ class ScoringManager:
                 file=sys.stderr,
             )
 
-        # Create a copy of stats for persistence, with the decayed values.
         jit_stats_for_save = jit_stats.copy()
         jit_stats_for_save["max_exit_density"] = saved_density
         jit_stats_for_save["child_delta_max_exit_density"] = saved_delta_density
         jit_stats_for_save["child_delta_total_exits"] = saved_delta_exits
 
-        # Create a copy so we don't mutate the caller's dict
         saved_mutation_info = {**mutation_info, "jit_stats": jit_stats_for_save}
 
         return {

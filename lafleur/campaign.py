@@ -357,7 +357,6 @@ class CampaignAggregator:
         """Load data from a single instance directory."""
         metadata_path = path / "logs" / "run_metadata.json"
 
-        # Validate instance by checking for metadata
         if not metadata_path.exists():
             print(f"[!] Skipping {path}: No run_metadata.json found", file=sys.stderr)
             return None
@@ -469,7 +468,6 @@ class CampaignAggregator:
             fingerprint = metadata.get("fingerprint", "UNKNOWN")
             timestamp_str = metadata.get("timestamp")
 
-            # Parse timestamp (format: "20260109_221500")
             crash_time = None
             if timestamp_str:
                 try:
@@ -477,7 +475,6 @@ class CampaignAggregator:
                 except ValueError:
                     pass
 
-            # Update global crash info
             if fingerprint not in self.global_crashes:
                 self.global_crashes[fingerprint] = CrashInfo()
 
@@ -485,7 +482,6 @@ class CampaignAggregator:
             crash_info.count += 1
             crash_info.finding_instances.add(instance.name)
 
-            # Track first finder
             if crash_time and (
                 crash_info.first_found is None or crash_time < crash_info.first_found
             ):
@@ -505,7 +501,6 @@ class CampaignAggregator:
         self.global_corpus["total_files"] += total_files
         self.global_corpus["total_sterile"] += corpus.get("sterile_count", 0)
 
-        # Weighted averages
         if total_files > 0:
             depth_dist = corpus.get("lineage_depth_distribution", {})
             size_dist = corpus.get("file_size_distribution", {})
@@ -517,9 +512,7 @@ class CampaignAggregator:
             if size_dist.get("mean") is not None:
                 self.global_corpus["sum_size"] += size_dist["mean"] * total_files
 
-        # Aggregate mutation strategies (with backwards compatibility)
         successful_strategies = corpus.get("successful_strategies", {})
-        # Fall back to old field name for backwards compatibility
         if not successful_strategies:
             successful_strategies = corpus.get("successful_mutations", {})
         for strategy, count in successful_strategies.items():
@@ -1004,7 +997,6 @@ def generate_html_report(aggregator: CampaignAggregator) -> str:
         ),
     )[:15]  # Top 15
 
-    # Build instance rows
     instance_rows = []
     for inst in sorted_instances:
         name_escaped = html.escape(inst.name)
@@ -1014,7 +1006,6 @@ def generate_html_report(aggregator: CampaignAggregator) -> str:
         coverage_pct = (inst.coverage / max_coverage) * 100 if max_coverage else 0
         speed_str = f"{inst.speed:.2f}/s" if inst.speed > 0 else "N/A"
 
-        # Per-instance health badge
         if inst.health_summary and inst.stats:
             total_muts = inst.stats.get("total_mutations", 0)
             if total_muts > 0:
@@ -1038,14 +1029,12 @@ def generate_html_report(aggregator: CampaignAggregator) -> str:
           <td>{dir_escaped}</td>
         </tr>""")
 
-    # Build crash rows
     crash_rows = []
     for fingerprint, info in sorted_crashes:
         fp_escaped = html.escape(fingerprint[:40] if len(fingerprint) > 40 else fingerprint)
         instance_pct = (len(info.finding_instances) / instance_count * 100) if instance_count else 0
         hits_pct = (info.count / max_hits) * 100 if max_hits else 0
 
-        # Determine row class and status badge
         status_label = info.status_label
         row_class = ""
         if status_label == "REGRESSION":
@@ -1059,9 +1048,7 @@ def generate_html_report(aggregator: CampaignAggregator) -> str:
         else:
             badge = '<span class="badge new">NEW</span>'
 
-        # Format issue link
         if info.issue_number:
-            # Use provided URL or default to CPython issues tracker
             issue_url = (
                 info.issue_url or f"https://github.com/python/cpython/issues/{info.issue_number}"
             )

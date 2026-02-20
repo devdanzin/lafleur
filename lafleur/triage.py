@@ -129,7 +129,6 @@ def do_import_issues(registry: CrashRegistry, input_path: Path) -> int:
     with open(input_path, encoding="utf-8") as f:
         data = json.load(f)
 
-    # Validate structure
     if not isinstance(data, list):
         raise ValueError("JSON file must contain a list of issue objects")
 
@@ -266,7 +265,6 @@ def import_campaign(args: argparse.Namespace) -> None:
         instance_name = metadata.get("instance_name", instance_path.name)
         run_id = metadata.get("run_id", "unknown")
 
-        # Get CPython revision info
         env = metadata.get("environment", {})
         cpython_revision = None
         revision_date = None
@@ -314,7 +312,6 @@ def import_campaign(args: argparse.Namespace) -> None:
             if not fingerprint:
                 continue
 
-            # Get crash timestamp
             timestamp_str = crash_metadata.get("timestamp", "")
             # Convert "20260109_221500" format to ISO8601
             if timestamp_str and "_" in timestamp_str:

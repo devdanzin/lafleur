@@ -80,6 +80,8 @@ All notable changes to this project should be documented in this file.
 - `run_session()`: `sys.path` and `sys.modules` are now snapshotted and restored between scripts. This prevents `ImportChaosMutator` pollution from leaking across session scripts and causing false-positive divergences, by @devdanzin.
 - `get_jit_stats()`, `snapshot_executor_state()`, `scan_watched_variables()`: Dictionary iteration now uses `list(dict.items())` to prevent `RuntimeError: dictionary changed size during iteration` when chaotic harness code triggers namespace-modifying side effects, by @devdanzin.
 - `verify_target_capabilities()`: Fixed typo in error message — `PYTHON_LLTRACE=4` corrected to `PYTHON_LLTRACE=2`, by @devdanzin.
+- `_find_subsumer_candidates()`: Changed `>` to `>=` so files with equal coverage are considered as subsumption candidates. Previously, a minimized file with identical coverage but smaller size and faster execution could never replace the original because the strict greater-than excluded equal-sized edge sets from the candidate pool, by @devdanzin.
+- `merge_coverage_into_global()`: Discovery log entries now resolve integer IDs to human-readable names (e.g. `LOAD_FAST` instead of `42`) by building reverse maps from the forward ID tables, with fallback to `str(id)` for unmapped IDs, by @devdanzin.
 
 
 ### Documentation

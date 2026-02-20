@@ -333,15 +333,29 @@ def merge_coverage_into_global(
     discoveries: list[tuple[str, str, str]] = []
     global_cov = state["global_coverage"]
 
+    # Map from global_coverage key to the corresponding forward-map key
+    # so we can build reverse maps to resolve human-readable names.
+    _forward_map_keys: dict[str, str] = {
+        "uops": "uop_map",
+        "edges": "edge_map",
+        "rare_events": "rare_event_map",
+    }
+    _reverse_maps: dict[str, dict[int, str]] = {
+        cov_type: {v: k for k, v in state.get(fwd_key, {}).items()}
+        for cov_type, fwd_key in _forward_map_keys.items()
+    }
+
     for harness_id, data in per_harness_coverage.items():
         for cov_type in ("uops", "edges", "rare_events"):
             global_map = global_cov[cov_type]
+            reverse_map = _reverse_maps[cov_type]
             for item_id, count in data.get(cov_type, {}).items():
                 if item_id not in global_map:
                     # Derive the display name from cov_type:
                     # "uops" -> "UOP", "edges" -> "EDGE", "rare_events" -> "RARE EVENT"
                     display_type = cov_type.rstrip("s").upper().replace("_", " ")
-                    discoveries.append((display_type, str(item_id), harness_id))
+                    display_name = reverse_map.get(item_id, str(item_id))
+                    discoveries.append((display_type, display_name, harness_id))
                     global_map[item_id] = 0
                 global_map[item_id] += count
 

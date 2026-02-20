@@ -536,7 +536,7 @@ class CorpusManager:
 
         A valid subsumer candidate must:
         1. Contain ALL of A's edges (found via index intersection)
-        2. Have strictly MORE edges than A (proper superset requirement)
+        2. Have at least as many edges as A (superset-or-equal requirement)
         3. Not be A itself
         4. Not already be marked for pruning
 
@@ -569,10 +569,10 @@ class CorpusManager:
                 # At most self remains — no subsumers possible
                 break
 
-        # Remove self, already-pruned files, and files without strictly more edges
+        # Remove self, already-pruned files, and files without at least as many edges
         candidates.discard(filename_a)
         candidates -= files_to_prune
-        candidates = {c for c in candidates if len(file_edges.get(c, set())) > len(edges_a)}
+        candidates = {c for c in candidates if len(file_edges.get(c, set())) >= len(edges_a)}
 
         return candidates
 
@@ -621,7 +621,7 @@ class CorpusManager:
             if not edges_a or filename_a in files_to_prune:
                 continue
 
-            # Find files that contain all of A's edges and have strictly more
+            # Find files that contain all of A's edges (superset or equal)
             candidates = self._find_subsumer_candidates(
                 filename_a, edges_a, file_edges, edge_to_files, files_to_prune
             )

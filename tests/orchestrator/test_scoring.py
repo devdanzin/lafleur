@@ -290,6 +290,23 @@ class TestInterestingnessScorer(unittest.TestCase):
         # Should not crash, should return 0
         self.assertEqual(score, 0.0)
 
+    def test_score_zero_parent_edges_no_crash(self):
+        """Zero parent_lineage_edge_count must not cause ZeroDivisionError."""
+        info = NewCoverageInfo(global_edges=1, total_child_edges=10)
+        scorer = InterestingnessScorer(
+            coverage_info=info,
+            parent_file_size=100,
+            parent_lineage_edge_count=0,  # Initial seed — no parent edges
+            child_file_size=100,
+            is_timing_mode=False,
+            jit_avg_time_ms=None,
+            nojit_avg_time_ms=None,
+            nojit_cv=None,
+        )
+        score = scorer.calculate_score()
+        # Should get global edge score (10.0) without richness bonus (skipped due to 0 parent edges)
+        self.assertEqual(score, 10.0)
+
     def test_min_interesting_score_constant(self):
         """Test that MIN_INTERESTING_SCORE is set to 10.0."""
         self.assertEqual(InterestingnessScorer.MIN_INTERESTING_SCORE, 10.0)

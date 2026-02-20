@@ -86,6 +86,9 @@ All notable changes to this project should be documented in this file.
 - `_concatenate_scripts()`: Removed `rename_harnesses()` call that changed function names (e.g. `uop_harness_f1` → `uop_harness_f1_0`), breaking crash reproduction by altering the global dict keys the JIT watches, by @devdanzin.
 - `_generate_bash_scripts()`: `target_python` and script paths are now shell-escaped with `shlex.quote()` to handle paths containing spaces, by @devdanzin.
 - `upsert_reported_issues()`: Replaced `INSERT OR REPLACE` (which deletes entire rows on conflict, wiping existing fields) with `INSERT ... ON CONFLICT DO UPDATE SET ... COALESCE` to preserve existing values when incoming data has NULL/missing fields, by @devdanzin.
+- `_aggregate_corpus()`: Truthiness check `if depth_dist.get("mean"):` silently dropped instances whose mean depth was `0.0` from weighted averages, skewing campaign statistics upward. Now uses `is not None` for both depth and size checks, by @devdanzin.
+- `load_latest_timeseries_entry()`: Byte-by-byte backward seek caused excessive syscalls on large files due to `BufferedReader` invalidation. Replaced with `collections.deque(f, maxlen=1)` for a single-pass O(n) read, by @devdanzin.
+- `get_installed_packages()` and `get_target_python_info()`: A single corrupted `dist-info` entry would crash the entire package listing. Now uses per-package try/except to skip broken entries, by @devdanzin.
 
 
 ### Documentation

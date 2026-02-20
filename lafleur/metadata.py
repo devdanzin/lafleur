@@ -246,7 +246,10 @@ def get_installed_packages() -> list[dict[str, str]]:
     """Get list of installed packages with their versions from the current interpreter."""
     packages = []
     for dist in distributions():
-        packages.append({"name": dist.metadata["Name"], "version": dist.metadata["Version"]})
+        try:
+            packages.append({"name": dist.metadata["Name"], "version": dist.metadata["Version"]})
+        except Exception:
+            pass
     # Sort by name for consistent output
     return sorted(packages, key=lambda p: p["name"].lower())
 
@@ -273,7 +276,12 @@ import json
 import sysconfig
 try:
     from importlib.metadata import distributions
-    packages = [{"name": d.metadata["Name"], "version": d.metadata["Version"]} for d in distributions()]
+    packages = []
+    for d in distributions():
+        try:
+            packages.append({"name": d.metadata["Name"], "version": d.metadata["Version"]})
+        except Exception:
+            pass
     packages = sorted(packages, key=lambda p: p["name"].lower())
 except Exception:
     packages = []

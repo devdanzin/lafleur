@@ -8,7 +8,7 @@ of fuzzing runs by consuming metadata, stats, and crash information.
 import argparse
 import json
 import sys
-from collections import defaultdict
+from collections import defaultdict, deque
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -50,30 +50,12 @@ def load_latest_timeseries_entry(instance_dir: Path) -> dict[str, Any] | None:
     # Read the latest entry from the most recent timeseries file
     for ts_file in timeseries_files:
         try:
-            # Read the last line efficiently
-            with open(ts_file, "rb") as f:
-                # Seek to end and work backwards to find last newline
-                f.seek(0, 2)  # Go to end
-                file_size = f.tell()
-                if file_size == 0:
+            with open(ts_file, encoding="utf-8") as f:
+                # deque(f, maxlen=1) iterates once, keeping only the last line
+                tail = deque(f, maxlen=1)
+                if not tail:
                     continue
-
-                # Read backwards to find the last complete line
-                pos = file_size - 1
-                while pos > 0:
-                    f.seek(pos)
-                    char = f.read(1)
-                    if char == b"\n" and pos < file_size - 1:
-                        break
-                    pos -= 1
-
-                # Read the last line
-                if pos > 0:
-                    f.seek(pos + 1)
-                else:
-                    f.seek(0)
-
-                last_line = f.read().decode("utf-8").strip()
+                last_line = tail[0].strip()
                 if last_line:
                     return json.loads(last_line)
         except (OSError, json.JSONDecodeError):

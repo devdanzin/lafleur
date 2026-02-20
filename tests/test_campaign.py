@@ -411,6 +411,62 @@ class TestCampaignAggregator(unittest.TestCase):
         self.assertEqual(aggregator.global_corpus["total_files"], 100)
         self.assertEqual(aggregator.global_corpus["total_sterile"], 10)
 
+    def test_aggregate_corpus_zero_mean_depth_included(self):
+        """Test that a mean depth of 0.0 is included in weighted averages."""
+        run_dir = self._create_run("run1", {"total_mutations": 10})
+        (run_dir / "corpus_stats.json").write_text(
+            json.dumps(
+                {
+                    "total_files": 50,
+                    "lineage_depth_distribution": {"mean": 0.0},
+                    "file_size_distribution": {"mean": 0.0},
+                }
+            )
+        )
+
+        aggregator = CampaignAggregator([run_dir])
+        aggregator.load_instances()
+        aggregator.aggregate()
+
+        # 0.0 * 50 == 0, but file_count_for_avg must still be incremented
+        self.assertEqual(aggregator.global_corpus["file_count_for_avg"], 50)
+        self.assertAlmostEqual(aggregator.global_corpus["sum_depth"], 0.0)
+        self.assertAlmostEqual(aggregator.global_corpus["sum_size"], 0.0)
+
+    def test_aggregate_corpus_mixed_zero_nonzero_depth(self):
+        """Test weighted average with one zero-mean and one nonzero-mean instance."""
+        run1 = self._create_run("run1", {"total_mutations": 10})
+        (run1 / "corpus_stats.json").write_text(
+            json.dumps(
+                {
+                    "total_files": 100,
+                    "lineage_depth_distribution": {"mean": 0.0},
+                    "file_size_distribution": {"mean": 500.0},
+                }
+            )
+        )
+        run2 = self._create_run("run2", {"total_mutations": 20})
+        (run2 / "corpus_stats.json").write_text(
+            json.dumps(
+                {
+                    "total_files": 100,
+                    "lineage_depth_distribution": {"mean": 4.0},
+                    "file_size_distribution": {"mean": 1500.0},
+                }
+            )
+        )
+
+        aggregator = CampaignAggregator([run1, run2])
+        aggregator.load_instances()
+        aggregator.aggregate()
+
+        # file_count_for_avg = 100 + 100 = 200
+        self.assertEqual(aggregator.global_corpus["file_count_for_avg"], 200)
+        # sum_depth = 0*100 + 4*100 = 400, avg = 2.0
+        self.assertAlmostEqual(aggregator.global_corpus["sum_depth"], 400.0)
+        # sum_size = 500*100 + 1500*100 = 200000
+        self.assertAlmostEqual(aggregator.global_corpus["sum_size"], 200000.0)
+
     def test_enrich_crashes_from_registry(self):
         """Test enriching crashes with registry data."""
         run_dir = self._create_run("run1", {"total_mutations": 10})

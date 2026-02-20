@@ -510,11 +510,11 @@ class CampaignAggregator:
             depth_dist = corpus.get("lineage_depth_distribution", {})
             size_dist = corpus.get("file_size_distribution", {})
 
-            if depth_dist.get("mean"):
+            if depth_dist.get("mean") is not None:
                 self.global_corpus["sum_depth"] += depth_dist["mean"] * total_files
                 self.global_corpus["file_count_for_avg"] += total_files
 
-            if size_dist.get("mean"):
+            if size_dist.get("mean") is not None:
                 self.global_corpus["sum_size"] += size_dist["mean"] * total_files
 
         # Aggregate mutation strategies (with backwards compatibility)

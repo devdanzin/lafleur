@@ -138,6 +138,22 @@ class TestGetInstalledPackages(unittest.TestCase):
 
         self.assertEqual(packages, [])
 
+    @patch("lafleur.metadata.distributions")
+    def test_skips_corrupted_packages(self, mock_distributions):
+        """Test that corrupted dist-info entries are skipped without crashing."""
+        good_dist = MagicMock()
+        good_dist.metadata = {"Name": "good-pkg", "Version": "1.0"}
+
+        bad_dist = MagicMock()
+        bad_dist.metadata.__getitem__ = MagicMock(side_effect=KeyError("Name"))
+
+        mock_distributions.return_value = [good_dist, bad_dist]
+
+        packages = get_installed_packages()
+
+        self.assertEqual(len(packages), 1)
+        self.assertEqual(packages[0]["name"], "good-pkg")
+
 
 class TestGetTargetPythonInfo(unittest.TestCase):
     """Tests for target Python interpreter info retrieval."""

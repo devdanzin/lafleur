@@ -12,6 +12,7 @@ from pathlib import Path
 from lafleur.report import (
     generate_report,
     load_json_file,
+    load_latest_timeseries_entry,
     format_duration,
     format_number,
     get_jit_asan_status,
@@ -514,6 +515,66 @@ class TestGenerateReport(unittest.TestCase):
         self.assertGreater(attr_pos, -1)
         self.assertGreater(digest_pos, -1)
         self.assertLess(attr_pos, digest_pos)
+
+
+class TestLoadLatestTimeseries(unittest.TestCase):
+    """Tests for load_latest_timeseries_entry."""
+
+    def setUp(self):
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.root = Path(self.temp_dir.name)
+
+    def tearDown(self):
+        self.temp_dir.cleanup()
+
+    def test_returns_none_when_no_logs_dir(self):
+        """Test that None is returned when logs directory doesn't exist."""
+        self.assertIsNone(load_latest_timeseries_entry(self.root))
+
+    def test_returns_none_when_no_timeseries_files(self):
+        """Test that None is returned when no timeseries files exist."""
+        (self.root / "logs").mkdir()
+        self.assertIsNone(load_latest_timeseries_entry(self.root))
+
+    def test_returns_last_line(self):
+        """Test that the last JSON line is returned."""
+        logs = self.root / "logs"
+        logs.mkdir()
+        ts_file = logs / "timeseries_001.jsonl"
+        ts_file.write_text(
+            '{"ts": 1, "rss_mb": 100}\n{"ts": 2, "rss_mb": 200}\n',
+            encoding="utf-8",
+        )
+
+        entry = load_latest_timeseries_entry(self.root)
+        self.assertEqual(entry, {"ts": 2, "rss_mb": 200})
+
+    def test_skips_empty_file(self):
+        """Test that empty files are skipped and the next file is tried."""
+        logs = self.root / "logs"
+        logs.mkdir()
+        # Most recent file is empty
+        (logs / "timeseries_002.jsonl").write_text("", encoding="utf-8")
+        # Older file has data
+        (logs / "timeseries_001.jsonl").write_text(
+            '{"ts": 1, "rss_mb": 100}\n',
+            encoding="utf-8",
+        )
+
+        entry = load_latest_timeseries_entry(self.root)
+        self.assertEqual(entry, {"ts": 1, "rss_mb": 100})
+
+    def test_single_line_file(self):
+        """Test that a file with a single line is handled correctly."""
+        logs = self.root / "logs"
+        logs.mkdir()
+        (logs / "timeseries_001.jsonl").write_text(
+            '{"ts": 1, "rss_mb": 100}\n',
+            encoding="utf-8",
+        )
+
+        entry = load_latest_timeseries_entry(self.root)
+        self.assertEqual(entry, {"ts": 1, "rss_mb": 100})
 
 
 if __name__ == "__main__":

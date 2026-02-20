@@ -482,6 +482,7 @@ class TestDescriptorChaosGenerator(unittest.TestCase):
         result = ast.unparse(mutated)
         reparsed = ast.parse(result)
         self.assertIsInstance(reparsed, ast.Module)
+        compile(result, "<test>", "exec")
 
     def test_unique_class_names(self):
         """Test that unique class names are generated."""
@@ -538,6 +539,7 @@ class TestDescriptorChaosGenerator(unittest.TestCase):
         # Should still be valid
         reparsed = ast.parse(result)
         self.assertIsInstance(reparsed, ast.Module)
+        compile(result, "<test>", "exec")
 
 
 class TestMROShuffler(unittest.TestCase):
@@ -721,6 +723,7 @@ class TestMROShuffler(unittest.TestCase):
         result = ast.unparse(mutated)
         reparsed = ast.parse(result)
         self.assertIsInstance(reparsed, ast.Module)
+        compile(result, "<test>", "exec")
 
     def test_unique_class_names(self):
         """Test that unique class names are generated."""
@@ -778,6 +781,7 @@ class TestMROShuffler(unittest.TestCase):
         # Should still be valid
         reparsed = ast.parse(result)
         self.assertIsInstance(reparsed, ast.Module)
+        compile(result, "<test>", "exec")
 
 
 class TestSuperResolutionAttacker(unittest.TestCase):
@@ -949,6 +953,7 @@ class TestSuperResolutionAttacker(unittest.TestCase):
         result = ast.unparse(mutated)
         reparsed = ast.parse(result)
         self.assertIsInstance(reparsed, ast.Module)
+        compile(result, "<test>", "exec")
 
     def test_unique_class_names(self):
         """Test that unique class names are generated."""
@@ -1005,6 +1010,7 @@ class TestSuperResolutionAttacker(unittest.TestCase):
         # Should still be valid
         reparsed = ast.parse(result)
         self.assertIsInstance(reparsed, ast.Module)
+        compile(result, "<test>", "exec")
 
 
 class TestCodeObjectSwapper(unittest.TestCase):
@@ -1156,6 +1162,7 @@ class TestCodeObjectSwapper(unittest.TestCase):
         result = ast.unparse(mutated)
         reparsed = ast.parse(result)
         self.assertIsInstance(reparsed, ast.Module)
+        compile(result, "<test>", "exec")
 
     def test_unique_function_names(self):
         """Test that unique function names are generated."""
@@ -1212,6 +1219,7 @@ class TestCodeObjectSwapper(unittest.TestCase):
         # Should still be valid
         reparsed = ast.parse(result)
         self.assertIsInstance(reparsed, ast.Module)
+        compile(result, "<test>", "exec")
 
 
 class TestComprehensiveFunctionMutator(unittest.TestCase):
@@ -1413,6 +1421,7 @@ class TestComprehensiveFunctionMutator(unittest.TestCase):
         result = ast.unparse(mutated)
         reparsed = ast.parse(result)
         self.assertIsInstance(reparsed, ast.Module)
+        compile(result, "<test>", "exec")
 
     def test_unique_prefixes(self):
         """Test that unique prefixes are generated."""
@@ -1467,6 +1476,7 @@ class TestComprehensiveFunctionMutator(unittest.TestCase):
         # Should still be valid
         reparsed = ast.parse(result)
         self.assertIsInstance(reparsed, ast.Module)
+        compile(result, "<test>", "exec")
 
     def test_all_attack_types(self):
         """Test that all attack types can be generated."""
@@ -1736,6 +1746,7 @@ class TestDynamicClassSwapper(unittest.TestCase):
         result = ast.unparse(mutated)
         reparsed = ast.parse(result)
         self.assertIsInstance(reparsed, ast.Module)
+        compile(result, "<test>", "exec")
 
     def test_unique_prefixes(self):
         """Test that unique prefixes are generated."""
@@ -1790,6 +1801,7 @@ class TestDynamicClassSwapper(unittest.TestCase):
         # Should still be valid
         reparsed = ast.parse(result)
         self.assertIsInstance(reparsed, ast.Module)
+        compile(result, "<test>", "exec")
 
     def test_all_attack_types(self):
         """Test that all attack types can be generated."""
@@ -2021,6 +2033,7 @@ class TestBasesRewriteMutator(unittest.TestCase):
         result = ast.unparse(mutated)
         reparsed = ast.parse(result)
         self.assertIsInstance(reparsed, ast.Module)
+        compile(result, "<test>", "exec")
 
     def test_unique_prefixes(self):
         """Test that unique prefixes are generated."""
@@ -2075,6 +2088,7 @@ class TestBasesRewriteMutator(unittest.TestCase):
         # Should still be valid
         reparsed = ast.parse(result)
         self.assertIsInstance(reparsed, ast.Module)
+        compile(result, "<test>", "exec")
 
     def test_all_attack_types(self):
         """Test that all attack types can be generated."""
@@ -2339,6 +2353,7 @@ class TestTypeVersionInvalidator(unittest.TestCase):
         result = ast.unparse(mutated)
         reparsed = ast.parse(result)
         self.assertIsInstance(reparsed, ast.Module)
+        compile(result, "<test>", "exec")
 
     def test_unique_prefixes(self):
         """Test that unique prefixes are generated."""
@@ -2393,6 +2408,7 @@ class TestTypeVersionInvalidator(unittest.TestCase):
         # Should still be valid
         reparsed = ast.parse(result)
         self.assertIsInstance(reparsed, ast.Module)
+        compile(result, "<test>", "exec")
 
     def test_all_attack_types(self):
         """Test that all attack types can be generated."""
@@ -2525,6 +2541,7 @@ class TestInlinedFrameCorruptionMutator(unittest.TestCase):
                             mutated = mutator.visit(tree)
                 result = ast.unparse(mutated)
                 ast.parse(result)
+                compile(result, "<test>", "exec")
 
     def test_skips_non_harness(self):
         code = dedent("""

@@ -205,6 +205,7 @@ class TestBuiltinNamespaceCorruptor(unittest.TestCase):
         result = ast.unparse(mutated)
         reparsed = ast.parse(result)
         self.assertIsInstance(reparsed, ast.Module)
+        compile(result, "<test>", "exec")
 
     def test_preserves_original_function_body(self):
         """Test that original function statements are preserved."""
@@ -242,6 +243,7 @@ class TestBuiltinNamespaceCorruptor(unittest.TestCase):
         # Should still be valid
         reparsed = ast.parse(result)
         self.assertIsInstance(reparsed, ast.Module)
+        compile(result, "<test>", "exec")
 
     def test_unique_variable_names(self):
         """Test that unique variable names are generated."""
@@ -326,6 +328,7 @@ class TestBuiltinNamespaceCorruptor(unittest.TestCase):
         # Verify code is valid
         reparsed = ast.parse(result)
         self.assertIsInstance(reparsed, ast.Module)
+        compile(result, "<test>", "exec")
 
     def test_enhanced_attack_builtins_type_toggle(self):
         """Test that builtins_type_toggle attack is injected correctly."""
@@ -356,6 +359,7 @@ class TestBuiltinNamespaceCorruptor(unittest.TestCase):
         # Verify code is valid
         reparsed = ast.parse(result)
         self.assertIsInstance(reparsed, ast.Module)
+        compile(result, "<test>", "exec")
 
     def test_enhanced_attack_highfreq_builtin_corruption(self):
         """Test that highfreq_builtin_corruption attack is injected correctly."""
@@ -388,6 +392,7 @@ class TestBuiltinNamespaceCorruptor(unittest.TestCase):
         # Verify code is valid
         reparsed = ast.parse(result)
         self.assertIsInstance(reparsed, ast.Module)
+        compile(result, "<test>", "exec")
 
     def test_enhanced_attack_restores_builtins(self):
         """Test that enhanced attacks restore builtins in finally block."""
@@ -614,6 +619,7 @@ class TestComprehensionBomb(unittest.TestCase):
         result = ast.unparse(mutated)
         reparsed = ast.parse(result)
         self.assertIsInstance(reparsed, ast.Module)
+        compile(result, "<test>", "exec")
 
     def test_unique_class_and_variable_names(self):
         """Test that unique names are generated for class and variables."""
@@ -670,6 +676,7 @@ class TestComprehensionBomb(unittest.TestCase):
         # Should still be valid
         reparsed = ast.parse(result)
         self.assertIsInstance(reparsed, ast.Module)
+        compile(result, "<test>", "exec")
 
     def test_injects_at_random_position(self):
         """Test that injection occurs at random position in function body."""
@@ -1269,6 +1276,7 @@ class TestLatticeSurfingMutator(unittest.TestCase):
         # Should be parseable
         reparsed = ast.parse(result)
         self.assertIsInstance(reparsed, ast.Module)
+        compile(result, "<test>", "exec")
 
 
 class TestBloomFilterSaturator(unittest.TestCase):
@@ -1418,6 +1426,7 @@ class TestBloomFilterSaturator(unittest.TestCase):
         # Should be parseable
         reparsed = ast.parse(result)
         self.assertIsInstance(reparsed, ast.Module)
+        compile(result, "<test>", "exec")
 
     def test_has_enhanced_attacks_list(self):
         """Test that ENHANCED_ATTACKS list is defined."""
@@ -1463,6 +1472,7 @@ class TestBloomFilterSaturator(unittest.TestCase):
         # Verify code is valid
         reparsed = ast.parse(result)
         self.assertIsInstance(reparsed, ast.Module)
+        compile(result, "<test>", "exec")
 
     def test_enhanced_attack_strategic_global_mod(self):
         """Test that strategic_global_mod attack is injected correctly."""
@@ -1494,6 +1504,7 @@ class TestBloomFilterSaturator(unittest.TestCase):
         # Verify code is valid
         reparsed = ast.parse(result)
         self.assertIsInstance(reparsed, ast.Module)
+        compile(result, "<test>", "exec")
 
     def test_enhanced_attack_multi_phase(self):
         """Test that multi_phase_attack is injected correctly."""
@@ -1526,6 +1537,7 @@ class TestBloomFilterSaturator(unittest.TestCase):
         # Verify code is valid
         reparsed = ast.parse(result)
         self.assertIsInstance(reparsed, ast.Module)
+        compile(result, "<test>", "exec")
 
     def test_enhanced_attacks_produce_valid_code(self):
         """Test that all enhanced attack types produce valid, parseable code."""
@@ -1733,6 +1745,7 @@ class TestStackCacheThrasher(unittest.TestCase):
         # Should be parseable
         reparsed = ast.parse(result)
         self.assertIsInstance(reparsed, ast.Module)
+        compile(result, "<test>", "exec")
 
 
 class TestBoundaryComparisonMutator(unittest.TestCase):
@@ -1880,6 +1893,7 @@ class TestBoundaryComparisonMutator(unittest.TestCase):
         # Should be parseable
         reparsed = ast.parse(result)
         self.assertIsInstance(reparsed, ast.Module)
+        compile(result, "<test>", "exec")
 
 
 class TestAbstractInterpreterConfusionMutator(unittest.TestCase):
@@ -2027,6 +2041,7 @@ class TestAbstractInterpreterConfusionMutator(unittest.TestCase):
         # Should be parseable
         reparsed = ast.parse(result)
         self.assertIsInstance(reparsed, ast.Module)
+        compile(result, "<test>", "exec")
 
 
 class TestGlobalOptimizationInvalidator(unittest.TestCase):
@@ -2178,6 +2193,7 @@ class TestGlobalOptimizationInvalidator(unittest.TestCase):
         # Should be parseable
         reparsed = ast.parse(result)
         self.assertIsInstance(reparsed, ast.Module)
+        compile(result, "<test>", "exec")
 
 
 class TestCodeObjectHotSwapper(unittest.TestCase):
@@ -2325,6 +2341,7 @@ class TestCodeObjectHotSwapper(unittest.TestCase):
         # Should be parseable
         reparsed = ast.parse(result)
         self.assertIsInstance(reparsed, ast.Module)
+        compile(result, "<test>", "exec")
 
 
 class TestTypeShadowingMutator(unittest.TestCase):
@@ -2490,6 +2507,7 @@ class TestTypeShadowingMutator(unittest.TestCase):
         # Should be parseable
         reparsed = ast.parse(result)
         self.assertIsInstance(reparsed, ast.Module)
+        compile(result, "<test>", "exec")
 
 
 class TestZombieTraceMutator(unittest.TestCase):
@@ -2652,6 +2670,7 @@ class TestZombieTraceMutator(unittest.TestCase):
         # Should be parseable
         reparsed = ast.parse(result)
         self.assertIsInstance(reparsed, ast.Module)
+        compile(result, "<test>", "exec")
 
 
 class TestUnpackingChaosMutator(unittest.TestCase):
@@ -2896,6 +2915,7 @@ class TestUnpackingChaosMutator(unittest.TestCase):
         # Should be parseable
         reparsed = ast.parse(result)
         self.assertIsInstance(reparsed, ast.Module)
+        compile(result, "<test>", "exec")
 
     def test_mode_and_trigger_are_configurable(self):
         """Test that mode and trigger_count are passed to the wrapper."""
@@ -3017,6 +3037,7 @@ class TestConstantNarrowingPoisonMutator(unittest.TestCase):
                             mutated = mutator.visit(tree)
                 result = ast.unparse(mutated)
                 ast.parse(result)
+                compile(result, "<test>", "exec")
 
     def test_skips_non_harness(self):
         code = dedent("""
@@ -3110,6 +3131,7 @@ class TestStarCallMutator(unittest.TestCase):
                             mutated = mutator.visit(tree)
                 result = ast.unparse(mutated)
                 ast.parse(result)
+                compile(result, "<test>", "exec")
 
     def test_skips_non_harness(self):
         code = dedent("""
@@ -3201,6 +3223,7 @@ class TestSliceObjectChaosMutator(unittest.TestCase):
                             mutated = mutator.visit(tree)
                 result = ast.unparse(mutated)
                 ast.parse(result)
+                compile(result, "<test>", "exec")
 
     def test_skips_non_harness(self):
         code = dedent("""

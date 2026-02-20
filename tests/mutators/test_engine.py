@@ -215,6 +215,7 @@ class TestASTMutator(unittest.TestCase):
         # Should produce valid code
         tree = ast.parse(result)
         self.assertIsInstance(tree, ast.Module)
+        compile(result, "<test>", "exec")
 
     def test_seed_determinism(self):
         """Test that using the same seed produces identical results."""
@@ -290,6 +291,7 @@ class TestASTMutator(unittest.TestCase):
                 try:
                     tree = ast.parse(result)
                     self.assertIsInstance(tree, ast.Module)
+                    compile(result, "<test>", "exec")
                 except SyntaxError as e:
                     self.fail(f"Mutated code failed to parse: {result}\nError: {e}")
 
@@ -662,6 +664,7 @@ class TestSlicingMutator(unittest.TestCase):
         result = ast.unparse(mutated)
         reparsed = ast.parse(result)
         self.assertIsInstance(reparsed, ast.Module)
+        compile(result, "<test>", "exec")
 
     def test_exactly_100_statements(self):
         """Test edge case with exactly 100 statements."""
@@ -696,6 +699,7 @@ class TestSlicingMutator(unittest.TestCase):
         result = ast.unparse(mutated)
         reparsed = ast.parse(result)
         self.assertIsInstance(reparsed, ast.Module)
+        compile(result, "<test>", "exec")
 
     def test_random_slice_selection(self):
         """Test that random slice selection works correctly."""

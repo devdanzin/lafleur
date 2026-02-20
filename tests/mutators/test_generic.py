@@ -132,6 +132,7 @@ class TestBoundaryValuesMutator(unittest.TestCase):
         result = ast.unparse(mutated)
         reparsed = ast.parse(result)
         self.assertIsInstance(reparsed, ast.Module)
+        compile(result, "<test>", "exec")
 
 
 class TestLiteralTypeSwapMutator(unittest.TestCase):
@@ -282,6 +283,7 @@ class TestLiteralTypeSwapMutator(unittest.TestCase):
         # Should be parseable
         reparsed = ast.parse(result)
         self.assertIsInstance(reparsed, ast.Module)
+        compile(result, "<test>", "exec")
 
     def test_literal_swap_fstring_safety(self):
         """
@@ -308,6 +310,7 @@ class TestLiteralTypeSwapMutator(unittest.TestCase):
         # Verify it's still valid Python
         reparsed = ast.parse(result)
         self.assertIsInstance(reparsed, ast.Module)
+        compile(result, "<test>", "exec")
 
         # Verify the f-string literal parts are still strings (not bytes)
         # The literal parts "Value: " and ".2f" should remain as strings
@@ -344,6 +347,7 @@ class TestLiteralTypeSwapMutator(unittest.TestCase):
         # Verify it's still valid Python
         reparsed = ast.parse(result)
         self.assertIsInstance(reparsed, ast.Module)
+        compile(result, "<test>", "exec")
 
         # Verify the t-string literal parts are still strings (not bytes)
         # The literal parts "Hello " and " World" should remain as strings
@@ -510,6 +514,7 @@ class TestImportChaosMutator(unittest.TestCase):
         # Should be parseable
         reparsed = ast.parse(result)
         self.assertIsInstance(reparsed, ast.Module)
+        compile(result, "<test>", "exec")
 
     def test_handles_empty_module(self):
         """Test handling of module with no statements."""
@@ -650,6 +655,7 @@ class TestBlockTransposerMutator(unittest.TestCase):
         result = ast.unparse(mutated)
         reparsed = ast.parse(result)
         self.assertIsInstance(reparsed, ast.Module)
+        compile(result, "<test>", "exec")
 
     def test_preserves_all_statements(self):
         """Test that all original statements are preserved after transposition."""
@@ -738,6 +744,7 @@ class TestUnpackingMutator(unittest.TestCase):
         result = ast.unparse(mutated)
         reparsed = ast.parse(result)
         self.assertIsInstance(reparsed, ast.Module)
+        compile(result, "<test>", "exec")
 
     def test_creates_valid_unpacking_target(self):
         """Test that the unpacking target has valid structure."""
@@ -848,6 +855,7 @@ class TestNewUnpackingMutator(unittest.TestCase):
         result = ast.unparse(mutated)
         reparsed = ast.parse(result)
         self.assertIsInstance(reparsed, ast.Module)
+        compile(result, "<test>", "exec")
 
 
 class TestDecoratorMutator(unittest.TestCase):
@@ -944,6 +952,7 @@ class TestDecoratorMutator(unittest.TestCase):
         result = ast.unparse(mutated)
         reparsed = ast.parse(result)
         self.assertIsInstance(reparsed, ast.Module)
+        compile(result, "<test>", "exec")
 
 
 class TestSliceMutator(unittest.TestCase):
@@ -1121,6 +1130,7 @@ class TestSliceMutator(unittest.TestCase):
         result = ast.unparse(mutated)
         reparsed = ast.parse(result)
         self.assertIsInstance(reparsed, ast.Module)
+        compile(result, "<test>", "exec")
 
 
 class TestPatternMatchingMutator(unittest.TestCase):
@@ -1232,6 +1242,7 @@ class TestPatternMatchingMutator(unittest.TestCase):
         result = ast.unparse(mutated)
         reparsed = ast.parse(result)
         self.assertIsInstance(reparsed, ast.Module)
+        compile(result, "<test>", "exec")
 
 
 class TestArithmeticSpamMutator(unittest.TestCase):
@@ -1351,6 +1362,7 @@ class TestArithmeticSpamMutator(unittest.TestCase):
         result = ast.unparse(mutated)
         reparsed = ast.parse(result)
         self.assertIsInstance(reparsed, ast.Module)
+        compile(result, "<test>", "exec")
 
 
 class TestStringInterpolationMutator(unittest.TestCase):
@@ -1463,6 +1475,7 @@ class TestStringInterpolationMutator(unittest.TestCase):
         result = ast.unparse(mutated)
         reparsed = ast.parse(result)
         self.assertIsInstance(reparsed, ast.Module)
+        compile(result, "<test>", "exec")
 
     @unittest.skipIf(sys.version_info < (3, 14), "t-strings require Python 3.14+")
     def test_injects_tstring(self):
@@ -1560,6 +1573,7 @@ class TestExceptionGroupMutator(unittest.TestCase):
         result = ast.unparse(mutated)
         reparsed = ast.parse(result)
         self.assertIsInstance(reparsed, ast.Module)
+        compile(result, "<test>", "exec")
 
     def test_creates_nested_exception_groups(self):
         """Test that nested ExceptionGroups are created."""
@@ -1671,6 +1685,7 @@ class TestAsyncConstructMutator(unittest.TestCase):
         result = ast.unparse(mutated)
         reparsed = ast.parse(result)
         self.assertIsInstance(reparsed, ast.Module)
+        compile(result, "<test>", "exec")
 
     def test_creates_coroutine_driver(self):
         """Test that coroutine driver code is created."""
@@ -1801,6 +1816,7 @@ class TestSysMonitoringMutator(unittest.TestCase):
         result = ast.unparse(mutated)
         reparsed = ast.parse(result)
         self.assertIsInstance(reparsed, ast.Module)
+        compile(result, "<test>", "exec")
 
     def test_creates_monitored_gymnasium_function(self):
         """Test that a monitored 'gymnasium' function is created."""

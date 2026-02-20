@@ -434,6 +434,7 @@ class TestHarnessInstrumentor(unittest.TestCase):
         result = ast.unparse(mutated)
         reparsed = ast.parse(result)
         self.assertIsInstance(reparsed, ast.Module)
+        compile(result, "<test>", "exec")
 
     def test_produces_valid_code(self):
         """Test that output is valid, parseable Python."""
@@ -457,6 +458,7 @@ class TestHarnessInstrumentor(unittest.TestCase):
         result = ast.unparse(mutated)
         reparsed = ast.parse(result)
         self.assertIsInstance(reparsed, ast.Module)
+        compile(result, "<test>", "exec")
 
     def test_handles_multiple_harness_functions(self):
         """Test handling of multiple harness functions."""
@@ -794,6 +796,7 @@ class TestRedundantStatementSanitizer(unittest.TestCase):
         # Should be parseable
         reparsed = ast.parse(result)
         self.assertIsInstance(reparsed, ast.Module)
+        compile(result, "<test>", "exec")
 
 
 if __name__ == "__main__":

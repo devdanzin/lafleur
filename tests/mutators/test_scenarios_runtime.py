@@ -462,6 +462,7 @@ class TestFrameManipulator(unittest.TestCase):
         result = ast.unparse(mutated)
         reparsed = ast.parse(result)
         self.assertIsInstance(reparsed, ast.Module)
+        compile(result, "<test>", "exec")
 
     def test_unique_function_names(self):
         """Test that unique function names are generated."""
@@ -729,6 +730,7 @@ class TestWeakRefCallbackChaos(unittest.TestCase):
         result = ast.unparse(mutated)
         reparsed = ast.parse(result)
         self.assertIsInstance(reparsed, ast.Module)
+        compile(result, "<test>", "exec")
 
     def test_unique_variable_and_class_names(self):
         """Test that unique names are generated."""
@@ -786,6 +788,7 @@ class TestWeakRefCallbackChaos(unittest.TestCase):
         # Should still be valid
         reparsed = ast.parse(result)
         self.assertIsInstance(reparsed, ast.Module)
+        compile(result, "<test>", "exec")
 
     def test_callback_uses_lambda_wrapper(self):
         """Test that callback is wrapped in lambda for var_name closure."""
@@ -869,6 +872,7 @@ class TestClosureStompMutator(unittest.TestCase):
 
         result = ast.unparse(mutated)
         ast.parse(result)  # Should not raise SyntaxError
+        compile(result, "<test>", "exec")
 
     def test_closure_stomp_multiple_functions(self):
         """Test injection for multiple functions."""
@@ -1133,6 +1137,7 @@ class TestEvalFrameHookMutator(unittest.TestCase):
         result = ast.unparse(mutated)
         reparsed = ast.parse(result)
         self.assertIsInstance(reparsed, ast.Module)
+        compile(result, "<test>", "exec")
 
     def test_unique_prefixes(self):
         """Test that unique prefixes are generated."""
@@ -1187,6 +1192,7 @@ class TestEvalFrameHookMutator(unittest.TestCase):
         # Should still be valid
         reparsed = ast.parse(result)
         self.assertIsInstance(reparsed, ast.Module)
+        compile(result, "<test>", "exec")
 
     def test_different_attack_types(self):
         """Test that all three attack types can be generated."""
@@ -1266,6 +1272,7 @@ class TestRareEventStressTester(unittest.TestCase):
         # Verify code is valid
         reparsed = ast.parse(result)
         self.assertIsInstance(reparsed, ast.Module)
+        compile(result, "<test>", "exec")
 
     def test_single_event_set_bases(self):
         """Test single event attack: set_bases."""
@@ -1291,6 +1298,7 @@ class TestRareEventStressTester(unittest.TestCase):
         # Verify code is valid
         reparsed = ast.parse(result)
         self.assertIsInstance(reparsed, ast.Module)
+        compile(result, "<test>", "exec")
 
     def test_single_event_set_eval_frame(self):
         """Test single event attack: set_eval_frame."""
@@ -1315,6 +1323,7 @@ class TestRareEventStressTester(unittest.TestCase):
         # Verify code is valid
         reparsed = ast.parse(result)
         self.assertIsInstance(reparsed, ast.Module)
+        compile(result, "<test>", "exec")
 
     def test_single_event_builtin_dict(self):
         """Test single event attack: builtin_dict."""
@@ -1339,6 +1348,7 @@ class TestRareEventStressTester(unittest.TestCase):
         # Verify code is valid
         reparsed = ast.parse(result)
         self.assertIsInstance(reparsed, ast.Module)
+        compile(result, "<test>", "exec")
 
     def test_single_event_func_modification(self):
         """Test single event attack: func_modification."""
@@ -1363,6 +1373,7 @@ class TestRareEventStressTester(unittest.TestCase):
         # Verify code is valid
         reparsed = ast.parse(result)
         self.assertIsInstance(reparsed, ast.Module)
+        compile(result, "<test>", "exec")
 
     def test_combination_attack(self):
         """Test combination attack with multiple events."""
@@ -1389,6 +1400,7 @@ class TestRareEventStressTester(unittest.TestCase):
         # Verify code is valid
         reparsed = ast.parse(result)
         self.assertIsInstance(reparsed, ast.Module)
+        compile(result, "<test>", "exec")
 
     def test_combination_attack_three_events(self):
         """Test combination attack with three events."""
@@ -1415,6 +1427,7 @@ class TestRareEventStressTester(unittest.TestCase):
         # Verify code is valid
         reparsed = ast.parse(result)
         self.assertIsInstance(reparsed, ast.Module)
+        compile(result, "<test>", "exec")
 
     def test_no_mutation_when_random_fails(self):
         """Test that no mutation occurs when random check fails."""
@@ -1549,6 +1562,7 @@ class TestRareEventStressTester(unittest.TestCase):
         self.assertIn("_cleanup_key_rarestress_4444", result)
         # Verify code is valid
         ast.parse(result)
+        compile(result, "<test>", "exec")
 
     def test_combination_no_unnecessary_cleanup(self):
         """Test that combinations without persistent events skip cleanup."""
@@ -1571,6 +1585,7 @@ class TestRareEventStressTester(unittest.TestCase):
         # (it may appear inside event code, but not as a standalone cleanup)
         # Verify code is valid
         ast.parse(result)
+        compile(result, "<test>", "exec")
 
 
 class TestRefcountEscapeHatchMutator(unittest.TestCase):

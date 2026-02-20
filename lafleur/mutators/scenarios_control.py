@@ -293,7 +293,7 @@ class RecursionWrappingMutator(ast.NodeTransformer):
             # reference to them in the remaining code would cause UnboundLocalError.
             remainder = node.body[start_index + self.BLOCK_SIZE :]
             if remainder:
-                wrapped_remainder = [
+                wrapped_remainder: list[ast.stmt] = [
                     ast.Try(
                         body=remainder,
                         handlers=[

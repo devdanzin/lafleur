@@ -680,9 +680,17 @@ class CrashRegistry:
                 values = [issue.get(col) for col in columns]
 
                 placeholders = ", ".join(["?"] * len(columns))
+
+                # Use ON CONFLICT to preserve existing data for omitted fields.
+                # COALESCE(excluded.col, col) means: use the new value if
+                # non-NULL, otherwise keep the existing value.
+                update_cols = [c for c in columns if c != "issue_number"]
+                update_clause = ", ".join(f"{c} = COALESCE(excluded.{c}, {c})" for c in update_cols)
+
                 cursor.execute(
-                    f"INSERT OR REPLACE INTO reported_issues ({', '.join(columns)}) "
-                    f"VALUES ({placeholders})",
+                    f"INSERT INTO reported_issues ({', '.join(columns)}) "
+                    f"VALUES ({placeholders}) "
+                    f"ON CONFLICT(issue_number) DO UPDATE SET {update_clause}",
                     values,
                 )
                 count += 1

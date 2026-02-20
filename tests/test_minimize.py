@@ -479,6 +479,139 @@ class TestReturncodeValidation(unittest.TestCase):
         self.assertNotIn("returncode is missing or 0", output)
 
 
+class TestCheckCrashShExitCode(unittest.TestCase):
+    """Tests for exit code matching in generated check_crash.sh."""
+
+    def setUp(self):
+        self.temp_dir = Path(tempfile.mkdtemp())
+        self.crash_dir = self.temp_dir / "crash_exitcode"
+        self.crash_dir.mkdir()
+
+    def tearDown(self):
+        shutil.rmtree(self.temp_dir)
+
+    @patch("lafleur.minimize.run_session")
+    @patch("lafleur.minimize.shutil.which")
+    @patch("lafleur.minimize.subprocess.run")
+    def test_check_crash_sh_signal_exit_code(
+        self, mock_subprocess_run, mock_which, mock_run_session
+    ):
+        """Test that signal crashes check for bash exit code (128+N), not Python -N."""
+        (self.crash_dir / "metadata.json").write_text(
+            json.dumps(
+                {
+                    "returncode": -11,
+                    "fingerprint": "SIGNAL:SIGSEGV",
+                    "type": "SEGV",
+                }
+            )
+        )
+        (self.crash_dir / "script.py").write_text("print('test')")
+
+        mock_which.return_value = "/usr/bin/shrinkray"
+        mock_run_session.return_value = (-11, "", "Segmentation fault")
+        mock_subprocess_run.return_value = MagicMock(returncode=0)
+
+        from io import StringIO
+
+        with patch("sys.stdout", StringIO()):
+            minimize_session(self.crash_dir, target_python="python3", force_overwrite=True)
+
+        check_script = self.crash_dir / "check_crash.sh"
+        content = check_script.read_text()
+
+        # Should check for bash signal code 139 (128 + 11), not raw Python -11
+        self.assertIn("139", content)
+        self.assertIn("EXIT_CODE -ne 139", content)
+        # Should NOT have the old permissive "eq 0" check
+        self.assertNotIn("EXIT_CODE -eq 0", content)
+
+        # Script should be valid bash
+        result = subprocess.run(["bash", "-n", str(check_script)], capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, f"Bash syntax error: {result.stderr}")
+
+    @patch("lafleur.minimize.run_session")
+    @patch("lafleur.minimize.shutil.which")
+    @patch("lafleur.minimize.subprocess.run")
+    def test_check_crash_sh_asan_any_nonzero(
+        self, mock_subprocess_run, mock_which, mock_run_session
+    ):
+        """Test that ASAN crashes accept any non-zero exit code."""
+        (self.crash_dir / "metadata.json").write_text(
+            json.dumps(
+                {
+                    "returncode": -6,
+                    "fingerprint": "ASAN:heap-use-after-free",
+                    "type": "ASAN",
+                }
+            )
+        )
+        (self.crash_dir / "script.py").write_text("print('test')")
+
+        mock_which.return_value = "/usr/bin/shrinkray"
+        mock_run_session.return_value = (-6, "", "AddressSanitizer")
+        mock_subprocess_run.return_value = MagicMock(returncode=0)
+
+        from io import StringIO
+
+        with patch("sys.stdout", StringIO()):
+            minimize_session(self.crash_dir, target_python="python3", force_overwrite=True)
+
+        check_script = self.crash_dir / "check_crash.sh"
+        content = check_script.read_text()
+
+        # ASAN check should accept any non-zero
+        self.assertIn("EXIT_CODE -eq 0", content)
+        self.assertIn("ASAN", content)
+
+        result = subprocess.run(["bash", "-n", str(check_script)], capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, f"Bash syntax error: {result.stderr}")
+
+
+class TestConcatenationNaming(unittest.TestCase):
+    """Tests for harness naming in concatenation."""
+
+    def setUp(self):
+        self.temp_dir = Path(tempfile.mkdtemp())
+
+    def tearDown(self):
+        shutil.rmtree(self.temp_dir)
+
+    @patch("lafleur.minimize.run_session")
+    @patch("lafleur.minimize.shutil.which")
+    def test_concatenation_preserves_original_names(self, mock_which, mock_run_session):
+        """Test that concatenation does NOT rename harness functions."""
+        crash_dir = self.temp_dir / "crash_names"
+        crash_dir.mkdir()
+
+        (crash_dir / "metadata.json").write_text(
+            json.dumps({"returncode": -11, "fingerprint": "SIGNAL:SIGSEGV", "type": "SEGV"})
+        )
+        (crash_dir / "00_warmup.py").write_text(
+            "def uop_harness_f1():\n    pass\nuop_harness_f1()\n"
+        )
+        (crash_dir / "01_attack.py").write_text(
+            "def uop_harness_f1():\n    x = 1\nuop_harness_f1()\n"
+        )
+
+        mock_which.return_value = None  # Skip ShrinkRay
+        mock_run_session.return_value = (-11, "", "Segmentation fault")
+
+        from io import StringIO
+
+        with patch("sys.stdout", StringIO()):
+            minimize_session(crash_dir, target_python="python3", force_overwrite=True)
+
+        combined = crash_dir / "combined_repro.py"
+        if combined.exists():
+            content = combined.read_text()
+            # Function names should NOT have suffixes
+            self.assertNotIn("uop_harness_f1_0", content)
+            self.assertNotIn("uop_harness_f1_1", content)
+            # Original names should be preserved
+            self.assertIn("uop_harness_f1", content)
+
+
 class TestCheckCrashShEscaping(unittest.TestCase):
     """Tests for shell escaping in generated check_crash.sh."""
 
@@ -530,6 +663,46 @@ class TestCheckCrashShEscaping(unittest.TestCase):
         self.assertIn("GREP_PATTERN=", content)
 
         # Verify the script is valid bash syntax
+        result = subprocess.run(["bash", "-n", str(check_script)], capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, f"Bash syntax error: {result.stderr}")
+
+    @patch("lafleur.minimize.run_session")
+    @patch("lafleur.minimize.shutil.which")
+    @patch("lafleur.minimize.subprocess.run")
+    def test_check_crash_sh_quoted_paths(self, mock_subprocess_run, mock_which, mock_run_session):
+        """Test that paths with spaces are properly shell-escaped."""
+        (self.crash_dir / "metadata.json").write_text(
+            json.dumps(
+                {
+                    "returncode": -11,
+                    "fingerprint": "SIGNAL:SIGSEGV",
+                    "type": "SEGV",
+                }
+            )
+        )
+        (self.crash_dir / "script.py").write_text("print('test')")
+
+        mock_which.return_value = "/usr/bin/shrinkray"
+        mock_run_session.return_value = (-11, "", "Segmentation fault")
+        mock_subprocess_run.return_value = MagicMock(returncode=0)
+
+        from io import StringIO
+
+        # Use a python path with spaces
+        with patch("sys.stdout", StringIO()):
+            minimize_session(
+                self.crash_dir,
+                target_python="/path with spaces/python3",
+                force_overwrite=True,
+            )
+
+        check_script = self.crash_dir / "check_crash.sh"
+        content = check_script.read_text()
+
+        # Path should be quoted
+        self.assertIn("'/path with spaces/python3'", content)
+
+        # Script should be valid bash
         result = subprocess.run(["bash", "-n", str(check_script)], capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, f"Bash syntax error: {result.stderr}")
 

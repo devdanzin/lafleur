@@ -6,6 +6,7 @@ All notable changes to this project should be documented in this file.
 
 ### Added
 
+- Targeted testing CLI options: `--mutators` to filter the mutator pool and `--strategy` to force a specific mutation strategy, by @devdanzin.
 - Diagnostic introspection CLI options: `--keep-children` to retain all generated scripts, `--dry-run` for mutation-only mode, and `--list-mutators` to discover available mutators, by @devdanzin.
 - Diagnostic bounded-run CLI options: `--max-sessions`, `--max-mutations-per-session`, `--seed`, and `--workdir` for reproducible smoke tests and CI verification, by @devdanzin.
 - GitHub Actions CI/CD workflow with lint, format, and JIT test jobs, by @devdanzin.

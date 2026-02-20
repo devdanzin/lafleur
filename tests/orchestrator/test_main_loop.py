@@ -2168,6 +2168,30 @@ class TestMainCLIPlumbing(unittest.TestCase):
         _, kwargs = self._run_main(["--fusil-path", "/fake", "--dry-run"])
         self.assertTrue(kwargs["keep_children"])
 
+    # --- Targeted testing flags ---
+
+    def test_mutators_default_none(self):
+        """--mutators defaults to None (no filtering)."""
+        _, kwargs = self._run_main(["--fusil-path", "/fake"])
+        self.assertIsNone(kwargs["mutator_filter"])
+
+    def test_mutators_passed_as_list(self):
+        """--mutators value is parsed into a list and reaches constructor."""
+        _, kwargs = self._run_main(
+            ["--fusil-path", "/fake", "--mutators", "OperatorSwapper,GCInjector"]
+        )
+        self.assertEqual(kwargs["mutator_filter"], ["OperatorSwapper", "GCInjector"])
+
+    def test_strategy_default_none(self):
+        """--strategy defaults to None."""
+        _, kwargs = self._run_main(["--fusil-path", "/fake"])
+        self.assertIsNone(kwargs["forced_strategy"])
+
+    def test_strategy_custom(self):
+        """--strategy value reaches constructor."""
+        _, kwargs = self._run_main(["--fusil-path", "/fake", "--strategy", "spam"])
+        self.assertEqual(kwargs["forced_strategy"], "spam")
+
     # --- Value flags ---
 
     def test_fusil_path_passed(self):
@@ -2284,6 +2308,10 @@ class TestMainCLIPlumbing(unittest.TestCase):
                 "5",
                 "--keep-children",
                 "--dry-run",
+                "--mutators",
+                "OperatorSwapper,GCInjector",
+                "--strategy",
+                "spam",
             ]
         )
         self.assertEqual(kwargs["fusil_path"], "/my/fusil")
@@ -2304,6 +2332,8 @@ class TestMainCLIPlumbing(unittest.TestCase):
         self.assertEqual(kwargs["max_mutations_per_session"], 5)
         self.assertTrue(kwargs["keep_children"])
         self.assertTrue(kwargs["dry_run"])
+        self.assertEqual(kwargs["mutator_filter"], ["OperatorSwapper", "GCInjector"])
+        self.assertEqual(kwargs["forced_strategy"], "spam")
 
     # --- run_stats deep copy ---
 

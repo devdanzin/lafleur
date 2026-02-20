@@ -67,6 +67,7 @@ class MutationController:
         score_tracker: "MutatorScoreTracker",
         corpus_manager: "CorpusManager | None" = None,
         differential_testing: bool = False,
+        forced_strategy: str | None = None,
     ):
         """
         Initialize the MutationController.
@@ -77,11 +78,13 @@ class MutationController:
             corpus_manager: CorpusManager for parent selection in splicing.
                 Can be None at construction and set later via the corpus_manager attribute.
             differential_testing: Whether differential testing mode is enabled
+            forced_strategy: If set, bypass adaptive selection and always use this strategy
         """
         self.ast_mutator = ast_mutator
         self.score_tracker = score_tracker
         self.corpus_manager: CorpusManager | None = corpus_manager
         self.differential_testing = differential_testing
+        self.forced_strategy = forced_strategy
         self.boilerplate_code: str | None = None
         self.health_monitor: HealthMonitor | None = None
 
@@ -375,34 +378,46 @@ class MutationController:
         normalizer = FuzzerSetupNormalizer()
         tree_copy = normalizer.visit(tree_copy)
 
-        strategy_candidates: list[MutationStrategy] = [
-            self._run_deterministic_stage,
-            self._run_havoc_stage,
-            self._run_spam_stage,
-            self._run_helper_sniper_stage,  # Always available - generates own targets
-        ]
+        # --- Strategy selection ---
+        chosen_strategy: MutationStrategy
+        if self.forced_strategy is not None:
+            # Diagnostic mode: bypass adaptive selection
+            strategy_map: dict[str, MutationStrategy] = {
+                "deterministic": self._run_deterministic_stage,
+                "havoc": self._run_havoc_stage,
+                "spam": self._run_spam_stage,
+                "helper_sniper": self._run_helper_sniper_stage,
+                "sniper": self._run_sniper_stage,
+            }
+            chosen_strategy = strategy_map[self.forced_strategy]
+            chosen_name = self.forced_strategy
+            self.score_tracker.record_attempt(chosen_name)
+        else:
+            # Normal adaptive selection
+            strategy_candidates: list[MutationStrategy] = [
+                self._run_deterministic_stage,
+                self._run_havoc_stage,
+                self._run_spam_stage,
+                self._run_helper_sniper_stage,
+            ]
 
-        if watched_keys:
-            # Add sniper strategy if we have Bloom-detected targets
-            strategy_candidates.append(self._run_sniper_stage)
+            if watched_keys:
+                strategy_candidates.append(self._run_sniper_stage)
 
-        strategy_names = [
-            s.__name__.replace("_run_", "").replace("_stage", "") for s in strategy_candidates
-        ]
+            strategy_names = [
+                s.__name__.replace("_run_", "").replace("_stage", "") for s in strategy_candidates
+            ]
 
-        dynamic_weights = self.score_tracker.get_weights(strategy_names)
+            dynamic_weights = self.score_tracker.get_weights(strategy_names)
 
-        # Boost sniper weight if available (simple heuristic for now)
-        if "sniper" in strategy_names:
-            sniper_idx = strategy_names.index("sniper")
-            # Ensure sniper has at least average weight
-            avg_weight = sum(dynamic_weights) / len(dynamic_weights)
-            dynamic_weights[sniper_idx] = max(dynamic_weights[sniper_idx], avg_weight * 1.5)
+            if "sniper" in strategy_names:
+                sniper_idx = strategy_names.index("sniper")
+                avg_weight = sum(dynamic_weights) / len(dynamic_weights)
+                dynamic_weights[sniper_idx] = max(dynamic_weights[sniper_idx], avg_weight * 1.5)
 
-        chosen_strategy = RANDOM.choices(strategy_candidates, weights=dynamic_weights, k=1)[0]
-
-        chosen_name = chosen_strategy.__name__.replace("_run_", "").replace("_stage", "")
-        self.score_tracker.record_attempt(chosen_name)
+            chosen_strategy = RANDOM.choices(strategy_candidates, weights=dynamic_weights, k=1)[0]
+            chosen_name = chosen_strategy.__name__.replace("_run_", "").replace("_stage", "")
+            self.score_tracker.record_attempt(chosen_name)
 
         len_body = (
             len(tree_copy.body) if isinstance(tree_copy, (ast.Module, ast.FunctionDef)) else 0

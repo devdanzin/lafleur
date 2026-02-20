@@ -127,6 +127,8 @@ class LafleurOrchestrator:
         max_mutations_per_session: int | None = None,
         keep_children: bool = False,
         dry_run: bool = False,
+        mutator_filter: list[str] | None = None,
+        forced_strategy: str | None = None,
     ):
         """Initialize the orchestrator and the corpus manager."""
         self.differential_testing = differential_testing
@@ -143,7 +145,26 @@ class LafleurOrchestrator:
         self.max_mutations_per_session = max_mutations_per_session
         self.keep_children = keep_children
         self.dry_run = dry_run
+        self.forced_strategy = forced_strategy
         ast_mutator = ASTMutator()
+
+        # --- Apply mutator pool filter (diagnostic mode) ---
+        if mutator_filter is not None:
+            pool_names = {t.__name__ for t in ast_mutator.transformers}
+            unknown = set(mutator_filter) - pool_names
+            if unknown:
+                raise ValueError(
+                    f"Unknown mutator(s): {', '.join(sorted(unknown))}. "
+                    f"Use --list-mutators to see valid names."
+                )
+            ast_mutator.transformers = [
+                t for t in ast_mutator.transformers if t.__name__ in mutator_filter
+            ]
+            print(
+                f"[+] Mutator pool filtered to {len(ast_mutator.transformers)} transformer(s): "
+                f"{', '.join(t.__name__ for t in ast_mutator.transformers)}"
+            )
+
         max_timeout_log_bytes = max_timeout_log_size * 1024 * 1024
         max_crash_log_bytes = max_crash_log_size * 1024 * 1024
 
@@ -162,6 +183,7 @@ class LafleurOrchestrator:
             ast_mutator=ast_mutator,
             score_tracker=self.score_tracker,
             differential_testing=differential_testing,
+            forced_strategy=forced_strategy,
         )
 
         self.min_corpus_files = min_corpus_files
@@ -1086,6 +1108,20 @@ def main():
         help="Print all available mutators with descriptions and exit.",
     )
     parser.add_argument(
+        "--mutators",
+        type=str,
+        default=None,
+        help="Comma-separated list of mutator class names to include in the pool. "
+        "All others are excluded. Use --list-mutators to see available names.",
+    )
+    parser.add_argument(
+        "--strategy",
+        type=str,
+        default=None,
+        choices=["deterministic", "havoc", "spam", "sniper", "helper_sniper"],
+        help="Force a specific mutation strategy, bypassing adaptive selection.",
+    )
+    parser.add_argument(
         "-v",
         "--verbose",
         action="store_true",
@@ -1126,6 +1162,14 @@ def main():
     if args.seed is not None:
         random.seed(args.seed)
         print(f"[+] Global random seed set to: {args.seed}")
+
+    # --- Mutator pool filtering ---
+    mutator_filter: list[str] | None = None
+    if args.mutators is not None:
+        mutator_filter = [name.strip() for name in args.mutators.split(",") if name.strip()]
+        if not mutator_filter:
+            print("Error: --mutators requires at least one mutator name.", file=sys.stderr)
+            sys.exit(1)
 
     LOGS_DIR.mkdir(exist_ok=True)
     # Use a consistent timestamp for the whole run
@@ -1192,6 +1236,8 @@ def main():
             max_mutations_per_session=args.max_mutations_per_session,
             keep_children=args.keep_children,
             dry_run=args.dry_run,
+            mutator_filter=mutator_filter,
+            forced_strategy=args.strategy,
         )
         if args.prune_corpus:
             orchestrator.corpus_manager.prune_corpus(dry_run=not args.force)

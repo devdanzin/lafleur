@@ -6,6 +6,7 @@ All notable changes to this project should be documented in this file.
 
 ### Added
 
+- Diagnostic bounded-run CLI options: `--max-sessions`, `--max-mutations-per-session`, `--seed`, and `--workdir` for reproducible smoke tests and CI verification, by @devdanzin.
 - GitHub Actions CI/CD workflow with lint, format, and JIT test jobs, by @devdanzin.
 - An `UnpackingChaosMutator` that attacks JIT optimizations for `UNPACK_SEQUENCE` and `UNPACK_EX` by wrapping iterables in a chaotic iterator that lies about its length and changes behavior (grow, shrink, type_switch) after JIT warmup to trigger deoptimization bugs, by @devdanzin.
 - A `PatternMatchingChaosMutator` that attacks JIT optimizations for structural pattern matching (`MATCH_MAPPING`, `MATCH_SEQUENCE`, `MATCH_CLASS`) by injecting classes with dynamic `__match_args__`, guards with side effects, type-switching subjects, walrus operators in guards, and converting `isinstance` checks and for-loop unpacking to match statements, by @devdanzin.

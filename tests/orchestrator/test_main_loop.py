@@ -203,6 +203,8 @@ class TestRunEvolutionaryLoop(unittest.TestCase):
         self.orchestrator.artifact_manager = MagicMock()
         self.orchestrator.telemetry_manager = MagicMock()
         self.orchestrator.scoring_manager = MagicMock()
+        self.orchestrator.max_sessions = None
+        self.orchestrator.max_mutations_per_session = None
 
     def test_bootstraps_corpus_when_below_minimum(self):
         """Test that corpus generation is triggered when size < min."""
@@ -314,6 +316,62 @@ class TestRunEvolutionaryLoop(unittest.TestCase):
                 stdout_output = mock_stdout.getvalue()
                 self.assertIn("Corpus is empty and no minimum size was set", stdout_output)
 
+    def test_max_sessions_stops_loop(self):
+        """--max-sessions=2 stops loop after 2 sessions."""
+        self.orchestrator.max_sessions = 2
+        self.orchestrator.coverage_manager.state = {"per_file_coverage": {"file1.py": {}}}
+        self.orchestrator.corpus_manager.fusil_path_is_valid = True
+
+        session_count = 0
+
+        def mock_execute(*args, **kwargs):
+            nonlocal session_count
+            session_count += 1
+
+        with patch.object(
+            self.orchestrator,
+            "execute_mutation_and_analysis_cycle",
+            side_effect=mock_execute,
+        ):
+            with patch.object(
+                self.orchestrator.corpus_manager,
+                "select_parent",
+                return_value=(Path("corpus/file1.py"), 100.0),
+            ):
+                self.orchestrator.run_evolutionary_loop()
+
+        self.assertEqual(session_count, 2)
+
+    def test_max_sessions_none_runs_indefinitely(self):
+        """max_sessions=None does not limit the loop (must be interrupted)."""
+        self.orchestrator.coverage_manager.state = {"per_file_coverage": {"file1.py": {}}}
+        self.orchestrator.corpus_manager.fusil_path_is_valid = True
+
+        call_count = 0
+
+        def mock_execute(*args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count >= 5:
+                raise KeyboardInterrupt("test limit")
+
+        with patch.object(
+            self.orchestrator,
+            "execute_mutation_and_analysis_cycle",
+            side_effect=mock_execute,
+        ):
+            with patch.object(
+                self.orchestrator.corpus_manager,
+                "select_parent",
+                return_value=(Path("corpus/file1.py"), 100.0),
+            ):
+                try:
+                    self.orchestrator.run_evolutionary_loop()
+                except KeyboardInterrupt:
+                    pass
+
+        self.assertEqual(call_count, 5)
+
 
 class TestDeepeningProbability(unittest.TestCase):
     """Test deepening_probability parameter validation."""
@@ -385,6 +443,7 @@ class TestExecuteMutationAndAnalysisCycle(unittest.TestCase):
         self.orchestrator.corpus_manager = MagicMock()
         self.orchestrator.execution_manager = MagicMock()
         self.orchestrator.mutation_controller = MagicMock()
+        self.orchestrator.max_mutations_per_session = None
 
     def test_calculates_max_mutations(self):
         """Test that _calculate_mutations is called."""
@@ -755,6 +814,7 @@ class TestRunStatsKeyErrorWithEmptyStats(unittest.TestCase):
         self.orchestrator.telemetry_manager = MagicMock()
         self.orchestrator.score_tracker = MagicMock()
         self.orchestrator.timing_fuzz = False
+        self.orchestrator.max_mutations_per_session = None
         self.orchestrator.differential_testing = False
 
     def test_no_keyerror_on_empty_run_stats_with_new_coverage(self):
@@ -958,6 +1018,7 @@ class TestPrepareParentContext(unittest.TestCase):
         self.orchestrator.mutation_controller = MagicMock()
         self.orchestrator.use_dynamic_runs = False
         self.orchestrator.base_runs = 3
+        self.orchestrator.max_mutations_per_session = None
 
     def test_returns_none_when_parent_invalid(self):
         """Returns None when _get_nodes_from_parent yields None nodes."""
@@ -1125,6 +1186,60 @@ class TestPrepareParentContext(unittest.TestCase):
 
         # Should return None without crashing
         self.assertIsNone(result)
+
+
+class TestMaxMutationsPerSessionOverride(unittest.TestCase):
+    """Test that --max-mutations-per-session overrides dynamic calculation."""
+
+    def setUp(self):
+        self.orchestrator = LafleurOrchestrator.__new__(LafleurOrchestrator)
+        self.orchestrator.max_sessions = None
+        self.orchestrator.max_mutations_per_session = 3
+        self.orchestrator.run_stats = {}
+        self.orchestrator.mutations_since_last_find = 0
+        self.orchestrator.global_seed_counter = 100
+        self.orchestrator.coverage_manager = MagicMock()
+        self.orchestrator.coverage_manager.state = {
+            "per_file_coverage": {
+                "parent.py": {
+                    "lineage_coverage_profile": {},
+                    "file_size_bytes": 1000,
+                }
+            }
+        }
+        self.orchestrator.corpus_manager = MagicMock()
+        self.orchestrator.scoring_manager = MagicMock()
+        self.orchestrator.execution_manager = MagicMock()
+        self.orchestrator.mutation_controller = MagicMock()
+        self.orchestrator.artifact_manager = MagicMock()
+        self.orchestrator.telemetry_manager = MagicMock()
+        self.orchestrator.score_tracker = MagicMock()
+        self.orchestrator.health_monitor = MagicMock()
+        self.orchestrator.base_runs = 1
+        self.orchestrator.use_dynamic_runs = False
+        self.orchestrator.timing_fuzz = False
+        self.orchestrator.keep_tmp_logs = False
+        self.orchestrator.deepening_probability = 0.0
+        self.orchestrator._last_heartbeat_time = float("inf")
+
+    def test_overrides_dynamic_mutation_count(self):
+        """max_mutations_per_session=3 overrides dynamic calculation."""
+        parent_path = Path("/corpus/parent.py")
+        mock_harness = MagicMock()
+        mock_harness.name = "uop_harness_test"
+
+        self.orchestrator.mutation_controller._calculate_mutations.return_value = 200
+        self.orchestrator.mutation_controller._get_nodes_from_parent.return_value = (
+            mock_harness,
+            MagicMock(),
+            [],
+        )
+        self.orchestrator.mutation_controller.get_mutated_harness.return_value = (None, {})
+
+        with patch("sys.stderr", new_callable=io.StringIO):
+            self.orchestrator.execute_mutation_and_analysis_cycle(parent_path, 100.0, 1, False)
+
+        self.assertEqual(self.orchestrator.run_stats["total_mutations"], 3)
 
 
 class TestExecuteSingleMutation(unittest.TestCase):
@@ -1896,6 +2011,28 @@ class TestMainCLIPlumbing(unittest.TestCase):
         _, kwargs = self._run_main(["--fusil-path", "/fake", "--no-ekg"])
         self.assertTrue(kwargs["no_ekg"])
 
+    # --- Diagnostic / bounded-run flags ---
+
+    def test_max_sessions_default_none(self):
+        """--max-sessions defaults to None."""
+        _, kwargs = self._run_main(["--fusil-path", "/fake"])
+        self.assertIsNone(kwargs["max_sessions"])
+
+    def test_max_sessions_custom(self):
+        """--max-sessions value reaches constructor."""
+        _, kwargs = self._run_main(["--fusil-path", "/fake", "--max-sessions", "5"])
+        self.assertEqual(kwargs["max_sessions"], 5)
+
+    def test_max_mutations_per_session_default_none(self):
+        """--max-mutations-per-session defaults to None."""
+        _, kwargs = self._run_main(["--fusil-path", "/fake"])
+        self.assertIsNone(kwargs["max_mutations_per_session"])
+
+    def test_max_mutations_per_session_custom(self):
+        """--max-mutations-per-session value reaches constructor."""
+        _, kwargs = self._run_main(["--fusil-path", "/fake", "--max-mutations-per-session", "3"])
+        self.assertEqual(kwargs["max_mutations_per_session"], 3)
+
     # --- Value flags ---
 
     def test_fusil_path_passed(self):
@@ -2006,6 +2143,10 @@ class TestMainCLIPlumbing(unittest.TestCase):
                 "--target-python",
                 "/opt/python3",
                 "--no-ekg",
+                "--max-sessions",
+                "10",
+                "--max-mutations-per-session",
+                "5",
             ]
         )
         self.assertEqual(kwargs["fusil_path"], "/my/fusil")
@@ -2022,6 +2163,8 @@ class TestMainCLIPlumbing(unittest.TestCase):
         self.assertEqual(kwargs["max_crash_log_size"], 250)
         self.assertEqual(kwargs["target_python"], "/opt/python3")
         self.assertTrue(kwargs["no_ekg"])
+        self.assertEqual(kwargs["max_sessions"], 10)
+        self.assertEqual(kwargs["max_mutations_per_session"], 5)
 
     # --- run_stats deep copy ---
 

@@ -123,6 +123,8 @@ class LafleurOrchestrator:
         deepening_probability: float = 0.2,
         run_stats: dict | None = None,
         no_ekg: bool = False,
+        max_sessions: int | None = None,
+        max_mutations_per_session: int | None = None,
     ):
         """Initialize the orchestrator and the corpus manager."""
         self.differential_testing = differential_testing
@@ -135,6 +137,8 @@ class LafleurOrchestrator:
                 f"deepening_probability must be between 0.0 and 1.0, got {deepening_probability}"
             )
         self.deepening_probability = deepening_probability
+        self.max_sessions = max_sessions
+        self.max_mutations_per_session = max_mutations_per_session
         ast_mutator = ASTMutator()
         max_timeout_log_bytes = max_timeout_log_size * 1024 * 1024
         max_crash_log_bytes = max_crash_log_size * 1024 * 1024
@@ -322,6 +326,13 @@ class LafleurOrchestrator:
         print("[+] Starting Deep Fuzzer Evolutionary Loop. Press Ctrl+C to stop.")
         try:
             while True:
+                if (
+                    self.max_sessions is not None
+                    and self.run_stats.get("total_sessions", 0) >= self.max_sessions
+                ):
+                    print(f"[+] Reached --max-sessions limit ({self.max_sessions}). Stopping.")
+                    break
+
                 self.run_stats["total_sessions"] = self.run_stats.get("total_sessions", 0) + 1
                 session_num = self.run_stats["total_sessions"]
                 print(f"\n--- Fuzzing Session #{self.run_stats['total_sessions']} ---")
@@ -570,6 +581,8 @@ class LafleurOrchestrator:
         AST nodes (the caller should abort the current cycle).
         """
         max_mutations = self.mutation_controller._calculate_mutations(parent_score)
+        if self.max_mutations_per_session is not None:
+            max_mutations = self.max_mutations_per_session
         parent_id = parent_path.name
         parent_metadata = self.coverage_manager.state["per_file_coverage"].get(parent_id, {})
         parent_lineage_profile = parent_metadata.get("lineage_coverage_profile", {})
@@ -1001,6 +1014,35 @@ def main():
         help="Disable ctypes-based JIT introspection in the driver. "
         "Use this for CPython builds older than 3.15 where the executor struct layout differs.",
     )
+    # --- Diagnostic / bounded-run options ---
+    parser.add_argument(
+        "--max-sessions",
+        type=int,
+        default=None,
+        help="Stop after N fuzzing sessions (default: unlimited). "
+        "Useful for smoke tests and diagnostics.",
+    )
+    parser.add_argument(
+        "--max-mutations-per-session",
+        type=int,
+        default=None,
+        help="Override dynamic mutation count: each session performs exactly N mutations "
+        "(default: score-based dynamic calculation).",
+    )
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=None,
+        help="Global random seed for reproducible runs. Seeds the RNG before corpus selection "
+        "and strategy choice. Per-mutation seeds remain deterministic relative to this.",
+    )
+    parser.add_argument(
+        "--workdir",
+        type=Path,
+        default=None,
+        help="Working directory for all fuzzer outputs (corpus, crashes, logs, etc.). "
+        "Created if it doesn't exist. Defaults to current working directory.",
+    )
     parser.add_argument(
         "-v",
         "--verbose",
@@ -1015,6 +1057,16 @@ def main():
         help="Path for the orchestrator log file. Default: logs/deep_fuzzer_run_{timestamp}.log",
     )
     args = parser.parse_args()
+
+    if args.workdir is not None:
+        workdir = args.workdir.resolve()
+        workdir.mkdir(parents=True, exist_ok=True)
+        os.chdir(workdir)
+        print(f"[+] Working directory set to: {workdir}")
+
+    if args.seed is not None:
+        random.seed(args.seed)
+        print(f"[+] Global random seed set to: {args.seed}")
 
     LOGS_DIR.mkdir(exist_ok=True)
     # Use a consistent timestamp for the whole run
@@ -1077,6 +1129,8 @@ def main():
             deepening_probability=args.deepening_probability,
             run_stats=copy.deepcopy(start_stats),
             no_ekg=args.no_ekg,
+            max_sessions=args.max_sessions,
+            max_mutations_per_session=args.max_mutations_per_session,
         )
         if args.prune_corpus:
             orchestrator.corpus_manager.prune_corpus(dry_run=not args.force)

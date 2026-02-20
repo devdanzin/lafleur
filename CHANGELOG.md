@@ -34,6 +34,7 @@ All notable changes to this project should be documented in this file.
 - A `SliceObjectChaosMutator` that attacks the JIT's slice type tracking (`_GUARD_TOS_SLICE` elimination, `_BINARY_OP_SUBSCR_LIST_SLICE` optimization) through six vectors: slice-to-int swaps in the same subscript, slice subclasses with dynamic indices, guard elimination violation via type substitution, mutating slice state between creation and use, cross-container-type slicing, and nested slice corruption, by @devdanzin.
 - CLI argument plumbing tests verifying that all CLI options are correctly threaded through to their respective manager classes, by @devdanzin.
 - A directory column in the campaign instance leaderboard for identifying instance paths, by @devdanzin.
+- Strengthened mutator test assertions: `exec()` verification for all evil object generators, safety wrapper assertions for `SliceMutator` and `StringInterpolationMutator`, and brittleness comments on tests with rigid `side_effect` sequences, by @devdanzin.
 
 
 ### Enhanced

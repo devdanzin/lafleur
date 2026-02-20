@@ -46,6 +46,13 @@ class TestApplyMutationStrategy(unittest.TestCase):
         self.mock_havoc.__name__ = "_run_havoc_stage"
         self.mock_spam = MagicMock(return_value=(dummy_tree, {"strategy": "spam"}))
         self.mock_spam.__name__ = "_run_spam_stage"
+        self.mock_helper = MagicMock(return_value=(dummy_tree, {"strategy": "helper_sniper"}))
+        self.mock_helper.__name__ = "_run_helper_sniper_stage"
+
+        self.controller._run_deterministic_stage = self.mock_det
+        self.controller._run_havoc_stage = self.mock_havoc
+        self.controller._run_spam_stage = self.mock_spam
+        self.controller._run_helper_sniper_stage = self.mock_helper
 
     def test_seeds_random_generator(self):
         """Test that the dedicated RNG is seeded correctly."""
@@ -54,10 +61,6 @@ class TestApplyMutationStrategy(unittest.TestCase):
                 x = 1
         """)
         tree = ast.parse(code)
-
-        self.controller._run_deterministic_stage = self.mock_det
-        self.controller._run_havoc_stage = self.mock_havoc
-        self.controller._run_spam_stage = self.mock_spam
 
         with patch("lafleur.mutation_controller.RANDOM.seed") as mock_random_seed:
             self.controller.apply_mutation_strategy(tree, seed=12345)
@@ -71,10 +74,6 @@ class TestApplyMutationStrategy(unittest.TestCase):
                 x = 1
         """)
         tree = ast.parse(code)
-
-        self.controller._run_deterministic_stage = self.mock_det
-        self.controller._run_havoc_stage = self.mock_havoc
-        self.controller._run_spam_stage = self.mock_spam
 
         with patch("lafleur.mutation_controller.FuzzerSetupNormalizer") as mock_normalizer:
             mock_instance = MagicMock()
@@ -94,10 +93,7 @@ class TestApplyMutationStrategy(unittest.TestCase):
         """)
         tree = ast.parse(code)
 
-        self.controller._run_deterministic_stage = self.mock_det
-        self.controller._run_havoc_stage = self.mock_havoc
-        self.controller._run_spam_stage = self.mock_spam
-        self.controller.score_tracker.get_weights.return_value = [10.0, 1.0, 1.0]
+        self.controller.score_tracker.get_weights.return_value = [10.0, 1.0, 1.0, 1.0]
 
         with patch("lafleur.mutation_controller.RANDOM.choices") as mock_choices:
             mock_choices.return_value = [self.mock_det]
@@ -107,7 +103,7 @@ class TestApplyMutationStrategy(unittest.TestCase):
             # Verify weights were requested and used
             self.controller.score_tracker.get_weights.assert_called()
             call_args = mock_choices.call_args
-            self.assertEqual(call_args[1]["weights"], [10.0, 1.0, 1.0])
+            self.assertEqual(call_args[1]["weights"], [10.0, 1.0, 1.0, 1.0])
 
     def test_records_only_chosen_strategy_attempt(self):
         """Test that only the chosen strategy has its attempt recorded."""
@@ -117,10 +113,6 @@ class TestApplyMutationStrategy(unittest.TestCase):
         """)
         tree = ast.parse(code)
 
-        self.controller._run_deterministic_stage = self.mock_det
-        self.controller._run_havoc_stage = self.mock_havoc
-        self.controller._run_spam_stage = self.mock_spam
-
         with patch("lafleur.mutation_controller.RANDOM.choices") as mock_choices:
             mock_choices.return_value = [self.mock_havoc]
             self.controller.apply_mutation_strategy(tree, seed=42)
@@ -129,6 +121,7 @@ class TestApplyMutationStrategy(unittest.TestCase):
         self.assertEqual(self.controller.score_tracker.attempts["havoc"], 1)
         self.assertEqual(self.controller.score_tracker.attempts["deterministic"], 0)
         self.assertEqual(self.controller.score_tracker.attempts["spam"], 0)
+        self.assertEqual(self.controller.score_tracker.attempts["helper_sniper"], 0)
 
     def test_attempt_counts_accumulate_for_chosen_strategies(self):
         """Test that attempts only accumulate for actually chosen strategies."""
@@ -151,6 +144,7 @@ class TestApplyMutationStrategy(unittest.TestCase):
         self.assertEqual(self.controller.score_tracker.attempts["havoc"], 2)
         self.assertEqual(self.controller.score_tracker.attempts["deterministic"], 0)
         self.assertEqual(self.controller.score_tracker.attempts["spam"], 0)
+        self.assertEqual(self.controller.score_tracker.attempts["helper_sniper"], 0)
 
     def test_sanitizes_ast_after_mutation(self):
         """Test that EmptyBodySanitizer is applied after mutation."""
@@ -159,10 +153,6 @@ class TestApplyMutationStrategy(unittest.TestCase):
                 x = 1
         """)
         tree = ast.parse(code)
-
-        self.controller._run_deterministic_stage = self.mock_det
-        self.controller._run_havoc_stage = self.mock_havoc
-        self.controller._run_spam_stage = self.mock_spam
 
         with patch("lafleur.mutation_controller.EmptyBodySanitizer") as mock_sanitizer:
             mock_instance = MagicMock()
@@ -182,10 +172,6 @@ class TestApplyMutationStrategy(unittest.TestCase):
         """)
         tree = ast.parse(code)
 
-        self.controller._run_deterministic_stage = self.mock_det
-        self.controller._run_havoc_stage = self.mock_havoc
-        self.controller._run_spam_stage = self.mock_spam
-
         _, mutation_info = self.controller.apply_mutation_strategy(tree, seed=12345)
 
         self.assertEqual(mutation_info["seed"], 12345)
@@ -197,10 +183,6 @@ class TestApplyMutationStrategy(unittest.TestCase):
                 x = 1
         """)
         tree = ast.parse(code)
-
-        self.controller._run_deterministic_stage = self.mock_det
-        self.controller._run_havoc_stage = self.mock_havoc
-        self.controller._run_spam_stage = self.mock_spam
 
         result_ast, result_info = self.controller.apply_mutation_strategy(tree, seed=42)
 
@@ -217,10 +199,6 @@ class TestApplyMutationStrategy(unittest.TestCase):
         """)
         tree = ast.parse(code)
 
-        self.controller._run_deterministic_stage = self.mock_det
-        self.controller._run_havoc_stage = self.mock_havoc
-        self.controller._run_spam_stage = self.mock_spam
-
         result1, info1 = self.controller.apply_mutation_strategy(tree, seed=99999)
         result2, info2 = self.controller.apply_mutation_strategy(tree, seed=99999)
 
@@ -235,10 +213,6 @@ class TestApplyMutationStrategy(unittest.TestCase):
         ]
         tree = ast.Module(body=statements, type_ignores=[])
 
-        self.controller._run_deterministic_stage = self.mock_det
-        self.controller._run_havoc_stage = self.mock_havoc
-        self.controller._run_spam_stage = self.mock_spam
-
         with patch.object(self.controller, "_run_slicing") as mock_slice:
             mock_slice.return_value = (tree, {"strategy": "slicing_havoc"})
             self.controller.apply_mutation_strategy(tree, seed=42)
@@ -246,7 +220,10 @@ class TestApplyMutationStrategy(unittest.TestCase):
             mock_slice.assert_called_once()
             # The stage name should match the chosen strategy
             call_args = mock_slice.call_args
-            self.assertIn(call_args[0][1], ("deterministic", "havoc", "spam"))
+            self.assertIn(
+                call_args[0][1],
+                ("deterministic", "havoc", "spam", "helper_sniper"),
+            )
             self.assertEqual(call_args[0][2], 101)
 
 

@@ -21,6 +21,7 @@ from lafleur.coverage import (
     merge_coverage_into_global,
     parse_log_for_edge_coverage,
 )
+from lafleur.types import JitStats, MutationInfo
 from lafleur.utils import ExecutionResult
 
 if TYPE_CHECKING:
@@ -108,8 +109,8 @@ class InterestingnessScorer:
         jit_avg_time_ms: float | None,
         nojit_avg_time_ms: float | None,
         nojit_cv: float | None,
-        jit_stats: dict | None = None,
-        parent_jit_stats: dict | None = None,
+        jit_stats: JitStats | None = None,
+        parent_jit_stats: JitStats | None = None,
     ):
         self.info = coverage_info
         self.parent_file_size = parent_file_size
@@ -335,7 +336,7 @@ class ScoringManager:
         info.total_child_edges = total_edges
         return info
 
-    def parse_jit_stats(self, log_content: str) -> dict:
+    def parse_jit_stats(self, log_content: str) -> JitStats:
         """
         Parse JIT stats from the driver log output.
 
@@ -349,7 +350,7 @@ class ScoringManager:
         Returns:
             Dictionary of aggregated JIT statistics
         """
-        aggregated_stats: dict = {
+        aggregated_stats: JitStats = {
             "max_exit_count": 0,
             "max_chain_depth": 0,
             "zombie_traces": 0,
@@ -443,15 +444,15 @@ class ScoringManager:
         self,
         coverage_info: NewCoverageInfo,
         parent_id: str | None,
-        mutation_info: dict,
+        mutation_info: MutationInfo,
         parent_file_size: int,
         parent_lineage_edge_count: int,
         child_file_size: int,
         jit_avg_time_ms: float | None,
         nojit_avg_time_ms: float | None,
         nojit_cv: float | None,
-        jit_stats: dict | None = None,
-        parent_jit_stats: dict | None = None,
+        jit_stats: JitStats | None = None,
+        parent_jit_stats: JitStats | None = None,
     ) -> bool:
         """
         Use the scorer to decide if a child is interesting.
@@ -573,7 +574,7 @@ class ScoringManager:
         exec_result: ExecutionResult,
         parent_lineage_profile: dict,
         parent_id: str | None,
-        mutation_info: dict,
+        mutation_info: MutationInfo,
         mutation_seed: int,
         parent_file_size: int,
         parent_lineage_edge_count: int,
@@ -625,7 +626,7 @@ class ScoringManager:
         jit_stats = self.parse_jit_stats(log_content)
 
         # Retrieve parent JIT stats from metadata
-        parent_jit_stats = {}
+        parent_jit_stats: JitStats = {}
         if parent_id:
             parent_metadata = self.coverage_manager.state["per_file_coverage"].get(parent_id, {})
             parent_jit_stats = parent_metadata.get("discovery_mutation", {}).get("jit_stats", {})
@@ -661,10 +662,10 @@ class ScoringManager:
         self,
         exec_result: ExecutionResult,
         child_coverage: dict,
-        jit_stats: dict,
-        parent_jit_stats: dict,
+        jit_stats: JitStats,
+        parent_jit_stats: JitStats,
         parent_id: str | None,
-        mutation_info: dict,
+        mutation_info: MutationInfo,
         mutation_seed: int,
     ) -> dict:
         """Deduplicate, commit coverage, apply density decay, and build the result dict."""

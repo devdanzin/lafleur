@@ -8,6 +8,8 @@ This module provides the MutationController class ("The Alchemist") which handle
 - Extracting boilerplate and core code from source files
 """
 
+from __future__ import annotations
+
 import ast
 import copy
 import math
@@ -30,6 +32,8 @@ from lafleur.mutators.generic import ImportChaosMutator, ImportPrunerMutator, St
 from lafleur.mutators.sniper import SniperMutator
 from lafleur.mutators.helper_injection import HelperFunctionInjector
 
+from lafleur.types import MutationInfo
+
 if TYPE_CHECKING:
     from lafleur.corpus_manager import CorpusManager
     from lafleur.health import HealthMonitor
@@ -42,7 +46,7 @@ RANDOM = random.Random()
 BOILERPLATE_START_MARKER = "# FUSIL_BOILERPLATE_START"
 BOILERPLATE_END_MARKER = "# FUSIL_BOILERPLATE_END"
 
-MutationStrategy = Callable[..., tuple[ast.AST, dict[str, Any]]]
+MutationStrategy = Callable[..., tuple[ast.AST, MutationInfo]]
 
 
 class MutationController:
@@ -174,7 +178,7 @@ class MutationController:
 
     def _run_slicing(
         self, base_ast: ast.AST, stage_name: str, len_body: int, seed: int | None = None
-    ) -> tuple[ast.AST, dict[str, Any]]:
+    ) -> tuple[ast.AST, MutationInfo]:
         """A helper to apply a mutation pipeline to a slice of a large AST."""
         print(
             f"  [~] Large AST detected ({len_body} statements), running SLICING stage...",
@@ -220,7 +224,7 @@ class MutationController:
 
         # Credit the real transformers, not SlicingMutator
         transformers_applied = [type(t).__name__ for t in pipeline]
-        mutation_info = {
+        mutation_info: MutationInfo = {
             "strategy": stage_name,
             "transformers": transformers_applied,
             "sliced": True,
@@ -229,17 +233,17 @@ class MutationController:
 
     def _run_deterministic_stage(
         self, base_ast: ast.AST, seed: int, **kwargs: Any
-    ) -> tuple[ast.AST, dict[str, Any]]:
+    ) -> tuple[ast.AST, MutationInfo]:
         """Apply a single, seeded, deterministic mutation."""
         print("  [~] Running DETERMINISTIC stage...", file=sys.stderr)
         mutated_ast, transformers_used = self.ast_mutator.mutate_ast(base_ast, seed=seed)
-        mutation_info = {
+        mutation_info: MutationInfo = {
             "strategy": "deterministic",
             "transformers": [t.__name__ for t in transformers_used],
         }
         return mutated_ast, mutation_info
 
-    def _run_havoc_stage(self, base_ast: ast.AST, **kwargs: Any) -> tuple[ast.AST, dict[str, Any]]:
+    def _run_havoc_stage(self, base_ast: ast.AST, **kwargs: Any) -> tuple[ast.AST, MutationInfo]:
         """Apply a random stack of many different mutations to the AST."""
         print("  [~] Running HAVOC stage...", file=sys.stderr)
         tree = base_ast  # Start with the copied tree from the dispatcher
@@ -258,10 +262,10 @@ class MutationController:
 
             tree = transformer_class().visit(tree)
 
-        mutation_info = {"strategy": "havoc", "transformers": transformers_applied}
+        mutation_info: MutationInfo = {"strategy": "havoc", "transformers": transformers_applied}
         return tree, mutation_info
 
-    def _run_spam_stage(self, base_ast: ast.AST, **kwargs: Any) -> tuple[ast.AST, dict[str, Any]]:
+    def _run_spam_stage(self, base_ast: ast.AST, **kwargs: Any) -> tuple[ast.AST, MutationInfo]:
         """Repeatedly apply the same type of mutation to the AST."""
         print("  [~] Running SPAM stage...", file=sys.stderr)
         tree = base_ast
@@ -282,7 +286,7 @@ class MutationController:
             # Apply a new instance of the same transformer each time
             tree = chosen_transformer_class().visit(tree)
 
-        mutation_info = {
+        mutation_info: MutationInfo = {
             "strategy": "spam",
             "transformers": [chosen_transformer_class.__name__] * num_spam_mutations,
         }
@@ -290,7 +294,7 @@ class MutationController:
 
     def _run_sniper_stage(
         self, base_ast: ast.AST, seed: int, watched_keys: list[str] | None = None, **kwargs: Any
-    ) -> tuple[ast.AST, dict[str, Any]]:
+    ) -> tuple[ast.AST, MutationInfo]:
         """Apply the SniperMutator if watched keys are available."""
         if not watched_keys:
             # Fallback to havoc, but track under sniper so the score tracker
@@ -316,7 +320,7 @@ class MutationController:
 
     def _run_helper_sniper_stage(
         self, base_ast: ast.AST, seed: int, **kwargs: Any
-    ) -> tuple[ast.AST, dict[str, Any]]:
+    ) -> tuple[ast.AST, MutationInfo]:
         """
         Combined strategy: Inject helpers, then attack them with Sniper.
 
@@ -360,7 +364,7 @@ class MutationController:
 
     def apply_mutation_strategy(
         self, base_ast: ast.AST, seed: int, watched_keys: list[str] | None = None
-    ) -> tuple[ast.AST, dict[str, Any]]:
+    ) -> tuple[ast.AST, MutationInfo]:
         """
         Apply a single, seeded mutation strategy to an AST.
 
@@ -457,7 +461,7 @@ class MutationController:
 
     def get_mutated_harness(
         self, original_harness_node: ast.AST, seed: int, watched_keys: list[str] | None = None
-    ) -> tuple[ast.AST | None, dict[str, Any] | None]:
+    ) -> tuple[ast.AST | None, MutationInfo | None]:
         """Apply a mutation strategy and handle transformation errors."""
         try:
             mutated_harness_node, mutation_info = self.apply_mutation_strategy(

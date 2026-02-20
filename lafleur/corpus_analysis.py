@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from lafleur.corpus_manager import CorpusManager
+    from lafleur.types import MutationInfo
 
 
 def calculate_distribution(values: Sequence[int | float]) -> dict[str, float | None]:
@@ -117,7 +118,7 @@ def generate_corpus_stats(corpus_manager: CorpusManager) -> dict[str, Any]:
             parent_ids.add(parent_id)
 
         # Count successful mutations by strategy and individual mutators
-        discovery_mutation = metadata.get("discovery_mutation", {})
+        discovery_mutation: MutationInfo = metadata.get("discovery_mutation", {})
         if discovery_mutation:
             strategy = discovery_mutation.get("strategy", "unknown")
             mutation_counter[strategy] += 1

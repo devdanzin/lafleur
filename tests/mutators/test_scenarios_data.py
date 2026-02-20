@@ -570,6 +570,9 @@ class TestComprehensionBomb(unittest.TestCase):
         self.assertIn("_items.clear()", result)
         self.assertIn("_items.extend", result)
         self.assertIn("unexpected_type_from_iterator", result)
+        # Should have new backing store mutation operations
+        self.assertIn("_items.insert(", result)
+        self.assertIn("_items.pop(", result)
 
     def test_skips_non_harness_functions(self):
         """Test that non-harness functions are not mutated."""
@@ -3061,6 +3064,80 @@ class TestUnpackingChaosMutator(unittest.TestCase):
         self.assertIn("self._call_count", result)
         self.assertIn("self._call_count += 1", result)
         self.assertIn("self._call_count > self._trigger_count", result)
+
+    def test_backing_store_mutate_mode(self):
+        """Test that backing_store_mutate mode includes clear/extend/insert/pop."""
+        code = dedent("""
+            def test_func():
+                a, b = [1, 2]
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.1):
+            mutator = UnpackingChaosMutator()
+            mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # The class definition should include backing_store_mutate logic
+        self.assertIn("backing_store_mutate", result)
+        self.assertIn("_items.clear()", result)
+        self.assertIn("_items.extend(", result)
+        self.assertIn("_items.insert(", result)
+        self.assertIn("_items.pop(", result)
+
+    def test_exception_storm_mode(self):
+        """Test that exception_storm mode raises different exception types."""
+        code = dedent("""
+            def test_func():
+                a, b = [1, 2]
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.1):
+            mutator = UnpackingChaosMutator()
+            mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # The class definition should include exception_storm logic
+        self.assertIn("exception_storm", result)
+        self.assertIn("TypeError", result)
+        self.assertIn("ValueError", result)
+
+    def test_backing_store_mutate_can_be_selected(self):
+        """Test that backing_store_mutate mode can be selected for wrapping."""
+        code = dedent("""
+            def test_func():
+                a, b = [1, 2]
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", side_effect=[0.1, 0.1]):
+            with patch("random.choice", return_value="backing_store_mutate"):
+                with patch("random.randint", return_value=50):
+                    mutator = UnpackingChaosMutator()
+                    mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        self.assertIn("_JitChaosIterator([1, 2]", result)
+        self.assertIn("mode='backing_store_mutate'", result)
+
+    def test_exception_storm_can_be_selected(self):
+        """Test that exception_storm mode can be selected for wrapping."""
+        code = dedent("""
+            def test_func():
+                a, b = [1, 2]
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", side_effect=[0.1, 0.1]):
+            with patch("random.choice", return_value="exception_storm"):
+                with patch("random.randint", return_value=50):
+                    mutator = UnpackingChaosMutator()
+                    mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        self.assertIn("_JitChaosIterator([1, 2]", result)
+        self.assertIn("mode='exception_storm'", result)
 
 
 class TestConstantNarrowingPoisonMutator(unittest.TestCase):

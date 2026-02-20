@@ -786,6 +786,16 @@ def _create_chaotic_iterator_ast(class_name: str) -> ast.ClassDef:
             if fuzzer_rng.random() < 0.05:
                 self._items.extend([999, 'chaos', None])  # Unexpectedly prolong the iteration
 
+            if fuzzer_rng.random() < 0.03:
+                # Insert at current position, shifting remaining elements
+                if self._index < len(self._items):
+                    self._items.insert(self._index, 'inserted_mid_iter')
+
+            if fuzzer_rng.random() < 0.03:
+                # Pop from random position, corrupting indices
+                if self._items:
+                    self._items.pop(fuzzer_rng.randint(0, max(0, len(self._items) - 1)))
+
             if fuzzer_rng.random() < 0.1:
                 return "unexpected_type_from_iterator"  # Corrupt the yielded value
 
@@ -2140,6 +2150,10 @@ class UnpackingChaosMutator(ast.NodeTransformer):
     - 'grow' mode: yields extra items after trigger_count iterations
     - 'shrink' mode: stops iteration early after trigger_count iterations
     - 'type_switch' mode: yields a different type after trigger_count iterations
+    - 'backing_store_mutate' mode: actively modifies the backing list mid-iteration
+      via clear(), extend(), insert(), and pop() (GH-143123)
+    - 'exception_storm' mode: conditionally raises different exception types
+      (StopIteration, TypeError, ValueError) during iteration
 
     The iterator also lies about its length via __length_hint__ to confuse
     pre-allocation optimizations.
@@ -2170,6 +2184,38 @@ class UnpackingChaosMutator(ast.NodeTransformer):
 
                 def __next__(self):
                     triggered = self._call_count > self._trigger_count
+
+                    # backing_store_mutate: actively modify the backing list mid-iteration
+                    # This is the most aggressive mode — the iterator's own data changes
+                    # while it's being consumed, causing length mismatches and stale indices.
+                    if triggered and self._mode == 'backing_store_mutate':
+                        import random as _rng
+                        roll = _rng.random()
+                        if roll < 0.15:
+                            # Nuke the entire backing store
+                            self._items.clear()
+                        elif roll < 0.30:
+                            # Extend with unexpected data types and lengths
+                            self._items.extend([999, 'chaos_injected', None, 3.14])
+                        elif roll < 0.40:
+                            # Insert at current position, shifting everything
+                            if self._index < len(self._items):
+                                self._items.insert(self._index, 'inserted_mid_iter')
+                        elif roll < 0.50:
+                            # Pop from a random position
+                            if self._items:
+                                self._items.pop(_rng.randint(0, max(0, len(self._items) - 1)))
+
+                    # exception_storm: conditionally raise different exception types
+                    if triggered and self._mode == 'exception_storm':
+                        import random as _rng
+                        roll = _rng.random()
+                        if roll < 0.1:
+                            raise StopIteration
+                        elif roll < 0.15:
+                            raise TypeError("chaos iterator type error")
+                        elif roll < 0.2:
+                            raise ValueError("chaos iterator value error")
 
                     if self._index >= len(self._items):
                         # After exhausting items, maybe yield extra in 'grow' mode
@@ -2224,7 +2270,9 @@ class UnpackingChaosMutator(ast.NodeTransformer):
 
     def _wrap_in_chaos_iterator(self, value_node: ast.expr) -> ast.Call:
         """Wrap a value node in _JitChaosIterator call."""
-        mode = random.choice(["grow", "shrink", "type_switch"])
+        mode = random.choice(
+            ["grow", "shrink", "type_switch", "backing_store_mutate", "exception_storm"]
+        )
         trigger = random.randint(30, 100)
 
         return ast.Call(

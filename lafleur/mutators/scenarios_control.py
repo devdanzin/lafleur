@@ -1602,6 +1602,8 @@ class GeneratorFrameInliningMutator(ast.NodeTransformer):
         "yield_from_swap",
         "generator_resurrection",
         "concurrent_exhaustion",
+        "settrace_generator_composition",
+        "settrace_yield_from_interaction",
     ]
 
     def visit_FunctionDef(self, node: ast.FunctionDef) -> ast.FunctionDef:
@@ -1940,5 +1942,140 @@ class GeneratorFrameInliningMutator(ast.NodeTransformer):
                 _lc_{prefix} = [x + 1 for x in _sg2_{prefix}]
             except (TypeError, StopIteration):
                 pass
+        """)
+        return ast.parse(code).body
+
+    def _create_settrace_generator_composition(self, prefix: str) -> list[ast.stmt]:
+        """
+        Combine sys.settrace with partially-consumed generators (GH-140936).
+
+        The JIT traces into generator frames and eliminates refcounts across
+        yield boundaries. Installing a trace function changes the frame
+        evaluation path. If a generator is partially consumed with a trace
+        active, then the trace is removed while the generator is still alive,
+        the JIT's inlined frame may have stale assumptions about the
+        evaluation mode.
+        """
+        code = dedent(f"""
+            import sys
+            import gc
+
+            # Define a generator that yields many values with varying types
+            def _traced_gen_{prefix}(n):
+                total = 0
+                for i in range(n):
+                    total += i
+                    yield total
+
+            # Phase 1: Warm up WITHOUT trace — JIT compiles the generator frame
+            _warmup_gen_{prefix} = _traced_gen_{prefix}(500)
+            try:
+                for _w_{prefix} in range(300):
+                    next(_warmup_gen_{prefix})
+            except StopIteration:
+                pass
+
+            # Phase 2: Install trace, create NEW generator, iterate partially
+            _trace_calls_{prefix} = []
+            def _trace_func_{prefix}(frame, event, arg):
+                _trace_calls_{prefix}.append(event)
+                return _trace_func_{prefix}
+
+            try:
+                sys.settrace(_trace_func_{prefix})
+
+                # Create generator while trace is active
+                _active_gen_{prefix} = _traced_gen_{prefix}(500)
+
+                # Partially consume — generator is suspended at a yield point
+                # with the trace function installed
+                for _t_{prefix} in range(100):
+                    next(_active_gen_{prefix})
+
+                # Phase 3: Remove trace while generator is still alive and suspended
+                sys.settrace(None)
+
+                # Phase 4: Continue consuming the generator WITHOUT trace
+                # The JIT may have cached the traced evaluation path in the
+                # inlined frame, which is now invalid
+                for _post_{prefix} in range(200):
+                    next(_active_gen_{prefix})
+
+            except (StopIteration, RuntimeError, TypeError):
+                pass
+            finally:
+                sys.settrace(None)
+
+            # Phase 5: Force GC with generator still partially consumed
+            # The _warmup_gen is also still alive — GC must handle both
+            try:
+                gc.collect()
+            except Exception:
+                pass
+        """)
+        return ast.parse(code).body
+
+    def _create_settrace_yield_from_interaction(self, prefix: str) -> list[ast.stmt]:
+        """
+        Combine sys.settrace with yield-from delegation chains.
+
+        The JIT traces through yield-from into inner generators via
+        _SEND_GEN_FRAME. Installing a trace function mid-delegation
+        changes the frame evaluation path for both the outer and inner
+        generator frames. Toggling the trace on and off during active
+        delegation may corrupt the JIT's view of the frame chain.
+        """
+        code = dedent(f"""
+            import sys
+
+            def _inner_traced_{prefix}(n):
+                for i in range(n):
+                    yield i * 2
+
+            def _outer_traced_{prefix}(n):
+                yield from _inner_traced_{prefix}(n)
+
+            _trace_log_{prefix} = []
+            def _delegation_trace_{prefix}(frame, event, arg):
+                _trace_log_{prefix}.append(event)
+                return _delegation_trace_{prefix}
+
+            # Phase 1: Warm up the yield-from chain without trace
+            try:
+                _warmup_chain_{prefix} = _outer_traced_{prefix}(500)
+                for _w_{prefix} in range(400):
+                    next(_warmup_chain_{prefix})
+            except StopIteration:
+                pass
+
+            # Phase 2: Rapid trace toggling during active yield-from
+            try:
+                _active_chain_{prefix} = _outer_traced_{prefix}(1000)
+
+                for _cycle_{prefix} in range(10):
+                    # Toggle trace ON
+                    sys.settrace(_delegation_trace_{prefix})
+
+                    # Consume some values with trace active
+                    for _t_{prefix} in range(20):
+                        try:
+                            next(_active_chain_{prefix})
+                        except StopIteration:
+                            break
+
+                    # Toggle trace OFF
+                    sys.settrace(None)
+
+                    # Consume more without trace
+                    for _nt_{prefix} in range(20):
+                        try:
+                            next(_active_chain_{prefix})
+                        except StopIteration:
+                            break
+
+            except (RuntimeError, TypeError, StopIteration):
+                pass
+            finally:
+                sys.settrace(None)
         """)
         return ast.parse(code).body

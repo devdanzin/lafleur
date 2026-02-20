@@ -2167,6 +2167,96 @@ class TestGeneratorFrameInliningMutator(unittest.TestCase):
         self.assertIn("y = 2", result)
         self.assertIn("z = x + y", result)
 
+    def test_injects_settrace_generator_composition(self):
+        """Test settrace + generator composition attack vector (GH-140936)."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.05):
+            with patch("random.choice", return_value="settrace_generator_composition"):
+                with patch("random.randint", return_value=5000):
+                    mutator = GeneratorFrameInliningMutator()
+                    mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should import sys
+        self.assertIn("import sys", result)
+        # Should have generator definition
+        self.assertIn("_traced_gen_geninl_5000", result)
+        # Should install and remove trace
+        self.assertIn("sys.settrace(", result)
+        self.assertIn("sys.settrace(None)", result)
+        # Should have warmup and attack phases
+        self.assertIn("_warmup_gen_geninl_5000", result)
+        self.assertIn("_active_gen_geninl_5000", result)
+
+    def test_injects_settrace_yield_from_interaction(self):
+        """Test settrace + yield-from interaction attack vector."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.05):
+            with patch("random.choice", return_value="settrace_yield_from_interaction"):
+                with patch("random.randint", return_value=6000):
+                    mutator = GeneratorFrameInliningMutator()
+                    mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should have inner/outer generator pair
+        self.assertIn("_inner_traced_geninl_6000", result)
+        self.assertIn("_outer_traced_geninl_6000", result)
+        # Should have yield from
+        self.assertIn("yield from", result)
+        # Should install and remove trace in cycles
+        self.assertIn("sys.settrace(", result)
+        self.assertIn("sys.settrace(None)", result)
+        # Should have trace toggle cycling
+        self.assertIn("_cycle_geninl_6000", result)
+
+    def test_settrace_generator_produces_valid_code(self):
+        """Test that settrace_generator_composition produces parseable Python."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+                y = 2
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.05):
+            with patch("random.choice", return_value="settrace_generator_composition"):
+                with patch("random.randint", return_value=4000):
+                    mutator = GeneratorFrameInliningMutator()
+                    mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        reparsed = ast.parse(result)
+        self.assertIsInstance(reparsed, ast.Module)
+
+    def test_settrace_yield_from_produces_valid_code(self):
+        """Test that settrace_yield_from_interaction produces parseable Python."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+                y = 2
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.05):
+            with patch("random.choice", return_value="settrace_yield_from_interaction"):
+                with patch("random.randint", return_value=4000):
+                    mutator = GeneratorFrameInliningMutator()
+                    mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        reparsed = ast.parse(result)
+        self.assertIsInstance(reparsed, ast.Module)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

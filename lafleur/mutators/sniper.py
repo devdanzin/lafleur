@@ -249,47 +249,25 @@ class SniperMutator(ast.NodeTransformer):
         counter_name = f"_sniper_ctr_{random.randint(1000, 9999)}"
         trigger_iteration = random.randint(50, 100)
 
-        # Build the counter increment with lazy initialization:
-        #   try:
-        #       _sniper_ctr_XXXX += 1
-        #   except NameError:
-        #       _sniper_ctr_XXXX = 1
-        counter_increment = ast.Try(
-            body=[
-                ast.AugAssign(
-                    target=ast.Name(id=counter_name, ctx=ast.Store()),
-                    op=ast.Add(),
-                    value=ast.Constant(value=1),
-                )
-            ],
-            handlers=[
-                ast.ExceptHandler(
-                    type=ast.Name(id="NameError", ctx=ast.Load()),
-                    name=None,
-                    body=[
-                        ast.Assign(
-                            targets=[ast.Name(id=counter_name, ctx=ast.Store())],
-                            value=ast.Constant(value=1),
-                        )
-                    ],
-                )
-            ],
-            orelse=[],
-            finalbody=[],
-        )
+        # Build counter increment + guarded invalidation from parsed code.
+        # The counter uses try/except NameError for lazy initialization,
+        # and the invalidation fires exactly once at trigger_iteration.
+        scaffold = ast.parse(
+            dedent(f"""
+            try:
+                {counter_name} += 1
+            except NameError:
+                {counter_name} = 1
+            if {counter_name} == {trigger_iteration}:
+                pass
+        """)
+        ).body
 
-        # Build the guarded invalidation:
-        #   if _sniper_ctr_XXXX == trigger_iteration:
-        #       <invalidation_code>
-        guarded_invalidation = ast.If(
-            test=ast.Compare(
-                left=ast.Name(id=counter_name, ctx=ast.Load()),
-                ops=[ast.Eq()],
-                comparators=[ast.Constant(value=trigger_iteration)],
-            ),
-            body=invalidation_code,
-            orelse=[],
-        )
+        counter_increment = scaffold[0]
+        guarded_invalidation = scaffold[1]
+        assert isinstance(guarded_invalidation, ast.If)
+        # Replace the placeholder `pass` with actual invalidation code
+        guarded_invalidation.body = invalidation_code
 
         # Prepend counter + guarded invalidation, then original loop body
         node.body = [counter_increment, guarded_invalidation] + node.body

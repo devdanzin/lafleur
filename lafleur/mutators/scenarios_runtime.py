@@ -43,24 +43,9 @@ class GCInjector(ast.NodeTransformer):
             if chosen_threshold is None:
                 chosen_threshold = random.randint(1, 150)
 
-            # 2. Create the AST nodes for 'import gc' and 'gc.set_threshold(...)'
-            import_node = ast.Import(names=[ast.alias(name="gc")])
-
-            set_threshold_node = ast.Expr(
-                value=ast.Call(
-                    func=ast.Attribute(
-                        value=ast.Name(id="gc", ctx=ast.Load()),
-                        attr="set_threshold",
-                        ctx=ast.Load(),
-                    ),
-                    args=[ast.Constant(value=chosen_threshold)],
-                    keywords=[],
-                )
-            )
-
-            # 3. Prepend the new nodes to the function's body
-            node.body.insert(0, set_threshold_node)
-            node.body.insert(0, import_node)
+            # 2. Create and inject the AST nodes
+            gc_nodes = ast.parse(f"import gc\ngc.set_threshold({chosen_threshold})").body
+            node.body[0:0] = gc_nodes  # Prepend
             ast.fix_missing_locations(node)
 
         return node
@@ -305,8 +290,8 @@ class WeakRefCallbackChaos(ast.NodeTransformer):
             ).body
 
             # 3. Inject the entire scenario (unchanged)
-            node.body.insert(0, ast.Import(names=[ast.alias(name="gc")]))
-            node.body.insert(0, ast.Import(names=[ast.alias(name="weakref")]))
+            node.body.insert(0, ast.parse("import gc").body[0])
+            node.body.insert(0, ast.parse("import weakref").body[0])
 
             injection_point = random.randint(2, len(node.body))
             full_injection = [callback_ast, class_ast] + scenario_ast
@@ -318,119 +303,39 @@ class WeakRefCallbackChaos(ast.NodeTransformer):
 
 def _create_type_corruption_node(target_var: str, **kwargs) -> list[ast.stmt]:
     """Generate an AST node to corrupt the type of a variable (e.g., `x = 'string'`)."""
-    corruption_value = random.choice(
-        [
-            ast.Constant(value="corrupted by string"),
-            ast.Constant(value=None),
-            ast.Constant(value=123.456),
-        ]
-    )
-    return [ast.Assign(targets=[ast.Name(id=target_var, ctx=ast.Store())], value=corruption_value)]
+    corruption_value = random.choice(["'corrupted by string'", "None", "123.456"])
+    return ast.parse(f"{target_var} = {corruption_value}").body
 
 
 def _create_uop_attribute_deletion_node(target_var: str, **kwargs) -> list[ast.stmt]:
     """Generate an AST node to delete an attribute (e.g., `del obj.x`)."""
     attr_to_delete = random.choice(["value", "x", "y"])
-    return [
-        ast.Delete(
-            targets=[
-                ast.Attribute(
-                    value=ast.Name(id=target_var, ctx=ast.Load()),
-                    attr=attr_to_delete,
-                    ctx=ast.Del(),
-                )
-            ]
-        )
-    ]
+    return ast.parse(f"del {target_var}.{attr_to_delete}").body
 
 
 def _create_method_patch_node(target_var: str, **kwargs) -> list[ast.stmt]:
     """Generate an AST node to monkey-patch a method on a class."""
     method_to_patch = random.choice(["get_value", "meth", "__repr__"])
-    lambda_payload = ast.Lambda(
-        args=ast.arguments(
-            posonlyargs=[],
-            args=[],
-            vararg=ast.arg(arg="a"),
-            kwarg=ast.arg(arg="kw"),
-            kw_defaults=[],
-            defaults=[],
-        ),
-        body=ast.Constant(value="patched!"),
-    )
-    return [
-        ast.Assign(
-            targets=[
-                ast.Attribute(
-                    value=ast.Attribute(
-                        value=ast.Name(id=target_var, ctx=ast.Load()),
-                        attr="__class__",
-                        ctx=ast.Load(),
-                    ),
-                    attr=method_to_patch,
-                    ctx=ast.Store(),
-                )
-            ],
-            value=lambda_payload,
-        )
-    ]
+    return ast.parse(f"{target_var}.__class__.{method_to_patch} = lambda *a, **kw: 'patched!'").body
 
 
 def _create_dict_swap_node(var1_name: str, var2_name: str, **kwargs) -> list[ast.stmt]:
     """Generate an AST node to swap the __dict__ of two objects."""
-    return [
-        ast.Assign(
-            targets=[
-                ast.Tuple(
-                    elts=[
-                        ast.Attribute(
-                            value=ast.Name(id=var1_name, ctx=ast.Load()),
-                            attr="__dict__",
-                            ctx=ast.Store(),
-                        ),
-                        ast.Attribute(
-                            value=ast.Name(id=var2_name, ctx=ast.Load()),
-                            attr="__dict__",
-                            ctx=ast.Store(),
-                        ),
-                    ],
-                    ctx=ast.Store(),
-                )
-            ],
-            value=ast.Tuple(
-                elts=[
-                    ast.Attribute(
-                        value=ast.Name(id=var2_name, ctx=ast.Load()),
-                        attr="__dict__",
-                        ctx=ast.Load(),
-                    ),
-                    ast.Attribute(
-                        value=ast.Name(id=var1_name, ctx=ast.Load()),
-                        attr="__dict__",
-                        ctx=ast.Load(),
-                    ),
-                ],
-                ctx=ast.Load(),
-            ),
-        )
-    ]
+    return ast.parse(
+        f"{var1_name}.__dict__, {var2_name}.__dict__ = {var2_name}.__dict__, {var1_name}.__dict__"
+    ).body
 
 
 def _create_class_reassignment_node(target_var: str, **kwargs) -> list[ast.stmt]:
     """Generate AST nodes to define a new class and reassign `obj.__class__`."""
-    new_class_name = f"SwappedClass_{random.randint(1000, 9999)}"
-    class_def_node = ast.ClassDef(
-        name=new_class_name, bases=[], keywords=[], body=[ast.Pass()], decorator_list=[]
-    )
-    assign_node = ast.Assign(
-        targets=[
-            ast.Attribute(
-                value=ast.Name(id=target_var, ctx=ast.Load()), attr="__class__", ctx=ast.Store()
-            )
-        ],
-        value=ast.Name(id=new_class_name, ctx=ast.Load()),
-    )
-    return [class_def_node, assign_node]
+    uid = random.randint(1000, 9999)
+    return ast.parse(
+        dedent(f"""
+        class SwappedClass_{uid}:
+            pass
+        {target_var}.__class__ = SwappedClass_{uid}
+    """)
+    ).body
 
 
 class SideEffectInjector(ast.NodeTransformer):
@@ -616,18 +521,16 @@ class StressPatternInjector(ast.NodeTransformer):
             # Wrapping ensures the harness continues executing so the JIT
             # can still observe the rest of the function.
             if node.body:
-                try_node = ast.Try(
-                    body=snippet_nodes,
-                    handlers=[
-                        ast.ExceptHandler(
-                            type=ast.Name(id="Exception", ctx=ast.Load()),
-                            name=None,
-                            body=[ast.Pass()],
-                        )
-                    ],
-                    orelse=[],
-                    finalbody=[],
-                )
+                try_node = ast.parse(
+                    dedent("""
+                    try:
+                        pass
+                    except Exception:
+                        pass
+                """)
+                ).body[0]
+                assert isinstance(try_node, ast.Try)
+                try_node.body = snippet_nodes
                 insert_pos = random.randint(0, len(node.body))
                 node.body.insert(insert_pos, try_node)
 

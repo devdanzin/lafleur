@@ -545,8 +545,8 @@ class CoroutineStateCorruptor(ast.NodeTransformer):
 
             # 4. Inject the entire scenario
             # Ensure imports are present
-            node.body.insert(0, ast.Import(names=[ast.alias(name="sys")]))
-            node.body.insert(0, ast.Import(names=[ast.alias(name="asyncio")]))
+            node.body.insert(0, ast.parse("import sys").body[0])
+            node.body.insert(0, ast.parse("import asyncio").body[0])
 
             injection_point = random.randint(2, len(node.body))
             full_injection = [corruptor_ast, coroutine_ast] + trigger_ast
@@ -597,24 +597,12 @@ class ContextManagerInjector(ast.NodeTransformer):
                     file=sys.stderr,
                 )
                 # Strategy A: contextlib.nullcontext()
-                # Always insert import (AST nodes use identity comparison, not equality)
-                import_node = ast.Import(names=[ast.alias(name="contextlib")])
-                node.body.insert(0, import_node)
+                node.body.insert(0, ast.parse("import contextlib").body[0])
 
-                # Create with statement
-                context_expr = ast.Call(
-                    func=ast.Attribute(
-                        value=ast.Name(id="contextlib", ctx=ast.Load()),
-                        attr="nullcontext",
-                        ctx=ast.Load(),
-                    ),
-                    args=[],
-                    keywords=[],
-                )
-                with_node: ast.stmt = ast.With(
-                    items=[ast.withitem(context_expr=context_expr, optional_vars=None)],
-                    body=statements_to_wrap,
-                )
+                # Parse with-statement template, then splice in the actual body
+                with_node = ast.parse("with contextlib.nullcontext():\n    pass").body[0]
+                assert isinstance(with_node, ast.With)
+                with_node.body = statements_to_wrap
 
             elif strategy == "resource":
                 print(
@@ -622,33 +610,14 @@ class ContextManagerInjector(ast.NodeTransformer):
                     file=sys.stderr,
                 )
                 # Strategy B: open(os.devnull, 'w')
-                # Always insert import (AST nodes use identity comparison, not equality)
-                import_node = ast.Import(names=[ast.alias(name="os")])
-                node.body.insert(0, import_node)
+                node.body.insert(0, ast.parse("import os").body[0])
 
-                # Create with statement
-                context_expr = ast.Call(
-                    func=ast.Name(id="open", ctx=ast.Load()),
-                    args=[
-                        ast.Attribute(
-                            value=ast.Name(id="os", ctx=ast.Load()),
-                            attr="devnull",
-                            ctx=ast.Load(),
-                        ),
-                        ast.Constant(value="w"),
-                    ],
-                    keywords=[],
-                )
-                # Store in variable to avoid issues
-                with_node = ast.With(
-                    items=[
-                        ast.withitem(
-                            context_expr=context_expr,
-                            optional_vars=ast.Name(id=f"_ctx_{uid}", ctx=ast.Store()),
-                        )
-                    ],
-                    body=statements_to_wrap,
-                )
+                # Parse with-statement template, then splice in the actual body
+                with_node = ast.parse(f"with open(os.devnull, 'w') as _ctx_{uid}:\n    pass").body[
+                    0
+                ]
+                assert isinstance(with_node, ast.With)
+                with_node.body = statements_to_wrap
 
             else:  # strategy == "evil"
                 print(
@@ -683,31 +652,21 @@ class ContextManagerInjector(ast.NodeTransformer):
                         break
                 node.body.insert(insert_idx, evil_class_ast)
 
-                # Create with statement wrapped in try/except
-                context_expr = ast.Call(
-                    func=ast.Name(id=f"EvilContext_{uid}", ctx=ast.Load()),
-                    args=[],
-                    keywords=[],
-                )
+                # Parse the try/except wrapped with-statement, then splice in actual body
+                with_body_wrapped = ast.parse(f"with EvilContext_{uid}():\n    pass").body[0]
+                assert isinstance(with_body_wrapped, ast.With)
+                with_body_wrapped.body = statements_to_wrap
 
-                with_body_wrapped = ast.With(
-                    items=[ast.withitem(context_expr=context_expr, optional_vars=None)],
-                    body=statements_to_wrap,
-                )
-
-                # Wrap the entire with statement in try/except to handle evil behavior
-                with_node = ast.Try(
-                    body=[with_body_wrapped],
-                    handlers=[
-                        ast.ExceptHandler(
-                            type=ast.Name(id="Exception", ctx=ast.Load()),
-                            name=None,
-                            body=[ast.Pass()],
-                        )
-                    ],
-                    orelse=[],
-                    finalbody=[],
-                )
+                with_node = ast.parse(
+                    dedent("""
+                    try:
+                        pass
+                    except Exception:
+                        pass
+                """)
+                ).body[0]
+                assert isinstance(with_node, ast.Try)
+                with_node.body = [with_body_wrapped]
 
             # Replace the slice with the wrapped version
             # Adjust start_idx because we inserted exactly one node before the slice

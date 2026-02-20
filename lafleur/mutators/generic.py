@@ -492,30 +492,27 @@ class ForLoopInjector(ast.NodeTransformer):
             # Choose between range(), a list, or a tuple
             iterable_type = random.choice(["range", "list", "tuple"])
 
-            iterator_node: ast.expr
             if iterable_type == "range":
-                iterator_node = ast.Call(
-                    func=ast.Name(id="range", ctx=ast.Load()),
-                    args=[ast.Constant(value=random.randint(50, 200))],
-                    keywords=[],
-                )
+                count = random.randint(50, 200)
+                for_node = ast.parse(f"for {loop_var_name} in range({count}):\n    pass").body[0]
+                assert isinstance(for_node, ast.For)
+                for_node.body = [node]
+                return for_node
             else:  # list or tuple
-                elements: list[ast.expr] = [
-                    ast.Constant(value=i) for i in range(random.randint(5, 20))
-                ]
+                num_elements = random.randint(5, 20)
+                elements: list[ast.expr] = [ast.Constant(value=i) for i in range(num_elements)]
                 if iterable_type == "list":
-                    iterator_node = ast.List(elts=elements, ctx=ast.Load())
+                    iterator_node: ast.expr = ast.List(elts=elements, ctx=ast.Load())
                 else:  # tuple
                     iterator_node = ast.Tuple(elts=elements, ctx=ast.Load())
 
-            # Create the new For node, with the original statement as its body
-            for_node = ast.For(
-                target=ast.Name(id=loop_var_name, ctx=ast.Store()),
-                iter=iterator_node,
-                body=[node],
-                orelse=[],
-            )
-            return for_node
+                for_node = ast.For(
+                    target=ast.Name(id=loop_var_name, ctx=ast.Store()),
+                    iter=iterator_node,
+                    body=[node],
+                    orelse=[],
+                )
+                return for_node
         return node
 
     def visit_Assign(self, node: ast.Assign) -> ast.stmt | None:
@@ -1704,28 +1701,14 @@ class ImportChaosMutator(ast.NodeTransformer):
         # Create import statements wrapped in try/except
         import_nodes = []
         for module_name in modules_to_import:
-            # Create the import statement
-            import_stmt = ast.Import(names=[ast.alias(name=module_name, asname=None)])
-
-            # Wrap in try/except to handle ImportError and general exceptions
-            try_node = ast.Try(
-                body=[import_stmt],
-                handlers=[
-                    ast.ExceptHandler(
-                        type=ast.Tuple(
-                            elts=[
-                                ast.Name(id="ImportError", ctx=ast.Load()),
-                                ast.Name(id="Exception", ctx=ast.Load()),
-                            ],
-                            ctx=ast.Load(),
-                        ),
-                        name=None,
-                        body=[ast.Pass()],
-                    )
-                ],
-                orelse=[],
-                finalbody=[],
-            )
+            try_node = ast.parse(
+                dedent(f"""
+                try:
+                    import {module_name}
+                except (ImportError, Exception):
+                    pass
+            """)
+            ).body[0]
             import_nodes.append(try_node)
 
         if import_nodes:

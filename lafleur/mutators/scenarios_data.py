@@ -1516,73 +1516,23 @@ class StackCacheThrasher(ast.NodeTransformer):
             )
 
             # Step A: Initialize 8 local variables
-            init_stmts = []
-            for i in range(8):
-                var_name = f"_st_{i}"
-                assign = ast.Assign(
-                    targets=[ast.Name(id=var_name, ctx=ast.Store())],
-                    value=ast.Constant(value=i),
-                )
-                init_stmts.append(assign)
+            init_stmts = ast.parse(
+                dedent("""
+                _st_0 = 0
+                _st_1 = 1
+                _st_2 = 2
+                _st_3 = 3
+                _st_4 = 4
+                _st_5 = 5
+                _st_6 = 6
+                _st_7 = 7
+            """)
+            ).body
 
             # Step B: Create right-associative expression
-            # _ = _st_0 + (_st_1 - (_st_2 * (_st_3 | (_st_4 & (_st_5 ^ (_st_6 + _st_7))))))
-
-            # Build from innermost to outermost
-            # Level 7 (innermost): _st_6 + _st_7
-            expr = ast.BinOp(
-                left=ast.Name(id="_st_6", ctx=ast.Load()),
-                op=ast.Add(),
-                right=ast.Name(id="_st_7", ctx=ast.Load()),
-            )
-
-            # Level 6: _st_5 ^ (...)
-            expr = ast.BinOp(
-                left=ast.Name(id="_st_5", ctx=ast.Load()),
-                op=ast.BitXor(),
-                right=expr,
-            )
-
-            # Level 5: _st_4 & (...)
-            expr = ast.BinOp(
-                left=ast.Name(id="_st_4", ctx=ast.Load()),
-                op=ast.BitAnd(),
-                right=expr,
-            )
-
-            # Level 4: _st_3 | (...)
-            expr = ast.BinOp(
-                left=ast.Name(id="_st_3", ctx=ast.Load()),
-                op=ast.BitOr(),
-                right=expr,
-            )
-
-            # Level 3: _st_2 * (...)
-            expr = ast.BinOp(
-                left=ast.Name(id="_st_2", ctx=ast.Load()),
-                op=ast.Mult(),
-                right=expr,
-            )
-
-            # Level 2: _st_1 - (...)
-            expr = ast.BinOp(
-                left=ast.Name(id="_st_1", ctx=ast.Load()),
-                op=ast.Sub(),
-                right=expr,
-            )
-
-            # Level 1 (outermost): _st_0 + (...)
-            expr = ast.BinOp(
-                left=ast.Name(id="_st_0", ctx=ast.Load()),
-                op=ast.Add(),
-                right=expr,
-            )
-
-            # Assign to _ (throwaway)
-            thrash_stmt = ast.Assign(
-                targets=[ast.Name(id="_", ctx=ast.Store())],
-                value=expr,
-            )
+            thrash_stmt = ast.parse(
+                "_ = _st_0 + (_st_1 - (_st_2 * (_st_3 | (_st_4 & (_st_5 ^ (_st_6 + _st_7))))))"
+            ).body[0]
 
             # Inject: initializations at the beginning, thrashing statement in the middle/end
             injection_point = len(node.body) // 2 if len(node.body) > 1 else len(node.body)
@@ -1621,81 +1571,45 @@ class BoundaryComparisonMutator(ast.NodeTransformer):
             )
 
             # Step A: Initialize edge-case floats
-            init_stmts = [
-                # NaN value
-                ast.Assign(
-                    targets=[ast.Name(id="_bnd_nan", ctx=ast.Store())],
-                    value=ast.Call(
-                        func=ast.Name(id="float", ctx=ast.Load()),
-                        args=[ast.Constant(value="nan")],
-                        keywords=[],
-                    ),
-                ),
-                # Infinity
-                ast.Assign(
-                    targets=[ast.Name(id="_bnd_inf", ctx=ast.Store())],
-                    value=ast.Call(
-                        func=ast.Name(id="float", ctx=ast.Load()),
-                        args=[ast.Constant(value="inf")],
-                        keywords=[],
-                    ),
-                ),
-                # Negative zero
-                ast.Assign(
-                    targets=[ast.Name(id="_bnd_nzero", ctx=ast.Store())],
-                    value=ast.UnaryOp(op=ast.USub(), operand=ast.Constant(value=0.0)),
-                ),
-                # Positive zero
-                ast.Assign(
-                    targets=[ast.Name(id="_bnd_zero", ctx=ast.Store())],
-                    value=ast.Constant(value=0.0),
-                ),
-                # Dummy counter
-                ast.Assign(
-                    targets=[ast.Name(id="_bnd_dummy", ctx=ast.Store())],
-                    value=ast.Constant(value=0),
-                ),
-            ]
+            init_stmts = ast.parse(
+                dedent("""
+                _bnd_nan = float('nan')
+                _bnd_inf = float('inf')
+                _bnd_nzero = -0.0
+                _bnd_zero = 0.0
+                _bnd_dummy = 0
+            """)
+            ).body
 
-            # Step B: Create comparison blocks
-            comparison_stmts = []
-
-            # Comparison operators to test
-            operators = [
-                ast.Eq(),  # ==
-                ast.NotEq(),  # !=
-                ast.Lt(),  # <
-                ast.Gt(),  # >
-            ]
-
-            # Combinations to test
-            combinations = [
-                ("_bnd_nan", "_bnd_nan"),  # NaN vs NaN
-                ("_bnd_nan", "_bnd_inf"),  # NaN vs Inf
-                ("_bnd_zero", "_bnd_nzero"),  # 0.0 vs -0.0
-            ]
-
-            # Generate If statements for each operator/combination pair
-            for op in operators:
-                for left_var, right_var in combinations:
-                    # Create comparison: if left_var op right_var:
-                    if_stmt = ast.If(
-                        test=ast.Compare(
-                            left=ast.Name(id=left_var, ctx=ast.Load()),
-                            ops=[op],
-                            comparators=[ast.Name(id=right_var, ctx=ast.Load())],
-                        ),
-                        body=[
-                            # _bnd_dummy += 1
-                            ast.AugAssign(
-                                target=ast.Name(id="_bnd_dummy", ctx=ast.Store()),
-                                op=ast.Add(),
-                                value=ast.Constant(value=1),
-                            )
-                        ],
-                        orelse=[],
-                    )
-                    comparison_stmts.append(if_stmt)
+            # Step B: Create comparison if-blocks
+            comparison_stmts = ast.parse(
+                dedent("""
+                if _bnd_nan == _bnd_nan:
+                    _bnd_dummy += 1
+                if _bnd_nan != _bnd_nan:
+                    _bnd_dummy += 1
+                if _bnd_nan < _bnd_inf:
+                    _bnd_dummy += 1
+                if _bnd_nan > _bnd_inf:
+                    _bnd_dummy += 1
+                if _bnd_nan == _bnd_inf:
+                    _bnd_dummy += 1
+                if _bnd_nan != _bnd_inf:
+                    _bnd_dummy += 1
+                if _bnd_zero == _bnd_nzero:
+                    _bnd_dummy += 1
+                if _bnd_zero != _bnd_nzero:
+                    _bnd_dummy += 1
+                if _bnd_zero < _bnd_nzero:
+                    _bnd_dummy += 1
+                if _bnd_zero > _bnd_nzero:
+                    _bnd_dummy += 1
+                if _bnd_nan < _bnd_nan:
+                    _bnd_dummy += 1
+                if _bnd_nan > _bnd_nan:
+                    _bnd_dummy += 1
+            """)
+            ).body
 
             # Inject: initializations + comparisons in the middle of function
             injection_point = len(node.body) // 2 if len(node.body) > 1 else len(node.body)

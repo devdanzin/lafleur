@@ -64,50 +64,26 @@ class TypeInstabilityInjector(ast.NodeTransformer):
             file=sys.stderr,
         )
 
-        # 1. Create the poison assignment: target_var = "corrupted"
-        poison_assignment = ast.Assign(
-            targets=[ast.Name(id=target_var_name, ctx=ast.Store())],
-            value=ast.Constant(value="corrupted by type instability"),
-        )
-        # 2. Create the trigger: if i == N: ...
-        trigger_if = ast.If(
-            test=ast.Compare(
-                left=ast.Name(id=loop_var_name, ctx=ast.Load()),
-                ops=[ast.Eq()],
-                comparators=[ast.Constant(value=random.randint(100, 400))],
-            ),
-            body=[poison_assignment],
-            orelse=[],
-        )
+        trigger_value = random.randint(100, 400)
 
-        # 3. Create the recovery assignment: target_var = i
-        recovery_assignment = ast.Assign(
-            targets=[ast.Name(id=target_var_name, ctx=ast.Store())],
-            value=ast.Name(id=loop_var_name, ctx=ast.Load()),
-        )
+        # Build trigger + placeholder try/except
+        wrapper = ast.parse(
+            dedent(f"""
+            try:
+                if {loop_var_name} == {trigger_value}:
+                    {target_var_name} = "corrupted by type instability"
+                pass  # placeholder for original loop body
+            except (TypeError, AttributeError):
+                {target_var_name} = {loop_var_name}
+        """)
+        ).body[0]
 
-        # 4. Wrap the entire original loop body in a try...except... block
-        new_body = [trigger_if] + node.body
-        try_block = ast.Try(
-            body=new_body,
-            handlers=[
-                ast.ExceptHandler(
-                    type=ast.Tuple(
-                        elts=[
-                            ast.Name(id="TypeError", ctx=ast.Load()),
-                            ast.Name(id="AttributeError", ctx=ast.Load()),
-                        ],
-                        ctx=ast.Load(),
-                    ),
-                    name=None,
-                    body=[recovery_assignment],
-                )
-            ],
-            orelse=[],
-            finalbody=[],
-        )
+        # Replace placeholder with trigger + original loop body
+        # wrapper.body[0] is the if statement, wrapper.body[1] is the pass placeholder
+        assert isinstance(wrapper, ast.Try)
+        wrapper.body = [wrapper.body[0]] + node.body
 
-        node.body = [try_block]
+        node.body = [wrapper]
 
 
 class InlineCachePolluter(ast.NodeTransformer):
@@ -1181,13 +1157,9 @@ class ManyVarsInjector(ast.NodeTransformer):
             num_vars_to_add = 260  # More than 256 to force EXTENDED_ARG
             p_prefix = f"mv_{random.randint(1000, 9999)}"
 
-            new_var_nodes = []
-            for i in range(num_vars_to_add):
-                var_name = f"{p_prefix}_{i}"
-                assign_node = ast.Assign(
-                    targets=[ast.Name(id=var_name, ctx=ast.Store())], value=ast.Constant(value=i)
-                )
-                new_var_nodes.append(assign_node)
+            # Build all 260 assignments as a single string and parse once
+            var_lines = "\n".join(f"{p_prefix}_{i} = {i}" for i in range(num_vars_to_add))
+            new_var_nodes = ast.parse(var_lines).body
 
             # Prepend the new variable declarations to the function's body.
             node.body = new_var_nodes + node.body

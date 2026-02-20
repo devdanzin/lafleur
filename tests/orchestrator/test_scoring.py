@@ -10,6 +10,7 @@ import unittest
 from unittest.mock import MagicMock, Mock, patch
 
 from lafleur.scoring import NewCoverageInfo, InterestingnessScorer, ScoringManager
+from lafleur.types import NewCoverageResult
 
 
 class TestNewCoverageInfo(unittest.TestCase):
@@ -380,7 +381,7 @@ class TestAnalyzeRunMutationInfo(unittest.TestCase):
         )
 
         # The returned mutation_info should contain jit_stats
-        self.assertIn("jit_stats", result["mutation_info"])
+        self.assertIn("jit_stats", result.mutation_info)
         # But the caller's dict should be unchanged
         self.assertEqual(caller_mutation_info, original_mutation_info)
         self.assertNotIn("jit_stats", caller_mutation_info)
@@ -421,12 +422,10 @@ class TestPrepareNewCoverageResult(unittest.TestCase):
             mutation_seed=42,
         )
 
-        self.assertEqual(result["status"], "NEW_COVERAGE")
-        self.assertIn("core_code", result)
-        self.assertIn("content_hash", result)
-        self.assertIn("coverage_hash", result)
-        self.assertEqual(result["parent_id"], "parent.py")
-        self.assertEqual(result["mutation_seed"], 42)
+        self.assertEqual(result.status, "NEW_COVERAGE")
+        self.assertIsInstance(result, NewCoverageResult)
+        self.assertEqual(result.parent_id, "parent.py")
+        self.assertEqual(result.mutation_seed, 42)
         self.scoring_manager._update_global_coverage.assert_called_once()
 
     def test_duplicate_returns_no_change(self):
@@ -445,7 +444,7 @@ class TestPrepareNewCoverageResult(unittest.TestCase):
             mutation_seed=0,
         )
 
-        self.assertEqual(result["status"], "NO_CHANGE")
+        self.assertEqual(result.status, "NO_CHANGE")
         self.scoring_manager._update_global_coverage.assert_not_called()
 
     def test_density_clamping_applied(self):
@@ -461,7 +460,7 @@ class TestPrepareNewCoverageResult(unittest.TestCase):
         )
 
         # Clamped: min(10.0 * 5.0, 1000.0) = 50.0, then decay: 50.0 * 0.95 = 47.5
-        saved_density = result["mutation_info"]["jit_stats"]["max_exit_density"]
+        saved_density = result.mutation_info["jit_stats"]["max_exit_density"]
         self.assertAlmostEqual(saved_density, 47.5)
 
     def test_delta_density_clamped_to_parent_growth_factor(self):
@@ -483,7 +482,7 @@ class TestPrepareNewCoverageResult(unittest.TestCase):
         )
 
         # Clamped: min(1.0 * 5.0, 100.0) = 5.0, then decay: 5.0 * 0.95 = 4.75
-        saved = result["mutation_info"]["jit_stats"]["child_delta_max_exit_density"]
+        saved = result.mutation_info["jit_stats"]["child_delta_max_exit_density"]
         self.assertAlmostEqual(saved, 4.75)
 
     def test_delta_density_no_parent_trusts_child(self):
@@ -505,7 +504,7 @@ class TestPrepareNewCoverageResult(unittest.TestCase):
         )
 
         # No parent delta → no clamping. Decay: 3.0 * 0.95 = 2.85
-        saved = result["mutation_info"]["jit_stats"]["child_delta_max_exit_density"]
+        saved = result.mutation_info["jit_stats"]["child_delta_max_exit_density"]
         self.assertAlmostEqual(saved, 2.85)
 
     def test_delta_density_decay_applied(self):
@@ -524,7 +523,7 @@ class TestPrepareNewCoverageResult(unittest.TestCase):
         )
 
         # 2.0 * 0.95 = 1.9
-        saved = result["mutation_info"]["jit_stats"]["child_delta_max_exit_density"]
+        saved = result.mutation_info["jit_stats"]["child_delta_max_exit_density"]
         self.assertAlmostEqual(saved, 1.9)
 
     def test_delta_exits_clamped_to_parent_growth_factor(self):
@@ -546,7 +545,7 @@ class TestPrepareNewCoverageResult(unittest.TestCase):
         )
 
         # Clamped: min(10 * 5.0, 200) = 50, then decay: 50 * 0.95 = 47.5
-        saved = result["mutation_info"]["jit_stats"]["child_delta_total_exits"]
+        saved = result.mutation_info["jit_stats"]["child_delta_total_exits"]
         self.assertAlmostEqual(saved, 47.5)
 
     def test_delta_exits_no_parent_trusts_child(self):
@@ -568,7 +567,7 @@ class TestPrepareNewCoverageResult(unittest.TestCase):
         )
 
         # No parent delta exits → no clamping. Decay: 30 * 0.95 = 28.5
-        saved = result["mutation_info"]["jit_stats"]["child_delta_total_exits"]
+        saved = result.mutation_info["jit_stats"]["child_delta_total_exits"]
         self.assertAlmostEqual(saved, 28.5)
 
     def test_delta_exits_decay_applied(self):
@@ -587,7 +586,7 @@ class TestPrepareNewCoverageResult(unittest.TestCase):
         )
 
         # 100 * 0.95 = 95.0
-        saved = result["mutation_info"]["jit_stats"]["child_delta_total_exits"]
+        saved = result.mutation_info["jit_stats"]["child_delta_total_exits"]
         self.assertAlmostEqual(saved, 95.0)
 
     def test_syntax_error_in_core_code_returns_no_change(self):
@@ -605,7 +604,7 @@ class TestPrepareNewCoverageResult(unittest.TestCase):
             mutation_seed=42,
         )
 
-        self.assertEqual(result["status"], "NO_CHANGE")
+        self.assertEqual(result.status, "NO_CHANGE")
         # Coverage should NOT be committed
         self.scoring_manager._update_global_coverage.assert_not_called()
 
@@ -623,7 +622,7 @@ class TestPrepareNewCoverageResult(unittest.TestCase):
             mutation_seed=42,
         )
 
-        self.assertEqual(result["status"], "NEW_COVERAGE")
+        self.assertEqual(result.status, "NEW_COVERAGE")
 
     def test_original_mutation_info_not_modified_with_delta(self):
         """Confirm mutation_info is still not mutated after delta changes."""
@@ -645,7 +644,7 @@ class TestPrepareNewCoverageResult(unittest.TestCase):
 
         self.assertEqual(caller_copy, original)
         self.assertNotIn("jit_stats", caller_copy)
-        self.assertIn("jit_stats", result["mutation_info"])
+        self.assertIn("jit_stats", result.mutation_info)
 
 
 if __name__ == "__main__":

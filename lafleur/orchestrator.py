@@ -33,6 +33,12 @@ from lafleur.analysis import CrashFingerprinter
 from lafleur.artifacts import ArtifactManager, TelemetryManager
 from lafleur.execution import ExecutionManager
 from lafleur.scoring import ScoringManager
+from lafleur.types import (
+    AnalysisResult,
+    CrashResult,
+    DivergenceResult,
+    NewCoverageResult,
+)
 from lafleur.learning import MutatorScoreTracker
 from lafleur.mutation_controller import MutationController
 from lafleur.mutators import ASTMutator
@@ -403,7 +409,7 @@ class LafleurOrchestrator:
 
     def _handle_analysis_data(
         self,
-        analysis_data: dict,
+        analysis_data: AnalysisResult,
         i: int,
         parent_metadata: dict,
         nojit_cv: float | None,
@@ -415,10 +421,8 @@ class LafleurOrchestrator:
             A tuple of (flow_control, new_filename). new_filename is set for
             NEW_COVERAGE and DIVERGENCE statuses, None otherwise.
         """
-        status = analysis_data.get("status")
-
-        if status in ("DIVERGENCE", "NEW_COVERAGE"):
-            mutation_info = analysis_data.get("mutation_info", {})
+        if isinstance(analysis_data, (DivergenceResult, NewCoverageResult)):
+            mutation_info = analysis_data.mutation_info
             strategy = mutation_info.get("strategy")
             transformers = mutation_info.get("transformers", [])
             if strategy and transformers:
@@ -427,27 +431,27 @@ class LafleurOrchestrator:
                 if filtered:
                     self.score_tracker.record_success(strategy, filtered)
 
-        if status == "DIVERGENCE":
+        if isinstance(analysis_data, DivergenceResult):
             self.run_stats["divergences_found"] = self.run_stats.get("divergences_found", 0) + 1
             self.mutations_since_last_find = 0
             print(
                 f"  [***] SUCCESS! Mutation #{i + 1} found a correctness divergence. Moving to next parent."
             )
             return FlowControl.BREAK, "divergence"
-        elif status == "CRASH":
+        elif isinstance(analysis_data, CrashResult):
             self.run_stats["crashes_found"] = self.run_stats.get("crashes_found", 0) + 1
 
             # --- Crash attribution ---
-            mutation_info = analysis_data.get("mutation_info", {})
-            crash_strategy = mutation_info.get("strategy", "")
-            crash_transformers = mutation_info.get("transformers", [])
+            crash_mutation_info = analysis_data.mutation_info
+            crash_strategy = crash_mutation_info.get("strategy", "")
+            crash_transformers = crash_mutation_info.get("transformers", [])
 
             if crash_strategy or crash_transformers:
                 hygiene_names = {cls.__name__ for cls, _ in MutationController.HYGIENE_MUTATORS}
                 filtered_transformers = [t for t in crash_transformers if t not in hygiene_names]
 
                 # Walk lineage from the parent
-                crash_parent_id = analysis_data.get("parent_id")
+                crash_parent_id = analysis_data.parent_id
                 lineage_mutations = self._walk_crash_lineage(crash_parent_id)
 
                 # Filter hygiene from lineage too
@@ -464,7 +468,7 @@ class LafleurOrchestrator:
                         }
                     )
 
-                fingerprint = analysis_data.get("fingerprint", "")
+                fingerprint = analysis_data.fingerprint or ""
                 self.score_tracker.record_crash_attribution(
                     direct_strategy=crash_strategy,
                     direct_transformers=filtered_transformers,
@@ -474,24 +478,24 @@ class LafleurOrchestrator:
                 )
 
             return FlowControl.CONTINUE, None
-        elif status == "NEW_COVERAGE":
+        elif isinstance(analysis_data, NewCoverageResult):
             print(f"  [***] SUCCESS! Mutation #{i + 1} found new coverage. Moving to next parent.")
             new_filename = self.corpus_manager.add_new_file(
-                core_code=analysis_data["core_code"],
-                baseline_coverage=analysis_data["baseline_coverage"],
-                content_hash=analysis_data["content_hash"],
-                coverage_hash=analysis_data["coverage_hash"],
-                execution_time_ms=analysis_data["execution_time_ms"],
-                parent_id=analysis_data["parent_id"],
-                mutation_info=analysis_data["mutation_info"],
-                mutation_seed=analysis_data["mutation_seed"],
+                core_code=analysis_data.core_code,
+                baseline_coverage=analysis_data.baseline_coverage,
+                content_hash=analysis_data.content_hash,
+                coverage_hash=analysis_data.coverage_hash,
+                execution_time_ms=analysis_data.execution_time_ms,
+                parent_id=analysis_data.parent_id,
+                mutation_info=analysis_data.mutation_info,
+                mutation_seed=analysis_data.mutation_seed,
                 build_lineage_func=self.scoring_manager._build_lineage_profile,
             )
 
             self._check_timing_regression(analysis_data, new_filename, nojit_cv)
 
             return FlowControl.BREAK, new_filename
-        else:  # NO_CHANGE
+        else:  # NoChangeResult
             parent_metadata["mutations_since_last_find"] = (
                 parent_metadata.get("mutations_since_last_find", 0) + 1
             )
@@ -539,7 +543,7 @@ class LafleurOrchestrator:
 
     def _check_timing_regression(
         self,
-        analysis_data: dict,
+        analysis_data: NewCoverageResult,
         new_filename: str,
         nojit_cv: float | None,
     ) -> None:
@@ -547,8 +551,8 @@ class LafleurOrchestrator:
         if not self.timing_fuzz:
             return
 
-        jit_time = analysis_data.get("jit_avg_time_ms")
-        nojit_time = analysis_data.get("nojit_avg_time_ms")
+        jit_time = analysis_data.jit_avg_time_ms
+        nojit_time = analysis_data.nojit_avg_time_ms
         if jit_time is None or nojit_time is None or nojit_time <= 0:
             return
 
@@ -774,7 +778,7 @@ class LafleurOrchestrator:
                 )
 
                 if flow_control in (FlowControl.BREAK, FlowControl.CONTINUE):
-                    if analysis_data.get("status") == "NEW_COVERAGE":
+                    if isinstance(analysis_data, NewCoverageResult):
                         found_new_coverage = True
 
                         # --- Update stats on every find ---

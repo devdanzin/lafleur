@@ -14,6 +14,7 @@ from textwrap import dedent
 from unittest.mock import MagicMock, patch
 
 from lafleur.mutation_controller import MutationController
+from lafleur.types import DivergenceResult
 
 
 class TestApplyMutationStrategy(unittest.TestCase):
@@ -1002,9 +1003,9 @@ class TestRecordSuccessHygieneFiltering(unittest.TestCase):
         orch.mutations_since_last_find = 0
         orch.score_tracker = MagicMock()
 
-        analysis_data = {
-            "status": "DIVERGENCE",
-            "mutation_info": {
+        analysis_data = DivergenceResult(
+            status="DIVERGENCE",
+            mutation_info={
                 "strategy": "havoc",
                 "transformers": [
                     "OperatorSwapper",
@@ -1014,7 +1015,7 @@ class TestRecordSuccessHygieneFiltering(unittest.TestCase):
                     "RedundantStatementSanitizer",
                 ],
             },
-        }
+        )
 
         orch._handle_analysis_data(analysis_data, i=0, parent_metadata={}, nojit_cv=None)
 

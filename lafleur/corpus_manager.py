@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING, Any, Callable
 
 from lafleur.coverage import save_coverage_state, CoverageManager
 from lafleur.health import FILE_SIZE_WARNING_THRESHOLD
-from lafleur.types import MutationInfo
+from lafleur.types import MutationInfo, NewCoverageResult
 from lafleur.utils import ExecutionResult, FUZZING_ENV
 
 if TYPE_CHECKING:
@@ -257,16 +257,16 @@ class CorpusManager:
                     parent_file_size=0,
                     parent_lineage_edge_count=0,
                 )
-                if analysis_data["status"] == "NEW_COVERAGE":
+                if isinstance(analysis_data, NewCoverageResult):
                     self.add_new_file(
-                        core_code=analysis_data["core_code"],
-                        baseline_coverage=analysis_data["baseline_coverage"],
-                        content_hash=analysis_data["content_hash"],
-                        coverage_hash=analysis_data["coverage_hash"],
-                        execution_time_ms=analysis_data["execution_time_ms"],
-                        parent_id=analysis_data["parent_id"],
-                        mutation_info=analysis_data["mutation_info"],
-                        mutation_seed=analysis_data["mutation_seed"],
+                        core_code=analysis_data.core_code,
+                        baseline_coverage=analysis_data.baseline_coverage,
+                        content_hash=analysis_data.content_hash,
+                        coverage_hash=analysis_data.coverage_hash,
+                        execution_time_ms=analysis_data.execution_time_ms,
+                        parent_id=analysis_data.parent_id,
+                        mutation_info=analysis_data.mutation_info,
+                        mutation_seed=analysis_data.mutation_seed,
                         build_lineage_func=orchestrator_build_lineage_func,
                         filename_override=filename,
                     )
@@ -478,16 +478,16 @@ class CorpusManager:
             parent_file_size=0,
             parent_lineage_edge_count=0,
         )
-        if analysis_data["status"] == "NEW_COVERAGE":
+        if isinstance(analysis_data, NewCoverageResult):
             self.add_new_file(
-                core_code=analysis_data["core_code"],
-                baseline_coverage=analysis_data["baseline_coverage"],
-                content_hash=analysis_data["content_hash"],
-                coverage_hash=analysis_data["coverage_hash"],
-                execution_time_ms=analysis_data["execution_time_ms"],
-                parent_id=analysis_data["parent_id"],
-                mutation_info=analysis_data["mutation_info"],
-                mutation_seed=analysis_data["mutation_seed"],
+                core_code=analysis_data.core_code,
+                baseline_coverage=analysis_data.baseline_coverage,
+                content_hash=analysis_data.content_hash,
+                coverage_hash=analysis_data.coverage_hash,
+                execution_time_ms=analysis_data.execution_time_ms,
+                parent_id=analysis_data.parent_id,
+                mutation_info=analysis_data.mutation_info,
+                mutation_seed=analysis_data.mutation_seed,
                 build_lineage_func=orchestrator_build_lineage_func,
             )
 

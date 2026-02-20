@@ -10,6 +10,7 @@ import io
 import shutil
 import tempfile
 import unittest
+from dataclasses import FrozenInstanceError
 from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -24,6 +25,7 @@ from lafleur.orchestrator import (
     _format_run_summary,
     main,
 )
+from lafleur.types import CrashResult, DivergenceResult, NewCoverageResult, NoChangeResult
 
 
 class TestCalculateMutations(unittest.TestCase):
@@ -719,17 +721,17 @@ class TestExecuteMutationAndAnalysisCycle(unittest.TestCase):
         mock_exec_result = MagicMock()
         mock_exec_result.nojit_cv = None
 
-        analysis_data = {
-            "status": "NEW_COVERAGE",
-            "core_code": "x = 1",
-            "baseline_coverage": {},
-            "content_hash": "abc",
-            "coverage_hash": "def",
-            "execution_time_ms": 100,
-            "parent_id": "parent_test.py",
-            "mutation_info": {"strategy": "havoc", "transformers": ["t1"]},
-            "mutation_seed": 101,
-        }
+        analysis_data = NewCoverageResult(
+            status="NEW_COVERAGE",
+            core_code="x = 1",
+            baseline_coverage={},
+            content_hash="abc",
+            coverage_hash="def",
+            execution_time_ms=100,
+            parent_id="parent_test.py",
+            mutation_info={"strategy": "havoc", "transformers": ["t1"]},
+            mutation_seed=101,
+        )
 
         self.orchestrator.corpus_manager = MagicMock()
         self.orchestrator.corpus_manager.add_new_file.return_value = "new_child.py"
@@ -831,17 +833,17 @@ class TestRunStatsKeyErrorWithEmptyStats(unittest.TestCase):
         mock_exec_result = MagicMock()
         mock_exec_result.nojit_cv = None
 
-        analysis_data = {
-            "status": "NEW_COVERAGE",
-            "core_code": "x = 1",
-            "baseline_coverage": {},
-            "content_hash": "abc123",
-            "coverage_hash": "def456",
-            "execution_time_ms": 100,
-            "parent_id": "parent_test.py",
-            "mutation_info": {"strategy": "havoc", "transformers": ["t1"]},
-            "mutation_seed": 101,
-        }
+        analysis_data = NewCoverageResult(
+            status="NEW_COVERAGE",
+            core_code="x = 1",
+            baseline_coverage={},
+            content_hash="abc123",
+            coverage_hash="def456",
+            execution_time_ms=100,
+            parent_id="parent_test.py",
+            mutation_info={"strategy": "havoc", "transformers": ["t1"]},
+            mutation_seed=101,
+        )
 
         self.orchestrator.mutation_controller._calculate_mutations.return_value = 1
         self.orchestrator.mutation_controller._get_nodes_from_parent.return_value = (
@@ -877,17 +879,17 @@ class TestRunStatsKeyErrorWithEmptyStats(unittest.TestCase):
         mock_exec_result = MagicMock()
         mock_exec_result.nojit_cv = None
 
-        analysis_data = {
-            "status": "NEW_COVERAGE",
-            "core_code": "x = 1",
-            "baseline_coverage": {},
-            "content_hash": "abc123",
-            "coverage_hash": "def456",
-            "execution_time_ms": 100,
-            "parent_id": "parent_test.py",
-            "mutation_info": {"strategy": "havoc", "transformers": ["t1"]},
-            "mutation_seed": 101,
-        }
+        analysis_data = NewCoverageResult(
+            status="NEW_COVERAGE",
+            core_code="x = 1",
+            baseline_coverage={},
+            content_hash="abc123",
+            coverage_hash="def456",
+            execution_time_ms=100,
+            parent_id="parent_test.py",
+            mutation_info={"strategy": "havoc", "transformers": ["t1"]},
+            mutation_seed=101,
+        )
 
         self.orchestrator.mutation_controller._calculate_mutations.return_value = 1
         self.orchestrator.mutation_controller._get_nodes_from_parent.return_value = (
@@ -930,7 +932,7 @@ class TestHandleAnalysisDataFlowControl(unittest.TestCase):
 
     def test_divergence_returns_break_with_filename(self):
         """DIVERGENCE status returns FlowControl.BREAK and 'divergence' filename."""
-        data = {"status": "DIVERGENCE", "mutation_info": {}}
+        data = DivergenceResult(status="DIVERGENCE", mutation_info={})
         with patch("sys.stdout", new_callable=io.StringIO):
             flow, filename = self.orchestrator._handle_analysis_data(
                 data, 0, self.parent_metadata, None
@@ -940,7 +942,7 @@ class TestHandleAnalysisDataFlowControl(unittest.TestCase):
 
     def test_crash_returns_continue_no_filename(self):
         """CRASH status returns FlowControl.CONTINUE and None filename."""
-        data = {"status": "CRASH", "mutation_info": {}}
+        data = CrashResult(status="CRASH", mutation_info={}, parent_id=None)
         flow, filename = self.orchestrator._handle_analysis_data(
             data, 0, self.parent_metadata, None
         )
@@ -949,17 +951,17 @@ class TestHandleAnalysisDataFlowControl(unittest.TestCase):
 
     def test_new_coverage_returns_break_with_filename(self):
         """NEW_COVERAGE status returns FlowControl.BREAK and the new filename."""
-        data = {
-            "status": "NEW_COVERAGE",
-            "mutation_info": {},
-            "core_code": "x = 1",
-            "baseline_coverage": {},
-            "content_hash": "abc",
-            "coverage_hash": "def",
-            "execution_time_ms": 100,
-            "parent_id": "parent.py",
-            "mutation_seed": 42,
-        }
+        data = NewCoverageResult(
+            status="NEW_COVERAGE",
+            mutation_info={},
+            core_code="x = 1",
+            baseline_coverage={},
+            content_hash="abc",
+            coverage_hash="def",
+            execution_time_ms=100,
+            parent_id="parent.py",
+            mutation_seed=42,
+        )
         with patch("sys.stdout", new_callable=io.StringIO):
             flow, filename = self.orchestrator._handle_analysis_data(
                 data, 0, self.parent_metadata, None
@@ -969,7 +971,7 @@ class TestHandleAnalysisDataFlowControl(unittest.TestCase):
 
     def test_no_change_returns_none_no_filename(self):
         """NO_CHANGE status returns FlowControl.NONE and None filename."""
-        data = {"status": "NO_CHANGE", "mutation_info": {}}
+        data = NoChangeResult(status="NO_CHANGE")
         flow, filename = self.orchestrator._handle_analysis_data(
             data, 0, self.parent_metadata, None
         )
@@ -977,23 +979,23 @@ class TestHandleAnalysisDataFlowControl(unittest.TestCase):
         self.assertIsNone(filename)
 
     def test_analysis_data_not_mutated(self):
-        """analysis_data dict is not mutated with new_filename key."""
-        data = {
-            "status": "NEW_COVERAGE",
-            "mutation_info": {},
-            "core_code": "x = 1",
-            "baseline_coverage": {},
-            "content_hash": "abc",
-            "coverage_hash": "def",
-            "execution_time_ms": 100,
-            "parent_id": "parent.py",
-            "mutation_seed": 42,
-        }
-        original_keys = set(data.keys())
+        """Frozen dataclass prevents attribute mutation."""
+        data = NewCoverageResult(
+            status="NEW_COVERAGE",
+            mutation_info={},
+            core_code="x = 1",
+            baseline_coverage={},
+            content_hash="abc",
+            coverage_hash="def",
+            execution_time_ms=100,
+            parent_id="parent.py",
+            mutation_seed=42,
+        )
         with patch("sys.stdout", new_callable=io.StringIO):
             self.orchestrator._handle_analysis_data(data, 0, self.parent_metadata, None)
-        self.assertNotIn("new_filename", data)
-        self.assertEqual(set(data.keys()), original_keys)
+        # Frozen dataclass should raise when attempting to set a new attribute
+        with self.assertRaises((AttributeError, FrozenInstanceError)):
+            data.new_filename = "should_fail"
 
 
 class TestPrepareParentContext(unittest.TestCase):
@@ -1437,17 +1439,17 @@ class TestExecuteSingleMutation(unittest.TestCase):
         mock_exec_result = MagicMock()
         mock_exec_result.nojit_cv = None
 
-        analysis_data = {
-            "status": "NEW_COVERAGE",
-            "core_code": "x = 1",
-            "baseline_coverage": {},
-            "content_hash": "abc",
-            "coverage_hash": "def",
-            "execution_time_ms": 100,
-            "parent_id": "parent_test.py",
-            "mutation_info": {"strategy": "havoc", "transformers": ["t1"]},
-            "mutation_seed": 42,
-        }
+        analysis_data = NewCoverageResult(
+            status="NEW_COVERAGE",
+            core_code="x = 1",
+            baseline_coverage={},
+            content_hash="abc",
+            coverage_hash="def",
+            execution_time_ms=100,
+            parent_id="parent_test.py",
+            mutation_info={"strategy": "havoc", "transformers": ["t1"]},
+            mutation_seed=42,
+        )
 
         mock_harness = MagicMock()
         self.orchestrator.mutation_controller.get_mutated_harness.return_value = (
@@ -1472,7 +1474,7 @@ class TestExecuteSingleMutation(unittest.TestCase):
         mock_exec_result = MagicMock()
         mock_exec_result.nojit_cv = None
 
-        analysis_data = {"status": "CRASH", "mutation_info": {}}
+        analysis_data = CrashResult(status="CRASH", mutation_info={}, parent_id=None)
 
         mock_harness = MagicMock()
         self.orchestrator.mutation_controller.get_mutated_harness.return_value = (
@@ -1511,17 +1513,17 @@ class TestExecuteSingleMutation(unittest.TestCase):
         mock_exec_result = MagicMock()
         mock_exec_result.nojit_cv = None
 
-        analysis_data = {
-            "status": "NEW_COVERAGE",
-            "core_code": "x = 1",
-            "baseline_coverage": {},
-            "content_hash": "abc",
-            "coverage_hash": "def",
-            "execution_time_ms": 100,
-            "parent_id": "parent_test.py",
-            "mutation_info": {"strategy": "havoc", "transformers": ["t1"]},
-            "mutation_seed": 42,
-        }
+        analysis_data = NewCoverageResult(
+            status="NEW_COVERAGE",
+            core_code="x = 1",
+            baseline_coverage={},
+            content_hash="abc",
+            coverage_hash="def",
+            execution_time_ms=100,
+            parent_id="parent_test.py",
+            mutation_info={"strategy": "havoc", "transformers": ["t1"]},
+            mutation_seed=42,
+        )
 
         mock_harness = MagicMock()
         self.orchestrator.mutation_controller.get_mutated_harness.return_value = (
@@ -1547,17 +1549,17 @@ class TestExecuteSingleMutation(unittest.TestCase):
         mock_exec_result = MagicMock()
         mock_exec_result.nojit_cv = None
 
-        analysis_data = {
-            "status": "NEW_COVERAGE",
-            "core_code": "x = 1",
-            "baseline_coverage": {},
-            "content_hash": "abc",
-            "coverage_hash": "def",
-            "execution_time_ms": 100,
-            "parent_id": "parent_test.py",
-            "mutation_info": {"strategy": "havoc", "transformers": ["t1"]},
-            "mutation_seed": 42,
-        }
+        analysis_data = NewCoverageResult(
+            status="NEW_COVERAGE",
+            core_code="x = 1",
+            baseline_coverage={},
+            content_hash="abc",
+            coverage_hash="def",
+            execution_time_ms=100,
+            parent_id="parent_test.py",
+            mutation_info={"strategy": "havoc", "transformers": ["t1"]},
+            mutation_seed=42,
+        )
 
         mock_harness = MagicMock()
         self.orchestrator.mutation_controller.get_mutated_harness.return_value = (
@@ -1905,10 +1907,26 @@ class TestCheckTimingRegression(unittest.TestCase):
         self.orchestrator.run_stats = {}
         self.orchestrator.artifact_manager = MagicMock()
 
+    def _make_result(self, jit_avg_time_ms=None, nojit_avg_time_ms=None):
+        """Helper to build a NewCoverageResult with timing fields."""
+        return NewCoverageResult(
+            status="NEW_COVERAGE",
+            core_code="x = 1",
+            baseline_coverage={},
+            content_hash="abc",
+            coverage_hash="def",
+            execution_time_ms=100,
+            parent_id=None,
+            mutation_info={},
+            mutation_seed=0,
+            jit_avg_time_ms=jit_avg_time_ms,
+            nojit_avg_time_ms=nojit_avg_time_ms,
+        )
+
     def test_noop_when_timing_fuzz_disabled(self):
         """No regression saved when timing_fuzz is False."""
         self.orchestrator.timing_fuzz = False
-        data = {"jit_avg_time_ms": 200, "nojit_avg_time_ms": 100}
+        data = self._make_result(jit_avg_time_ms=200, nojit_avg_time_ms=100)
 
         self.orchestrator._check_timing_regression(data, "child.py", None)
 
@@ -1917,7 +1935,7 @@ class TestCheckTimingRegression(unittest.TestCase):
     def test_noop_when_timing_data_missing(self):
         """No regression saved when jit_avg_time_ms is missing."""
         self.orchestrator.timing_fuzz = True
-        data = {"nojit_avg_time_ms": 100}
+        data = self._make_result(nojit_avg_time_ms=100)
 
         self.orchestrator._check_timing_regression(data, "child.py", None)
 
@@ -1926,7 +1944,7 @@ class TestCheckTimingRegression(unittest.TestCase):
     def test_noop_when_nojit_time_zero(self):
         """No division by zero when nojit_time is zero."""
         self.orchestrator.timing_fuzz = True
-        data = {"jit_avg_time_ms": 200, "nojit_avg_time_ms": 0}
+        data = self._make_result(jit_avg_time_ms=200, nojit_avg_time_ms=0)
 
         self.orchestrator._check_timing_regression(data, "child.py", None)
 
@@ -1935,7 +1953,7 @@ class TestCheckTimingRegression(unittest.TestCase):
     def test_saves_regression_when_slowdown_exceeds_threshold(self):
         """Regression saved when ratio exceeds default 1.2 threshold."""
         self.orchestrator.timing_fuzz = True
-        data = {"jit_avg_time_ms": 200, "nojit_avg_time_ms": 100}
+        data = self._make_result(jit_avg_time_ms=200, nojit_avg_time_ms=100)
 
         self.orchestrator._check_timing_regression(data, "child.py", None)
 
@@ -1947,14 +1965,14 @@ class TestCheckTimingRegression(unittest.TestCase):
         self.orchestrator.timing_fuzz = True
         # nojit_cv=0.1 -> threshold = 1.0 + 3*0.1 = 1.3
         # ratio = 125/100 = 1.25 < 1.3 -> no regression
-        data = {"jit_avg_time_ms": 125, "nojit_avg_time_ms": 100}
+        data = self._make_result(jit_avg_time_ms=125, nojit_avg_time_ms=100)
 
         self.orchestrator._check_timing_regression(data, "child.py", nojit_cv=0.1)
 
         self.orchestrator.artifact_manager.save_regression.assert_not_called()
 
         # ratio = 140/100 = 1.4 > 1.3 -> regression
-        data2 = {"jit_avg_time_ms": 140, "nojit_avg_time_ms": 100}
+        data2 = self._make_result(jit_avg_time_ms=140, nojit_avg_time_ms=100)
 
         self.orchestrator._check_timing_regression(data2, "child2.py", nojit_cv=0.1)
 
@@ -1965,7 +1983,7 @@ class TestCheckTimingRegression(unittest.TestCase):
         """No regression saved when ratio is below default threshold."""
         self.orchestrator.timing_fuzz = True
         # ratio = 105/100 = 1.05 < 1.2
-        data = {"jit_avg_time_ms": 105, "nojit_avg_time_ms": 100}
+        data = self._make_result(jit_avg_time_ms=105, nojit_avg_time_ms=100)
 
         self.orchestrator._check_timing_regression(data, "child.py", None)
 
@@ -2596,11 +2614,11 @@ class TestHandleAnalysisDataCrashAttribution(unittest.TestCase):
 
     def test_crash_triggers_attribution(self):
         """CRASH status calls record_crash_attribution on score_tracker."""
-        analysis_data = {
-            "status": "CRASH",
-            "mutation_info": {"strategy": "havoc", "transformers": ["T1", "T2"]},
-            "parent_id": "42.py",
-        }
+        analysis_data = CrashResult(
+            status="CRASH",
+            mutation_info={"strategy": "havoc", "transformers": ["T1", "T2"]},
+            parent_id="42.py",
+        )
 
         self.orchestrator._handle_analysis_data(analysis_data, 0, {}, None)
 
@@ -2610,10 +2628,11 @@ class TestHandleAnalysisDataCrashAttribution(unittest.TestCase):
 
     def test_crash_without_mutation_info_skips_attribution(self):
         """CRASH with empty mutation_info doesn't crash."""
-        analysis_data = {
-            "status": "CRASH",
-            "mutation_info": {},
-        }
+        analysis_data = CrashResult(
+            status="CRASH",
+            mutation_info={},
+            parent_id=None,
+        )
 
         self.orchestrator._handle_analysis_data(analysis_data, 0, {}, None)
 
@@ -2621,11 +2640,11 @@ class TestHandleAnalysisDataCrashAttribution(unittest.TestCase):
 
     def test_crash_increments_stat(self):
         """CRASH still increments crashes_found regardless of attribution."""
-        analysis_data = {
-            "status": "CRASH",
-            "mutation_info": {"strategy": "havoc", "transformers": ["T1"]},
-            "parent_id": "1.py",
-        }
+        analysis_data = CrashResult(
+            status="CRASH",
+            mutation_info={"strategy": "havoc", "transformers": ["T1"]},
+            parent_id="1.py",
+        )
 
         self.orchestrator._handle_analysis_data(analysis_data, 0, {}, None)
 

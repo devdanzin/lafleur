@@ -3,13 +3,18 @@
 This module defines TypedDict types for the major dict schemas that flow
 between modules. Using a dedicated types module avoids circular imports.
 
-These are TypedDict (not dataclass) because they are persisted inside
-coverage_state.pkl — TypedDict is a plain dict at runtime, so existing
-pickle files load without migration.
+The TypedDicts (JitStats, MutationInfo) are used instead of dataclass
+because they are persisted inside coverage_state.pkl — TypedDict is a
+plain dict at runtime, so existing pickle files load without migration.
+
+The AnalysisResult hierarchy uses frozen dataclasses to replace the
+untyped dict returned by analyze_run(), enabling isinstance()-based
+dispatch and preventing accidental mutation.
 """
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import TypedDict
 
 
@@ -61,3 +66,58 @@ class MutationInfo(TypedDict, total=False):
     targets: list[str]
     seed: int
     runtime_seed: int
+
+
+# ---------------------------------------------------------------------------
+# AnalysisResult hierarchy — returned by ScoringManager.analyze_run()
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class AnalysisResult:
+    """Base class for all analyze_run() return values.
+
+    Use isinstance() to determine the variant and access variant-specific fields.
+    Frozen to prevent accidental mutation (a past bug source).
+    """
+
+    status: str
+
+
+@dataclass(frozen=True)
+class NewCoverageResult(AnalysisResult):
+    """Returned when the child produced new coverage worth keeping."""
+
+    core_code: str
+    baseline_coverage: dict
+    content_hash: str
+    coverage_hash: str
+    execution_time_ms: int
+    parent_id: str | None
+    mutation_info: MutationInfo
+    mutation_seed: int
+    jit_avg_time_ms: float | None = None
+    nojit_avg_time_ms: float | None = None
+
+
+@dataclass(frozen=True)
+class CrashResult(AnalysisResult):
+    """Returned when the child crashed."""
+
+    mutation_info: MutationInfo
+    parent_id: str | None
+    fingerprint: str | None = None
+
+
+@dataclass(frozen=True)
+class NoChangeResult(AnalysisResult):
+    """Returned when the child produced no new coverage."""
+
+    pass
+
+
+@dataclass(frozen=True)
+class DivergenceResult(AnalysisResult):
+    """Returned when differential testing detected a behavioral divergence."""
+
+    mutation_info: MutationInfo

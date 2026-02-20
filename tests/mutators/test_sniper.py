@@ -118,6 +118,83 @@ class TestSniperMutator(unittest.TestCase):
         # Should match original exactly (ignoring potential whitespace diffs, but structure same)
         self.assertEqual(ast.dump(tree), ast.dump(mutated))
 
+    def test_invalidation_logic_helper_executor_assassinate(self):
+        """Test executor_assassinate attack vector for helper functions."""
+        mutator = SniperMutator(["_jit_helper_add"])
+
+        with patch("random.choice", return_value="executor_assassinate"):
+            stmts = mutator._create_invalidation_stmt("_jit_helper_add")
+
+        code = ast.unparse(ast.Module(body=stmts, type_ignores=[]))
+        self.assertIn("_testinternalcapi", code)
+        self.assertIn("invalidate_executors", code)
+        self.assertIn("_jit_helper_add", code)
+        # Should have ImportError guard
+        self.assertIn("ImportError", code)
+
+    def test_invalidation_logic_helper_globals_detach(self):
+        """Test globals_detach attack vector for helper functions."""
+        mutator = SniperMutator(["_jit_helper_mul"])
+
+        with patch("random.choice", return_value="globals_detach"):
+            stmts = mutator._create_invalidation_stmt("_jit_helper_mul")
+
+        code = ast.unparse(ast.Module(body=stmts, type_ignores=[]))
+        self.assertIn("FunctionType", code)
+        self.assertIn("_jit_helper_mul", code)
+        self.assertIn("__builtins__", code)
+        # Should produce valid, parseable code
+        ast.parse(code)
+
+    def test_invalidation_logic_builtin_executor_assassinate(self):
+        """Test executor_assassinate attack vector for builtins."""
+        mutator = SniperMutator(["len"])
+
+        with patch("random.choice", return_value="executor_assassinate"):
+            stmts = mutator._create_invalidation_stmt("len")
+
+        code = ast.unparse(ast.Module(body=stmts, type_ignores=[]))
+        self.assertIn("_testinternalcapi", code)
+        self.assertIn("invalidate_executors", code)
+        # Should restore the builtin
+        self.assertIn("_sniper_orig_builtin", code)
+        # Should have ImportError fallback
+        self.assertIn("ImportError", code)
+
+    def test_invalidation_logic_builtin_replace(self):
+        """Test that the 'replace' builtin attack still works as before."""
+        mutator = SniperMutator(["len"])
+
+        with patch("random.choice", return_value="replace"):
+            stmts = mutator._create_invalidation_stmt("len")
+
+        code = ast.unparse(ast.Module(body=stmts, type_ignores=[]))
+        self.assertIn("import builtins", code)
+        self.assertIn("builtins.len =", code)
+
+    def test_all_helper_attack_types_produce_valid_code(self):
+        """Test that all attack types produce parseable Python."""
+        attack_types = [
+            "lambda",
+            "none",
+            "wrong_type",
+            "exception",
+            "code_swap",
+            "executor_assassinate",
+            "globals_detach",
+        ]
+        mutator = SniperMutator(["_jit_helper_check_int"])
+
+        for attack_type in attack_types:
+            with self.subTest(attack_type=attack_type):
+                with patch("random.choice", return_value=attack_type):
+                    stmts = mutator._create_invalidation_stmt("_jit_helper_check_int")
+
+                self.assertTrue(len(stmts) > 0, f"No statements for {attack_type}")
+                code = ast.unparse(ast.Module(body=stmts, type_ignores=[]))
+                # Must parse without error
+                ast.parse(code)
+
     def test_syntax_validity(self):
         """Test that generated code is syntactically valid."""
         code = dedent("""

@@ -37,8 +37,10 @@ All notable changes to this project should be documented in this file.
 - Strengthened mutator test assertions: `exec()` verification for all evil object generators, safety wrapper assertions for `SliceMutator` and `StringInterpolationMutator`, and brittleness comments on tests with rigid `side_effect` sequences, by @devdanzin.
 - Added `compile(result, "<test>", "exec")` validation to 93 test methods across all mutator test files, catching scope violations (`return`/`yield` outside function, `break`/`continue` outside loop, `nonlocal` misuse) that `ast.parse()` alone misses, by @devdanzin.
 
-
 ### Enhanced
+
+- `SniperMutator` with two new attack vectors: `executor_assassinate` (uses `_testinternalcapi.invalidate_executors()` to rip JIT executors out from under active traces, targeting GH-143604) and `globals_detach` (uses `types.FunctionType(func.__code__, new_globals)` to execute JIT-compiled code with detached globals, targeting GH-138378), for both helper functions and builtins, by @devdanzin.
+- `GlobalOptimizationInvalidator` with two new attack vectors: `namespace_swap` (executes JIT-warmed code via `types.FunctionType` with alternate globals containing wrong types, targeting GH-138378) and `globals_dict_mutate` (directly mutates `func.__globals__` in-place after JIT warmup to corrupt cached dict pointers), complementing the existing `evil_global_swap` strategy, by @devdanzin.
 
 - **ast.unparse() diagnostic capture** with rich output: pickle dump of failing AST for exact reproduction, full traceback, transformer list, source hint, `ast.dump()` text, and a standalone `reproduce.py` script for CPython bug reporting. Replaces the previous text-only `_dump_failing_ast` approach and is now used in both `ASTMutator.mutate()` and `MutationController.prepare_child_script()`, by @devdanzin.
 - **TeeLogger** with repeat collapsing (consecutive identical lines collapsed to `(×N)` suffix), verbosity filtering (`--verbose` flag controls detail-level messages vs quiet mode showing only important events), and configurable log path (`--log-path` flag), by @devdanzin.

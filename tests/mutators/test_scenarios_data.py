@@ -2061,8 +2061,9 @@ class TestGlobalOptimizationInvalidator(unittest.TestCase):
 
         with patch("random.random", return_value=0.1):  # Below 0.2 threshold
             with patch("random.randint", return_value=5000):
-                mutator = GlobalOptimizationInvalidator()
-                mutated = mutator.visit(tree)
+                with patch("random.choice", return_value="evil_global_swap"):
+                    mutator = GlobalOptimizationInvalidator()
+                    mutated = mutator.visit(tree)
 
         result = ast.unparse(mutated)
         # Should have _EvilGlobal class definition with prefix
@@ -2081,8 +2082,9 @@ class TestGlobalOptimizationInvalidator(unittest.TestCase):
 
         with patch("random.random", return_value=0.1):
             with patch("random.randint", return_value=5000):
-                mutator = GlobalOptimizationInvalidator()
-                mutated = mutator.visit(tree)
+                with patch("random.choice", return_value="evil_global_swap"):
+                    mutator = GlobalOptimizationInvalidator()
+                    mutated = mutator.visit(tree)
 
         result = ast.unparse(mutated)
         # Should have global declaration with prefix
@@ -2098,8 +2100,9 @@ class TestGlobalOptimizationInvalidator(unittest.TestCase):
 
         with patch("random.random", return_value=0.1):
             with patch("random.randint", return_value=5000):
-                mutator = GlobalOptimizationInvalidator()
-                mutated = mutator.visit(tree)
+                with patch("random.choice", return_value="evil_global_swap"):
+                    mutator = GlobalOptimizationInvalidator()
+                    mutated = mutator.visit(tree)
 
         result = ast.unparse(mutated)
         # Should have the hot loop with prefix
@@ -2116,8 +2119,9 @@ class TestGlobalOptimizationInvalidator(unittest.TestCase):
 
         with patch("random.random", return_value=0.1):
             with patch("random.randint", return_value=5000):
-                mutator = GlobalOptimizationInvalidator()
-                mutated = mutator.visit(tree)
+                with patch("random.choice", return_value="evil_global_swap"):
+                    mutator = GlobalOptimizationInvalidator()
+                    mutated = mutator.visit(tree)
 
         result = ast.unparse(mutated)
         # Should swap at iteration 1000 with prefixed names
@@ -2134,8 +2138,9 @@ class TestGlobalOptimizationInvalidator(unittest.TestCase):
 
         with patch("random.random", return_value=0.1):
             with patch("random.randint", return_value=5000):
-                mutator = GlobalOptimizationInvalidator()
-                mutated = mutator.visit(tree)
+                with patch("random.choice", return_value="evil_global_swap"):
+                    mutator = GlobalOptimizationInvalidator()
+                    mutated = mutator.visit(tree)
 
         result = ast.unparse(mutated)
         # Should have finally block restoring range with prefix
@@ -2152,8 +2157,9 @@ class TestGlobalOptimizationInvalidator(unittest.TestCase):
 
         with patch("random.random", return_value=0.1):
             with patch("random.randint", return_value=5000):
-                mutator = GlobalOptimizationInvalidator()
-                mutated = mutator.visit(tree)
+                with patch("random.choice", return_value="evil_global_swap"):
+                    mutator = GlobalOptimizationInvalidator()
+                    mutated = mutator.visit(tree)
 
         result = ast.unparse(mutated)
         # Should have try-except
@@ -2186,14 +2192,116 @@ class TestGlobalOptimizationInvalidator(unittest.TestCase):
         tree = ast.parse(code)
 
         with patch("random.random", return_value=0.1):
-            mutator = GlobalOptimizationInvalidator()
-            mutated = mutator.visit(tree)
+            with patch("random.choice", return_value="evil_global_swap"):
+                mutator = GlobalOptimizationInvalidator()
+                mutated = mutator.visit(tree)
 
         result = ast.unparse(mutated)
         # Should be parseable
         reparsed = ast.parse(result)
         self.assertIsInstance(reparsed, ast.Module)
         compile(result, "<test>", "exec")
+
+    def test_namespace_swap_attack(self):
+        """Test that namespace_swap attack injects FunctionType-based swap."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.1):
+            with patch("random.randint", return_value=5000):
+                with patch("random.choice", return_value="namespace_swap"):
+                    mutator = GlobalOptimizationInvalidator()
+                    mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should use types.FunctionType for namespace swap
+        self.assertIn("FunctionType", result)
+        # Should define a victim function
+        self.assertIn("_goi_victim_goi_5000", result)
+        # Should have alternate globals with wrong types
+        self.assertIn("not_an_int", result)
+        # Should have warmup loop
+        self.assertIn("range(2000)", result)
+        # Should produce valid, parseable code
+        ast.parse(result)
+        compile(result, "<test>", "exec")
+
+    def test_globals_dict_mutate_attack(self):
+        """Test that globals_dict_mutate attack modifies __globals__ in-place."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.1):
+            with patch("random.randint", return_value=5000):
+                with patch("random.choice", return_value="globals_dict_mutate"):
+                    mutator = GlobalOptimizationInvalidator()
+                    mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # Should mutate __globals__ in-place
+        self.assertIn("__globals__", result)
+        # Should have a target function
+        self.assertIn("_goi_target_goi_5000", result)
+        # Should change type mid-execution
+        self.assertIn("type_changed", result)
+        # Should have warmup loop
+        self.assertIn("range(2000)", result)
+        # Should produce valid, parseable code
+        ast.parse(result)
+        compile(result, "<test>", "exec")
+
+    def test_evil_global_swap_still_works(self):
+        """Test that the original evil_global_swap attack still works after refactoring."""
+        code = dedent("""
+            def uop_harness_test():
+                x = 1
+        """)
+        tree = ast.parse(code)
+
+        with patch("random.random", return_value=0.1):
+            with patch("random.randint", return_value=5000):
+                with patch("random.choice", return_value="evil_global_swap"):
+                    mutator = GlobalOptimizationInvalidator()
+                    mutated = mutator.visit(tree)
+
+        result = ast.unparse(mutated)
+        # All original assertions should still hold
+        self.assertIn("class _EvilGlobal_goi_5000:", result)
+        self.assertIn("global _jit_target_goi_5000", result)
+        self.assertIn("for _jit_i_goi_5000 in range(2000):", result)
+        self.assertIn("if _jit_i_goi_5000 == 1000:", result)
+        self.assertIn("globals()['_jit_target_goi_5000'] = _EvilGlobal_goi_5000()", result)
+        self.assertIn("finally:", result)
+        self.assertIn("globals()['_jit_target_goi_5000'] = range", result)
+
+    def test_all_attack_vectors_produce_valid_code(self):
+        """Test that all attack vectors produce parseable Python."""
+        attack_vectors = ["evil_global_swap", "namespace_swap", "globals_dict_mutate"]
+
+        for attack in attack_vectors:
+            with self.subTest(attack=attack):
+                code = dedent("""
+                    def uop_harness_test():
+                        x = 1
+                """)
+                tree = ast.parse(code)
+
+                with patch("random.random", return_value=0.1):
+                    with patch("random.randint", return_value=5000):
+                        with patch("random.choice", return_value=attack):
+                            mutator = GlobalOptimizationInvalidator()
+                            mutated = mutator.visit(tree)
+
+                result = ast.unparse(mutated)
+                # Must parse without error
+                ast.parse(result)
+                compile(result, "<test>", "exec")
 
 
 class TestCodeObjectHotSwapper(unittest.TestCase):

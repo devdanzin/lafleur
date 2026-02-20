@@ -86,16 +86,55 @@ class SniperMutator(ast.NodeTransformer):
         - Replace with None (breaks CALL opcodes)
         - Swap __code__ (breaks JIT's cached code object)
         - Replace with wrong-type-returning function (breaks type guards)
+        - Executor assassination via _testinternalcapi (GH-143604)
+        - Globals detachment via types.FunctionType (GH-138378)
         """
         if key in self.KNOWN_BUILTINS:
-            # Attack builtins
-            source = dedent(f"""
-                import builtins
-                builtins.{key} = lambda *a, **k: None
-            """).strip()
+            # Attack builtins with one of two strategies
+            builtin_attack = random.choice(["replace", "executor_assassinate"])
+            if builtin_attack == "replace":
+                source = dedent(f"""
+                    import builtins
+                    builtins.{key} = lambda *a, **k: None
+                """).strip()
+            else:  # executor_assassinate
+                # Invalidate executors that depend on this builtin.
+                # We look for any function in globals that might have been
+                # JIT-compiled with assumptions about this builtin.
+                source = dedent(f"""
+                    try:
+                        import _testinternalcapi
+                        import builtins
+                        # First replace the builtin to invalidate caches
+                        _sniper_orig_builtin = getattr(builtins, '{key}', None)
+                        builtins.{key} = lambda *a, **k: None
+                        # Then try to invalidate executors for all visible functions
+                        for _sniper_name, _sniper_obj in list(globals().items()):
+                            if callable(_sniper_obj) and hasattr(_sniper_obj, '__code__'):
+                                try:
+                                    _testinternalcapi.invalidate_executors(_sniper_obj.__code__)
+                                except (TypeError, AttributeError):
+                                    pass
+                        # Restore builtin
+                        if _sniper_orig_builtin is not None:
+                            builtins.{key} = _sniper_orig_builtin
+                    except ImportError:
+                        import builtins
+                        builtins.{key} = lambda *a, **k: None
+                """).strip()
         elif key.startswith("_jit_helper_"):
             # Attack helper functions with various strategies
-            attack_type = random.choice(["lambda", "none", "wrong_type", "exception", "code_swap"])
+            attack_type = random.choice(
+                [
+                    "lambda",
+                    "none",
+                    "wrong_type",
+                    "exception",
+                    "code_swap",
+                    "executor_assassinate",
+                    "globals_detach",
+                ]
+            )
 
             if attack_type == "lambda":
                 # Replace with a do-nothing lambda
@@ -114,6 +153,38 @@ class SniperMutator(ast.NodeTransformer):
                         return 999
                     if hasattr(globals()['{key}'], '__code__'):
                         globals()['{key}'].__code__ = _sniper_fake_impl.__code__
+                """).strip()
+            elif attack_type == "executor_assassinate":
+                # Use _testinternalcapi to invalidate executors while trace is running.
+                # This rips the JIT executor out from under the active trace,
+                # targeting memory safety bugs like GH-143604.
+                source = dedent(f"""
+                    try:
+                        import _testinternalcapi
+                        _sniper_target_func = globals().get('{key}')
+                        if _sniper_target_func is not None and hasattr(_sniper_target_func, '__code__'):
+                            _testinternalcapi.invalidate_executors(_sniper_target_func.__code__)
+                    except (ImportError, AttributeError, TypeError):
+                        pass
+                """).strip()
+            elif attack_type == "globals_detach":
+                # Execute the helper with a completely detached globals dict.
+                # The JIT may have inlined assumptions about the helper's globals
+                # (e.g., builtins access, global variable types). Running the same
+                # code object with empty globals forces deoptimization or crashes.
+                source = dedent(f"""
+                    import types as _sniper_types
+                    _sniper_orig = globals().get('{key}')
+                    if _sniper_orig is not None and hasattr(_sniper_orig, '__code__'):
+                        try:
+                            _sniper_detached = _sniper_types.FunctionType(
+                                _sniper_orig.__code__,
+                                {{'__builtins__': __builtins__}},
+                                '{key}_detached',
+                            )
+                            _sniper_detached()
+                        except Exception:
+                            pass
                 """).strip()
             else:  # exception
                 # Replace with function that raises

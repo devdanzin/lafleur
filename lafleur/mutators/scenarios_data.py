@@ -1772,12 +1772,18 @@ class AbstractInterpreterConfusionMutator(ast.NodeTransformer):
 
 class GlobalOptimizationInvalidator(ast.NodeTransformer):
     """
-    Exploit the JIT's "Global-to-Constant Promotion".
+    Attack the JIT's global-to-constant promotion optimization.
 
     The JIT often optimizes global variables (like `range`) into hardcoded
-    pointers if they don't change. We train the JIT to trust a global, then
-    swap it for a different object inside the hot loop, forcing a complex
-    deoptimization path.
+    pointers if they don't change. This mutator attacks that assumption
+    through three vectors:
+
+    1. evil_global_swap: Train the JIT to trust a global, then swap it
+       for a different object inside a hot loop, forcing deoptimization.
+    2. namespace_swap: Use types.FunctionType(func.__code__, alt_globals)
+       to execute JIT-compiled code with entirely different globals (GH-138378).
+    3. globals_dict_mutate: Directly mutate func.__globals__ in-place after
+       JIT warmup, potentially corrupting cached dict pointers.
     """
 
     def visit_FunctionDef(self, node: ast.FunctionDef) -> ast.FunctionDef:
@@ -1788,53 +1794,164 @@ class GlobalOptimizationInvalidator(ast.NodeTransformer):
 
         if random.random() < 0.2:  # 20% chance
             p_prefix = f"goi_{random.randint(1000, 9999)}"
+            attack = random.choice(
+                [
+                    "evil_global_swap",
+                    "namespace_swap",
+                    "globals_dict_mutate",
+                ]
+            )
+
             print(
-                f"    -> Injecting global optimization invalidation with prefix '{p_prefix}'",
+                f"    -> Injecting global optimization invalidation ({attack}) "
+                f"with prefix '{p_prefix}'",
                 file=sys.stderr,
             )
 
-            # Step 1: Inject the _EvilGlobal class definition
-            evil_class_code = dedent(f"""
-                class _EvilGlobal_{p_prefix}:
-                    def __init__(self, *args): pass
-                    def __call__(self, *args): return 42
-            """)
-            evil_class = ast.parse(evil_class_code).body
+            if attack == "evil_global_swap":
+                scenario_ast = self._create_evil_global_swap(p_prefix)
+            elif attack == "namespace_swap":
+                scenario_ast = self._create_namespace_swap(p_prefix)
+            else:  # globals_dict_mutate
+                scenario_ast = self._create_globals_dict_mutate(p_prefix)
 
-            # Step 2: Build the invalidation loop
-            # This follows the pattern from test_promote_globals_to_constants
-            invalidation_code = dedent(f"""
-                global _jit_target_{p_prefix}
-                _jit_target_{p_prefix} = range
-                try:
-                    for _jit_i_{p_prefix} in range(2000):
-                        # The Hot Operation: Call the global
-                        _jit_x_{p_prefix} = _jit_target_{p_prefix}(1)
-
-                        # The Switch: Mid-loop invalidation
-                        if _jit_i_{p_prefix} == 1000:
-                            globals()['_jit_target_{p_prefix}'] = _EvilGlobal_{p_prefix}()
-                except (TypeError, ValueError, AttributeError):
-                    # Catch Python-level errors (we only care about C-level crashes)
-                    pass
-                finally:
-                    # Cleanup: Restore it so we don't break the rest of the script
-                    globals()['_jit_target_{p_prefix}'] = range
-            """)
-            invalidation_loop = ast.parse(invalidation_code).body
-
-            # Inject at the middle of the function body
-            injection_point = len(node.body) // 2 if len(node.body) > 1 else len(node.body)
-            node.body = (
-                evil_class
-                + node.body[:injection_point]
-                + invalidation_loop
-                + node.body[injection_point:]
-            )
-
-            ast.fix_missing_locations(node)
+            if scenario_ast:
+                # Inject at the middle of the function body
+                injection_point = len(node.body) // 2 if len(node.body) > 1 else len(node.body)
+                node.body = node.body[:injection_point] + scenario_ast + node.body[injection_point:]
+                ast.fix_missing_locations(node)
 
         return node
+
+    def _create_evil_global_swap(self, p_prefix: str) -> list[ast.stmt]:
+        """
+        Original attack: train JIT on a global, swap it for _EvilGlobal mid-loop.
+        """
+        evil_class_code = dedent(f"""
+            class _EvilGlobal_{p_prefix}:
+                def __init__(self, *args): pass
+                def __call__(self, *args): return 42
+        """)
+
+        invalidation_code = dedent(f"""
+            global _jit_target_{p_prefix}
+            _jit_target_{p_prefix} = range
+            try:
+                for _jit_i_{p_prefix} in range(2000):
+                    _jit_x_{p_prefix} = _jit_target_{p_prefix}(1)
+                    if _jit_i_{p_prefix} == 1000:
+                        globals()['_jit_target_{p_prefix}'] = _EvilGlobal_{p_prefix}()
+            except (TypeError, ValueError, AttributeError):
+                pass
+            finally:
+                globals()['_jit_target_{p_prefix}'] = range
+        """)
+
+        try:
+            return ast.parse(evil_class_code).body + ast.parse(invalidation_code).body
+        except SyntaxError:
+            return []
+
+    def _create_namespace_swap(self, p_prefix: str) -> list[ast.stmt]:
+        """
+        Execute JIT-compiled code with a completely different globals dict.
+
+        Creates a function, warms it in a hot loop so the JIT compiles it,
+        then uses types.FunctionType(func.__code__, alt_globals) to execute
+        the same code object with different global variable types.
+        This forces the JIT to deoptimize or crash when its cached
+        global-to-constant promotions become invalid (GH-138378).
+        """
+        code = dedent(f"""
+            import types as _types_{p_prefix}
+
+            # Define a function that uses globals heavily
+            _goi_multiplier_{p_prefix} = 3
+            _goi_offset_{p_prefix} = 10
+
+            def _goi_victim_{p_prefix}(x):
+                # JIT will promote _goi_multiplier and _goi_offset to constants
+                return x * _goi_multiplier_{p_prefix} + _goi_offset_{p_prefix}
+
+            # Phase 1: Warm up — JIT traces and promotes globals to constants
+            try:
+                for _goi_i_{p_prefix} in range(2000):
+                    _goi_victim_{p_prefix}(_goi_i_{p_prefix})
+            except Exception:
+                pass
+
+            # Phase 2: Create alternate globals with different types
+            _alt_globals_{p_prefix} = {{
+                '__builtins__': __builtins__,
+                '_goi_multiplier_{p_prefix}': "not_an_int",  # str instead of int
+                '_goi_offset_{p_prefix}': [1, 2, 3],  # list instead of int
+            }}
+
+            # Phase 3: Execute same code object with swapped namespace
+            try:
+                _goi_swapped_{p_prefix} = _types_{p_prefix}.FunctionType(
+                    _goi_victim_{p_prefix}.__code__,
+                    _alt_globals_{p_prefix},
+                    '_goi_victim_{p_prefix}_swapped',
+                )
+                for _goi_j_{p_prefix} in range(500):
+                    _goi_swapped_{p_prefix}(_goi_j_{p_prefix})
+            except Exception:
+                pass
+
+            # Phase 4: Go back to original — JIT may have stale trace
+            try:
+                for _goi_k_{p_prefix} in range(500):
+                    _goi_victim_{p_prefix}(_goi_k_{p_prefix})
+            except Exception:
+                pass
+        """)
+        try:
+            return ast.parse(code).body
+        except SyntaxError:
+            return []
+
+    def _create_globals_dict_mutate(self, p_prefix: str) -> list[ast.stmt]:
+        """
+        Directly mutate a function's __globals__ dict after JIT warmup.
+
+        Unlike namespace_swap (which creates a new function object), this
+        modifies the globals dict in-place. The JIT may have cached pointers
+        into the dict's internal storage, so mutation can corrupt those pointers.
+        """
+        code = dedent(f"""
+            _goi_scale_{p_prefix} = 5
+
+            def _goi_target_{p_prefix}(x):
+                return x * _goi_scale_{p_prefix}
+
+            # Phase 1: Warm up
+            try:
+                for _goi_i_{p_prefix} in range(2000):
+                    _goi_target_{p_prefix}(_goi_i_{p_prefix})
+            except Exception:
+                pass
+
+            # Phase 2: Mutate the function's own __globals__ in-place
+            try:
+                _goi_target_{p_prefix}.__globals__['_goi_scale_{p_prefix}'] = "type_changed"
+                for _goi_j_{p_prefix} in range(500):
+                    _goi_target_{p_prefix}(_goi_j_{p_prefix})
+            except Exception:
+                pass
+
+            # Phase 3: Restore and call again
+            try:
+                _goi_target_{p_prefix}.__globals__['_goi_scale_{p_prefix}'] = 5
+                for _goi_k_{p_prefix} in range(500):
+                    _goi_target_{p_prefix}(_goi_k_{p_prefix})
+            except Exception:
+                pass
+        """)
+        try:
+            return ast.parse(code).body
+        except SyntaxError:
+            return []
 
 
 class CodeObjectHotSwapper(ast.NodeTransformer):

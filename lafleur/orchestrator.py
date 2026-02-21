@@ -35,8 +35,10 @@ from lafleur.execution import ExecutionManager
 from lafleur.scoring import ScoringManager
 from lafleur.types import (
     AnalysisResult,
+    CorpusFileMetadata,
     CrashResult,
     DivergenceResult,
+    MutationInfo,
     NewCoverageResult,
 )
 from lafleur.learning import MutatorScoreTracker
@@ -80,7 +82,7 @@ class ParentContext:
     parent_path: Path
     parent_id: str
     parent_score: float
-    parent_metadata: dict
+    parent_metadata: CorpusFileMetadata
     parent_lineage_profile: dict
     parent_file_size: int
     parent_lineage_edge_count: int
@@ -411,7 +413,7 @@ class LafleurOrchestrator:
         self,
         analysis_data: AnalysisResult,
         i: int,
-        parent_metadata: dict,
+        parent_metadata: CorpusFileMetadata,
         nojit_cv: float | None,
         parent_id: str = "unknown",
     ) -> tuple[FlowControl, str | None]:
@@ -509,7 +511,7 @@ class LafleurOrchestrator:
                     )
             return FlowControl.NONE, None
 
-    def _walk_crash_lineage(self, parent_id: str | None) -> list[dict]:
+    def _walk_crash_lineage(self, parent_id: str | None) -> list[MutationInfo]:
         """Walk the ancestry of a corpus file, collecting mutation info.
 
         Follows the parent_id chain in per_file_coverage, collecting each
@@ -522,8 +524,10 @@ class LafleurOrchestrator:
         Returns:
             List of MutationInfo dicts, ordered parent -> grandparent -> ...
         """
-        per_file = self.coverage_manager.state.get("per_file_coverage", {})
-        lineage: list[dict] = []
+        per_file: dict[str, CorpusFileMetadata] = self.coverage_manager.state.get(
+            "per_file_coverage", {}
+        )
+        lineage: list[MutationInfo] = []
         current_id = parent_id
 
         for _ in range(self.MAX_LINEAGE_DEPTH):
@@ -614,7 +618,9 @@ class LafleurOrchestrator:
         if self.max_mutations_per_session is not None:
             max_mutations = self.max_mutations_per_session
         parent_id = parent_path.name
-        parent_metadata = self.coverage_manager.state["per_file_coverage"].get(parent_id, {})
+        parent_metadata: CorpusFileMetadata = self.coverage_manager.state["per_file_coverage"].get(
+            parent_id, {}
+        )
         parent_lineage_profile = parent_metadata.get("lineage_coverage_profile", {})
 
         parent_file_size = parent_metadata.get("file_size_bytes", 0)

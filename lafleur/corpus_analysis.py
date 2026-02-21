@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from lafleur.corpus_manager import CorpusManager
-    from lafleur.types import MutationInfo
+    from lafleur.types import CorpusFileMetadata, MutationInfo
 
 
 def calculate_distribution(values: Sequence[int | float]) -> dict[str, float | None]:
@@ -57,7 +57,9 @@ def generate_corpus_stats(corpus_manager: CorpusManager) -> dict[str, Any]:
         - Mutation intelligence (successful mutation histogram)
     """
     # Access the per-file coverage metadata
-    per_file_coverage = corpus_manager.coverage_state.state.get("per_file_coverage", {})
+    per_file_coverage: dict[str, CorpusFileMetadata] = corpus_manager.coverage_state.state.get(
+        "per_file_coverage", {}
+    )
 
     total_files = len(per_file_coverage)
 

@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING, Any, Callable
 
 from lafleur.coverage import save_coverage_state, CoverageManager
 from lafleur.health import FILE_SIZE_WARNING_THRESHOLD
-from lafleur.types import MutationInfo, NewCoverageResult
+from lafleur.types import CorpusFileMetadata, MutationInfo, NewCoverageResult
 from lafleur.utils import ExecutionResult, FUZZING_ENV
 
 if TYPE_CHECKING:
@@ -59,7 +59,7 @@ class CorpusScheduler:
         """
         self._cached_scores = None
 
-    def _calculate_rarity_score(self, file_metadata: dict[str, Any]) -> float:
+    def _calculate_rarity_score(self, file_metadata: CorpusFileMetadata) -> float:
         """
         Calculate a score based on the rarity of the file's coverage.
         Rarer edges (lower global hit count) contribute more to the score.
@@ -82,7 +82,10 @@ class CorpusScheduler:
             return self._cached_scores
 
         scores = {}
-        for filename, metadata in self.coverage_state.state.get("per_file_coverage", {}).items():
+        per_file: dict[str, CorpusFileMetadata] = self.coverage_state.state.get(
+            "per_file_coverage", {}
+        )
+        for filename, metadata in per_file.items():
             score = self.BASE_SCORE
 
             # --- Heuristic 1: Performance (lower is better) ---
@@ -313,7 +316,9 @@ class CorpusManager:
         Return the path to the selected parent and its calculated score, or
         None if the corpus is empty.
         """
-        per_file = self.coverage_state.state.get("per_file_coverage", {})
+        per_file: dict[str, CorpusFileMetadata] = self.coverage_state.state.get(
+            "per_file_coverage", {}
+        )
 
         # Filter out sterile files entirely — they can never produce interesting
         # children and waste full sessions when selected.
@@ -377,14 +382,14 @@ class CorpusManager:
         if self.health_monitor and core_size > FILE_SIZE_WARNING_THRESHOLD:
             self.health_monitor.record_file_size_warning(new_filename, core_size)
 
-        parent_metadata = (
-            self.coverage_state.state["per_file_coverage"].get(parent_id, {}) if parent_id else {}
+        parent_metadata: CorpusFileMetadata = (
+            self.coverage_state.state["per_file_coverage"].get(parent_id, {}) if parent_id else {}  # type: ignore[assignment]  # empty dict is valid total=False TypedDict
         )
         lineage_depth = parent_metadata.get("lineage_depth", 0) + 1
         parent_lineage_profile = parent_metadata.get("lineage_coverage_profile", {})
         new_lineage_profile = build_lineage_func(parent_lineage_profile, baseline_coverage)
 
-        metadata = {
+        metadata: CorpusFileMetadata = {
             "baseline_coverage": baseline_coverage,
             "lineage_coverage_profile": new_lineage_profile,
             "parent_id": parent_id,
@@ -500,7 +505,7 @@ class CorpusManager:
 
     def _build_edge_index(
         self,
-        all_files: dict[str, dict],
+        all_files: dict[str, CorpusFileMetadata],
     ) -> tuple[dict[str, set[int]], dict[int, set[str]]]:
         """Pre-compute edge sets and build an inverted edge-to-files index.
 
@@ -589,7 +594,9 @@ class CorpusManager:
         if dry_run:
             print("[!] Running in DRY RUN mode. No files will be deleted.")
 
-        all_files = dict(self.coverage_state.state.get("per_file_coverage", {}).items())
+        all_files: dict[str, CorpusFileMetadata] = dict(
+            self.coverage_state.state.get("per_file_coverage", {}).items()
+        )
         if not all_files:
             print("[+] Corpus is empty. Nothing to prune.")
             return
@@ -671,7 +678,9 @@ class CorpusManager:
                 subsumer_counts[subsumer] = subsumer_counts.get(subsumer, 0) + 1
 
         for filename, count in subsumer_counts.items():
-            meta = self.coverage_state.state["per_file_coverage"].get(filename)
+            meta: CorpusFileMetadata | None = self.coverage_state.state["per_file_coverage"].get(
+                filename
+            )
             if meta is not None:
                 meta["subsumed_children_count"] = meta.get("subsumed_children_count", 0) + count
 

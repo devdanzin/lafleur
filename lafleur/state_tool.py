@@ -11,6 +11,8 @@ import sys
 from pathlib import Path
 from typing import Any, cast
 
+from lafleur.types import CorpusFileMetadata
+
 
 def migrate_state_to_integers(old_state: dict[str, Any]) -> dict[str, Any]:
     """
@@ -50,7 +52,7 @@ def migrate_state_to_integers(old_state: dict[str, Any]) -> dict[str, Any]:
     # 2. Migrate per_file_coverage
     per_file_cov = cast(dict[str, Any], new_state["per_file_coverage"])
     for filename, metadata in old_state.get("per_file_coverage", {}).items():
-        new_metadata = metadata.copy()
+        new_metadata: CorpusFileMetadata = metadata.copy()
 
         # a. Migrate baseline_coverage
         new_baseline = {}

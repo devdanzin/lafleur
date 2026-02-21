@@ -676,6 +676,107 @@ def extract_forest(
 
 
 # ---------------------------------------------------------------------------
+# Crash scanning and attachment
+# ---------------------------------------------------------------------------
+
+
+def scan_crashes(crashes_dir: Path) -> list[dict]:
+    """Scan the crashes directory for crash metadata.
+
+    Reads metadata.json from each crash subdirectory.
+
+    Returns list of dicts, each containing:
+    - crash_dir: Path to the crash directory
+    - fingerprint: crash fingerprint string
+    - crash_type: e.g., "SIGNAL", "ASAN"
+    - signal_name: e.g., "SIGSEGV" (if applicable)
+    - parent_id: corpus filename of the parent
+    - session_roles: dict of role→corpus filename (if session crash)
+    - timestamp: discovery timestamp
+    """
+    results: list[dict] = []
+
+    if not crashes_dir.is_dir():
+        return results
+
+    for entry in sorted(crashes_dir.iterdir()):
+        if not entry.is_dir():
+            continue
+        metadata_path = entry / "metadata.json"
+        if not metadata_path.exists():
+            continue
+
+        try:
+            with open(metadata_path) as f:
+                meta = json.load(f)
+        except (json.JSONDecodeError, OSError):
+            continue
+
+        crash_info: dict = {
+            "crash_dir": entry,
+            "fingerprint": meta.get("fingerprint", "unknown"),
+            "crash_type": meta.get("type", "unknown"),
+            "signal_name": meta.get("signal_name", ""),
+            "timestamp": meta.get("timestamp", ""),
+            "session_roles": {},
+        }
+
+        # Determine parent_id
+        session_files = meta.get("session_corpus_files", {})
+        if session_files:
+            warmup = session_files.get("warmup")
+            if warmup:
+                crash_info["parent_id"] = warmup
+            crash_info["session_roles"] = session_files
+        elif "parent_id" in meta:
+            crash_info["parent_id"] = meta["parent_id"]
+        else:
+            continue  # Skip crashes without parent info
+
+        results.append(crash_info)
+
+    return results
+
+
+def attach_crashes(
+    subgraph: Subgraph,
+    crashes: list[dict],
+    graph: LineageGraph,
+) -> int:
+    """Add crash nodes to an existing subgraph.
+
+    For each crash whose parent_id appears in the subgraph's nodes,
+    add a crash leaf node and an edge from parent to crash.
+
+    Returns the number of crash nodes attached.
+    """
+    attached = 0
+    for crash in crashes:
+        parent_id = crash.get("parent_id")
+        if parent_id is None or parent_id not in subgraph.nodes:
+            continue
+
+        crash_dir = crash["crash_dir"]
+        crash_node_id = f"__crash_{crash_dir.name}"
+
+        subgraph.nodes.add(crash_node_id)
+        subgraph.special_nodes[crash_node_id] = "crash"
+        subgraph.edges.append((parent_id, crash_node_id))
+
+        # Store metadata for decoration
+        graph.metadata[crash_node_id] = {
+            "fingerprint": crash.get("fingerprint", ""),
+            "crash_type": crash.get("crash_type", ""),
+            "signal_name": crash.get("signal_name", ""),
+            "timestamp": crash.get("timestamp", ""),
+            "parent_id": parent_id,
+        }
+        attached += 1
+
+    return attached
+
+
+# ---------------------------------------------------------------------------
 # Tree metrics computation
 # ---------------------------------------------------------------------------
 
@@ -1003,14 +1104,32 @@ def decorate(
                 ns.fontcolor = "white"
                 crash_meta = graph.metadata.get(node, {})
                 fingerprint = crash_meta.get("fingerprint", "")
+                crash_type = crash_meta.get("crash_type", "")
                 signal_name = crash_meta.get("signal_name", "")
                 crash_label_parts = [node.replace("__crash_", "")]
+                if crash_type:
+                    crash_label_parts.append(crash_type)
                 if fingerprint:
-                    crash_label_parts.append(fingerprint)
+                    truncated = fingerprint[:40] + ("..." if len(fingerprint) > 40 else "")
+                    crash_label_parts.append(truncated)
                 elif signal_name:
                     crash_label_parts.append(signal_name)
                 ns.label = "\\n".join(crash_label_parts)
-                ns.tooltip = ""
+                # Tooltip with full details
+                tooltip_parts: list[str] = []
+                if fingerprint:
+                    tooltip_parts.append(f"Fingerprint: {fingerprint}")
+                if crash_type:
+                    tooltip_parts.append(f"Type: {crash_type}")
+                if signal_name:
+                    tooltip_parts.append(f"Signal: {signal_name}")
+                parent_id = crash_meta.get("parent_id", "")
+                if parent_id:
+                    tooltip_parts.append(f"Parent: {parent_id}")
+                timestamp = crash_meta.get("timestamp", "")
+                if timestamp:
+                    tooltip_parts.append(f"Time: {timestamp}")
+                ns.tooltip = "\\n".join(tooltip_parts)
             elif role == "collapsed":
                 count = subgraph.collapsed.get(node, 0)
                 ns.shape = "note"
@@ -1048,6 +1167,19 @@ def decorate(
     for parent_node, child_node in subgraph.edges:
         es = EdgeStyle()
         edge_role = subgraph.edge_roles.get((parent_node, child_node))
+
+        # Crash edges: red, bold, labeled with crash type
+        # (only when no explicit edge_role like convergence is set)
+        child_role = subgraph.special_nodes.get(child_node)
+        if child_role == "crash" and not edge_role:
+            crash_meta = graph.metadata.get(child_node, {})
+            crash_type = crash_meta.get("crash_type", "CRASH")
+            es.color = COLOR_CRASH
+            es.style = "bold"
+            es.penwidth = 2.0
+            es.label = crash_type or "CRASH"
+            edge_list.append((parent_node, child_node, es))
+            continue
 
         child_meta = graph.metadata.get(child_node, {})
         dm = child_meta.get("discovery_mutation", {})
@@ -1164,7 +1296,57 @@ def _escape_dot(text: str) -> str:
     return text.replace("\\", "\\\\").replace('"', '\\"')
 
 
-def emit_dot(decorated: DecoratedGraph) -> str:
+def generate_legend_dot(no_color: bool = False) -> str:
+    """Generate DOT for a legend subgraph showing the color/shape key."""
+    if no_color:
+        return (
+            "  subgraph cluster_legend {\n"
+            '    label="Legend";\n'
+            "    labeljust=l;\n"
+            "    fontsize=12;\n"
+            "    style=rounded;\n"
+            '    color="#cccccc";\n'
+            "    legend_table [shape=plaintext, label=<\n"
+            '      <TABLE BORDER="0" CELLBORDER="1" CELLSPACING="0" CELLPADDING="4">\n'
+            "        <TR><TD>Seed</TD></TR>\n"
+            "        <TR><TD>Normal</TD></TR>\n"
+            "        <TR><TD>Fertile</TD></TR>\n"
+            "        <TR><TD>Sterile</TD></TR>\n"
+            "        <TR><TD>Crash</TD></TR>\n"
+            "        <TR><TD>Pruned</TD></TR>\n"
+            "      </TABLE>\n"
+            "    >];\n"
+            "  }"
+        )
+    return (
+        "  subgraph cluster_legend {\n"
+        '    label="Legend";\n'
+        "    labeljust=l;\n"
+        "    fontsize=12;\n"
+        "    style=rounded;\n"
+        '    color="#cccccc";\n'
+        "    legend_table [shape=plaintext, label=<\n"
+        '      <TABLE BORDER="0" CELLBORDER="1" CELLSPACING="0" CELLPADDING="4">\n'
+        f'        <TR><TD BGCOLOR="{COLOR_SEED}">Seed</TD></TR>\n'
+        f'        <TR><TD BGCOLOR="{COLOR_NORMAL}">Normal</TD></TR>\n'
+        f'        <TR><TD BGCOLOR="{COLOR_FERTILE}">'
+        '<FONT COLOR="white">Fertile</FONT></TD></TR>\n'
+        f'        <TR><TD BGCOLOR="{COLOR_STERILE}">Sterile</TD></TR>\n'
+        f'        <TR><TD BGCOLOR="{COLOR_CRASH}">'
+        '<FONT COLOR="white">Crash</FONT></TD></TR>\n'
+        f'        <TR><TD BGCOLOR="{COLOR_GHOST}">'
+        '<FONT COLOR="gray">Pruned</FONT></TD></TR>\n'
+        "      </TABLE>\n"
+        "    >];\n"
+        "  }"
+    )
+
+
+def emit_dot(
+    decorated: DecoratedGraph,
+    include_legend: bool = True,
+    no_color: bool = False,
+) -> str:
     """Generate a Graphviz DOT string from a decorated graph."""
     lines: list[str] = []
     lines.append("digraph lineage {")
@@ -1207,6 +1389,11 @@ def emit_dot(decorated: DecoratedGraph) -> str:
             attrs.append(f"penwidth={es.penwidth}")
         attrs_str = ", ".join(attrs)
         lines.append(f"  {_quote(parent_node)} -> {_quote(child_node)} [{attrs_str}];")
+
+    # Legend
+    if include_legend:
+        lines.append("")
+        lines.append(generate_legend_dot(no_color))
 
     lines.append("}")
     return "\n".join(lines)
@@ -1434,6 +1621,48 @@ def emit_html(
     output_path.write_text(html)
     print(f"HTML written to {output_path}", file=sys.stderr)
     return True
+
+
+# ---------------------------------------------------------------------------
+# Programmatic convenience API
+# ---------------------------------------------------------------------------
+
+
+def render_ancestry_svg(
+    state_path: Path,
+    target: str,
+    label_style: str = "standard",
+) -> str | None:
+    """Convenience function: render a file's ancestry as SVG string.
+
+    Returns SVG string on success, None if Graphviz unavailable.
+    For use by lafleur-campaign to embed lineage graphs in reports.
+    """
+    state = load_coverage_state(state_path)
+    per_file_coverage = state.get("per_file_coverage", {})
+    graph = build_adjacency_graph(per_file_coverage)
+
+    if target not in per_file_coverage:
+        return None
+
+    subgraph = extract_ancestry(graph, target)
+    decorated = decorate(subgraph, graph, label_style=label_style)
+    dot_string = emit_dot(decorated, include_legend=False)
+
+    if not shutil.which("dot"):
+        return None
+
+    try:
+        result = subprocess.run(
+            ["dot", "-Tsvg"],
+            input=dot_string,
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        return result.stdout if result.returncode == 0 else None
+    except (subprocess.TimeoutExpired, OSError):
+        return None
 
 
 # ---------------------------------------------------------------------------
@@ -1901,6 +2130,22 @@ Examples:
         metavar="PATH",
         help="Generate interactive HTML with pan/zoom (requires dot on PATH)",
     )
+    parser.add_argument(
+        "--include-crashes",
+        action="store_true",
+        help="Scan crashes/ directory and attach crash nodes to the graph",
+    )
+    parser.add_argument(
+        "--crashes-dir",
+        type=Path,
+        default=Path("crashes"),
+        help="Path to crashes directory (default: crashes/)",
+    )
+    parser.add_argument(
+        "--no-legend",
+        action="store_true",
+        help="Suppress the color/shape legend",
+    )
 
     subparsers = parser.add_subparsers(dest="mode", help="Visualization mode")
 
@@ -2046,11 +2291,25 @@ Examples:
         parser.print_help()
         sys.exit(0)
 
+    # Attach crash nodes if requested
+    if args.include_crashes:
+        crashes = scan_crashes(args.crashes_dir)
+        if crashes:
+            attached = attach_crashes(subgraph, crashes, graph)
+            if attached:
+                print(f"  Attached {attached} crash nodes", file=sys.stderr)
+            else:
+                print("  No crashes found matching nodes in this subgraph.", file=sys.stderr)
+        else:
+            print("  No crash directories found.", file=sys.stderr)
+
     # Compute metrics
     metrics = compute_tree_metrics(subgraph, graph)
 
     # Only show discoveries for ancestry/mrca modes
     effective_show_discoveries = args.show_discoveries and args.mode in ("ancestry", "mrca")
+
+    include_legend = not args.no_legend
 
     # Decorate
     decorated = decorate(
@@ -2081,11 +2340,11 @@ Examples:
             decorated, graph, subgraph, metrics=metrics, edge_discoveries=edge_discoveries
         )
     else:
-        output = emit_dot(decorated)
+        output = emit_dot(decorated, include_legend=include_legend, no_color=args.no_color)
 
     # HTML output
     if args.html:
-        dot_output = emit_dot(decorated)
+        dot_output = emit_dot(decorated, include_legend=include_legend, no_color=args.no_color)
         info = f"Mode: {args.mode} | Nodes: {len(subgraph.nodes)}"
         if metrics:
             info += f" | Strahler: {metrics.max_strahler}"
@@ -2096,7 +2355,7 @@ Examples:
     # Render or write
     if args.render:
         output_path = args.output or Path(f"lineage.{args.format}")
-        dot_output = emit_dot(decorated)
+        dot_output = emit_dot(decorated, include_legend=include_legend, no_color=args.no_color)
         success = render_graphviz(dot_output, output_path, fmt=args.format)
         if success:
             print(f"Rendered to {output_path}", file=sys.stderr)

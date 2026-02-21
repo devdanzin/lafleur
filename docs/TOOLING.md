@@ -199,7 +199,72 @@ This helps you quickly identify which crashes need attention and which are alrea
 
 -----
 
-## Tool 3: Historical Triage (`lafleur-triage`)
+## Tool 3: Lineage Visualization (`lafleur-lineage`)
+
+The lineage tool generates Graphviz DOT graphs from the corpus's parent–child relationships, letting you visualize how test cases evolved from their seeds. It helps answer questions like: "How did we reach this crash?", "Which seeds produced the most interesting descendants?", and "Where did two crashes diverge?"
+
+### Modes
+
+| Mode | Description | Example |
+|------|-------------|---------|
+| **ancestry** | Trace a file back to its seed | `lafleur-lineage ancestry 1234.py` |
+| **descendants** | Show what a file produced | `lafleur-lineage descendants 0001.py` |
+| **mrca** | Find the most recent common ancestor | `lafleur-lineage mrca 1234.py 0999.py` |
+| **forest** | Overview of all lineage trees | `lafleur-lineage forest --min-strahler 2` |
+
+Session crash directories are auto-detected and can trace all session scripts' lineages with `--multi-lineage`.
+
+### Common Options
+
+| Option | Description |
+|--------|-------------|
+| `--state-path` | Path to coverage_state.pkl (default: `coverage/coverage_state.pkl`) |
+| `-o`, `--output` | Output file path (default: stdout) |
+| `--render` | Render to image via Graphviz (requires `dot`) |
+| `--format` | Image format for `--render`: png, svg, pdf (default: png) |
+| `--json` | Emit JSON instead of DOT |
+| `--html PATH` | Generate interactive HTML with pan/zoom |
+| `--no-color` | Monochrome output |
+| `--label-style` | Node label detail: minimal, standard, verbose |
+| `--show-strahler` | Display Strahler stream order on nodes |
+| `--show-success-rate` | Display success rate (finds/attempts) on nodes |
+| `--show-discoveries` | Label edges with specific coverage discoveries |
+| `--include-crashes` | Scan crashes/ and attach crash nodes to the graph |
+| `--crashes-dir` | Path to crashes directory (default: `crashes/`) |
+| `--no-legend` | Suppress the color/shape legend |
+
+### Example Workflow
+
+```bash
+# 1. See the crash
+lafleur-triage show "ASAN:heap-use-after-free:_PyFrame_Traverse"
+
+# 2. Visualize how we got there (auto-detects session scripts)
+lafleur-lineage ancestry crashes/session_crash_20250120_1234/ --render -o crash_lineage.png
+
+# 3. See if the parent seed has other interesting descendants
+lafleur-lineage descendants 0001.py --max-depth 5 --render -o seed_tree.png
+
+# 4. Compare two crashes: where did their lineages diverge?
+lafleur-lineage mrca 1234.py 0999.py --show-discoveries --render -o divergence.png
+
+# 5. Interactive exploration of a large tree
+lafleur-lineage descendants 0001.py --html tree.html
+
+# 6. Forest overview with Strahler-based pruning
+lafleur-lineage forest --min-strahler 3 --html forest.html
+```
+
+### Output Formats
+
+- **DOT** (default): Pipe to Graphviz for rendering (`lafleur-lineage ancestry 1234.py | dot -Tpng -o out.png`)
+- **`--render`**: Direct image rendering (PNG/SVG/PDF) — requires `dot` on PATH
+- **`--html`**: Interactive HTML with SVG pan/zoom — great for large trees
+- **`--json`**: Machine-readable output for programmatic analysis
+
+-----
+
+## Tool 4: Historical Triage (`lafleur-triage`)
 
 The triage tool provides a SQLite-based registry for tracking crashes across campaigns, linking them to GitHub issues, and managing their lifecycle.
 

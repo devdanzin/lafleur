@@ -163,4 +163,6 @@ These are installed CLI commands for monitoring fuzzing progress, aggregating mu
 
 * **`lafleur-jit-tweak`** (installed script, in `lafleur/jit_tuner.py`) — Modifies CPython's internal JIT thresholds (`JIT_THRESHOLD`, `trace_stack_size`) to make the JIT more aggressive and easier to fuzz.
 
+* **`lafleur/lineage.py`** (`lafleur-lineage`) — **Lineage Visualization Tool**. Generates Graphviz DOT graphs from the corpus's `parent_id` relationships. Supports ancestry tracing (including multi-lineage session crash ancestry), descendant trees, MRCA computation, and corpus forest overview. Computes structural metrics (Strahler stream order, branching factor, imbalance) and supports interactive HTML output with SVG pan/zoom.
+
 * **`lafleur/bump_version.py`** — Maintenance script for updating the project version across `pyproject.toml` and `__init__.py`.

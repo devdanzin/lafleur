@@ -16,10 +16,12 @@ from lafleur.lineage import (
     BORDER_TACHYCARDIA,
     BORDER_ZOMBIE,
     COLOR_COLLAPSED,
+    COLOR_CRASH,
     COLOR_GHOST,
     COLOR_SEED,
     COLOR_UNRESOLVED,
     STRATEGY_COLORS,
+    attach_crashes,
     build_adjacency_graph,
     compute_edge_discoveries,
     compute_strahler,
@@ -33,14 +35,17 @@ from lafleur.lineage import (
     extract_forest,
     extract_mrca,
     extract_session_ancestry,
+    generate_legend_dot,
     print_ancestry_stats,
     print_descendants_stats,
     print_forest_stats,
     print_mrca_stats,
     print_session_ancestry_stats,
+    render_ancestry_svg,
     render_graphviz,
     resolve_session_scripts,
     resolve_target,
+    scan_crashes,
 )
 
 
@@ -2441,6 +2446,355 @@ class TestResolveTargetUpdated(unittest.TestCase):
         result, target_type = resolve_target("1234.py", pfc)
         self.assertEqual(target_type, "file")
         self.assertIsInstance(result, str)
+
+
+# ---------------------------------------------------------------------------
+# TestScanCrashes
+# ---------------------------------------------------------------------------
+
+
+class TestScanCrashes(unittest.TestCase):
+    def test_populated_directory(self):
+        """Scan a directory with crash subdirs containing metadata.json."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            crashes_dir = Path(tmpdir)
+            crash1 = crashes_dir / "crash_001"
+            crash1.mkdir()
+            (crash1 / "metadata.json").write_text(
+                json.dumps(
+                    {
+                        "fingerprint": "ASAN:heap-use-after-free",
+                        "type": "ASAN",
+                        "signal_name": "",
+                        "parent_id": "1234.py",
+                        "timestamp": "2025-01-01T00:00:00",
+                    }
+                )
+            )
+
+            results = scan_crashes(crashes_dir)
+            self.assertEqual(len(results), 1)
+            self.assertEqual(results[0]["fingerprint"], "ASAN:heap-use-after-free")
+            self.assertEqual(results[0]["crash_type"], "ASAN")
+            self.assertEqual(results[0]["parent_id"], "1234.py")
+
+    def test_empty_directory(self):
+        """Empty directory returns empty list."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            results = scan_crashes(Path(tmpdir))
+            self.assertEqual(results, [])
+
+    def test_missing_metadata(self):
+        """Crash dir without metadata.json is skipped."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            crashes_dir = Path(tmpdir)
+            (crashes_dir / "crash_no_meta").mkdir()
+            results = scan_crashes(crashes_dir)
+            self.assertEqual(results, [])
+
+    def test_session_crash_parent_extraction(self):
+        """Session crash extracts parent_id from session_corpus_files.warmup."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            crashes_dir = Path(tmpdir)
+            crash = crashes_dir / "session_crash_001"
+            crash.mkdir()
+            (crash / "metadata.json").write_text(
+                json.dumps(
+                    {
+                        "fingerprint": "SIGNAL:SIGSEGV",
+                        "type": "SIGNAL",
+                        "signal_name": "SIGSEGV",
+                        "session_corpus_files": {
+                            "warmup": "0100.py",
+                            "polluter": "0200.py",
+                            "attack": "0300.py",
+                        },
+                        "timestamp": "2025-01-01",
+                    }
+                )
+            )
+
+            results = scan_crashes(crashes_dir)
+            self.assertEqual(len(results), 1)
+            self.assertEqual(results[0]["parent_id"], "0100.py")
+            self.assertEqual(results[0]["session_roles"]["warmup"], "0100.py")
+
+    def test_standalone_crash_parent(self):
+        """Standalone crash with parent_id in metadata."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            crashes_dir = Path(tmpdir)
+            crash = crashes_dir / "crash_002"
+            crash.mkdir()
+            (crash / "metadata.json").write_text(
+                json.dumps(
+                    {
+                        "fingerprint": "timeout",
+                        "type": "TIMEOUT",
+                        "parent_id": "0055.py",
+                    }
+                )
+            )
+
+            results = scan_crashes(crashes_dir)
+            self.assertEqual(len(results), 1)
+            self.assertEqual(results[0]["parent_id"], "0055.py")
+
+    def test_nonexistent_directory(self):
+        """Non-existent directory returns empty list."""
+        results = scan_crashes(Path("/nonexistent/path"))
+        self.assertEqual(results, [])
+
+
+# ---------------------------------------------------------------------------
+# TestAttachCrashes
+# ---------------------------------------------------------------------------
+
+
+class TestAttachCrashes(unittest.TestCase):
+    def _make_graph_and_subgraph(self):
+        """Create a simple graph with a subgraph for crash attachment tests."""
+        pfc = {
+            "seed.py": {"parent_id": None, "discovery_mutation": {}},
+            "child.py": {"parent_id": "seed.py", "discovery_mutation": {"strategy": "havoc"}},
+        }
+        graph = build_adjacency_graph(pfc)
+        sub = extract_descendants(graph, "seed.py")
+        return graph, sub
+
+    def test_matching_crash_attached(self):
+        """Crash whose parent_id is in the subgraph gets attached."""
+        graph, sub = self._make_graph_and_subgraph()
+        crashes = [
+            {
+                "crash_dir": Path("crashes/crash_001"),
+                "fingerprint": "ASAN:heap-buffer-overflow",
+                "crash_type": "ASAN",
+                "signal_name": "",
+                "parent_id": "child.py",
+                "timestamp": "2025-01-01",
+            }
+        ]
+        attached = attach_crashes(sub, crashes, graph)
+        self.assertEqual(attached, 1)
+        self.assertIn("__crash_crash_001", sub.nodes)
+        self.assertEqual(sub.special_nodes["__crash_crash_001"], "crash")
+        self.assertIn(("child.py", "__crash_crash_001"), sub.edges)
+
+    def test_non_matching_crash_ignored(self):
+        """Crash whose parent_id is NOT in the subgraph gets ignored."""
+        graph, sub = self._make_graph_and_subgraph()
+        initial_nodes = len(sub.nodes)
+        crashes = [
+            {
+                "crash_dir": Path("crashes/crash_002"),
+                "fingerprint": "fp",
+                "crash_type": "SIGNAL",
+                "parent_id": "nonexistent.py",
+            }
+        ]
+        attached = attach_crashes(sub, crashes, graph)
+        self.assertEqual(attached, 0)
+        self.assertEqual(len(sub.nodes), initial_nodes)
+
+    def test_multiple_crashes_same_parent(self):
+        """Two crashes with the same parent both get attached."""
+        graph, sub = self._make_graph_and_subgraph()
+        crashes = [
+            {
+                "crash_dir": Path("crashes/crash_a"),
+                "fingerprint": "fp_a",
+                "crash_type": "ASAN",
+                "parent_id": "child.py",
+            },
+            {
+                "crash_dir": Path("crashes/crash_b"),
+                "fingerprint": "fp_b",
+                "crash_type": "SIGNAL",
+                "parent_id": "child.py",
+            },
+        ]
+        attached = attach_crashes(sub, crashes, graph)
+        self.assertEqual(attached, 2)
+        self.assertIn("__crash_crash_a", sub.nodes)
+        self.assertIn("__crash_crash_b", sub.nodes)
+
+    def test_crash_node_decoration(self):
+        """Attached crash nodes get octagon shape and red fill when decorated."""
+        graph, sub = self._make_graph_and_subgraph()
+        crashes = [
+            {
+                "crash_dir": Path("crashes/crash_dec"),
+                "fingerprint": "ASAN:use-after-free",
+                "crash_type": "ASAN",
+                "signal_name": "SIGSEGV",
+                "parent_id": "child.py",
+                "timestamp": "2025-01-01",
+            }
+        ]
+        attach_crashes(sub, crashes, graph)
+        decorated = decorate(sub, graph)
+
+        crash_style = decorated.nodes["__crash_crash_dec"]
+        self.assertEqual(crash_style.shape, "octagon")
+        self.assertEqual(crash_style.fillcolor, COLOR_CRASH)
+        self.assertIn("ASAN", crash_style.label)
+        self.assertIn("ASAN:use-after-free", crash_style.label)
+
+    def test_crash_edge_styling(self):
+        """Edge from parent to crash node has red, bold styling."""
+        graph, sub = self._make_graph_and_subgraph()
+        crashes = [
+            {
+                "crash_dir": Path("crashes/crash_edge"),
+                "fingerprint": "fp",
+                "crash_type": "SIGNAL",
+                "parent_id": "child.py",
+            }
+        ]
+        attach_crashes(sub, crashes, graph)
+        decorated = decorate(sub, graph)
+
+        edge_map = {(p, c): es for p, c, es in decorated.edges}
+        crash_edge = edge_map.get(("child.py", "__crash_crash_edge"))
+        self.assertIsNotNone(crash_edge)
+        self.assertEqual(crash_edge.color, COLOR_CRASH)
+        self.assertEqual(crash_edge.style, "bold")
+        self.assertEqual(crash_edge.penwidth, 2.0)
+        self.assertIn("SIGNAL", crash_edge.label)
+
+
+# ---------------------------------------------------------------------------
+# TestLegend
+# ---------------------------------------------------------------------------
+
+
+class TestLegend(unittest.TestCase):
+    def test_legend_dot_structure(self):
+        """Legend DOT contains cluster_legend subgraph with expected entries."""
+        legend = generate_legend_dot()
+        self.assertIn("subgraph cluster_legend", legend)
+        self.assertIn("Seed", legend)
+        self.assertIn("Normal", legend)
+        self.assertIn("Fertile", legend)
+        self.assertIn("Sterile", legend)
+        self.assertIn("Crash", legend)
+        self.assertIn("Pruned", legend)
+
+    def test_legend_included_by_default(self):
+        """emit_dot with include_legend=True includes the legend."""
+        from lafleur.lineage import DecoratedGraph, NodeStyle
+
+        decorated = DecoratedGraph(
+            nodes={"a": NodeStyle(label="a")},
+            edges=[],
+            graph_attrs={"rankdir": "LR"},
+        )
+        dot = emit_dot(decorated, include_legend=True)
+        self.assertIn("cluster_legend", dot)
+
+    def test_legend_suppressed(self):
+        """emit_dot with include_legend=False omits the legend."""
+        from lafleur.lineage import DecoratedGraph, NodeStyle
+
+        decorated = DecoratedGraph(
+            nodes={"a": NodeStyle(label="a")},
+            edges=[],
+            graph_attrs={"rankdir": "LR"},
+        )
+        dot = emit_dot(decorated, include_legend=False)
+        self.assertNotIn("cluster_legend", dot)
+
+    def test_no_color_legend(self):
+        """Monochrome legend has no BGCOLOR attributes."""
+        legend = generate_legend_dot(no_color=True)
+        self.assertNotIn("BGCOLOR", legend)
+        self.assertIn("Seed", legend)
+        self.assertIn("Crash", legend)
+
+
+# ---------------------------------------------------------------------------
+# TestProgrammaticApi
+# ---------------------------------------------------------------------------
+
+
+class TestProgrammaticApi(unittest.TestCase):
+    def test_render_ancestry_svg_with_graphviz(self):
+        """render_ancestry_svg returns SVG string when Graphviz is available."""
+        state = {
+            "per_file_coverage": {
+                "seed.py": {"parent_id": None, "discovery_mutation": {}},
+                "child.py": {
+                    "parent_id": "seed.py",
+                    "discovery_mutation": {"strategy": "havoc"},
+                },
+            }
+        }
+        with (
+            patch("lafleur.lineage.load_coverage_state", return_value=state),
+            patch("lafleur.lineage.shutil.which", return_value="/usr/bin/dot"),
+            patch("lafleur.lineage.subprocess.run") as mock_run,
+        ):
+            mock_run.return_value = MagicMock(returncode=0, stdout="<svg>test</svg>")
+            result = render_ancestry_svg(Path("state.pkl"), "child.py")
+            self.assertEqual(result, "<svg>test</svg>")
+            mock_run.assert_called_once()
+
+    def test_render_ancestry_svg_no_graphviz(self):
+        """render_ancestry_svg returns None when Graphviz is not available."""
+        state = {
+            "per_file_coverage": {
+                "seed.py": {"parent_id": None, "discovery_mutation": {}},
+                "child.py": {"parent_id": "seed.py", "discovery_mutation": {}},
+            }
+        }
+        with (
+            patch("lafleur.lineage.load_coverage_state", return_value=state),
+            patch("lafleur.lineage.shutil.which", return_value=None),
+        ):
+            result = render_ancestry_svg(Path("state.pkl"), "child.py")
+            self.assertIsNone(result)
+
+    def test_render_ancestry_svg_unknown_target(self):
+        """render_ancestry_svg returns None for unknown target."""
+        state = {
+            "per_file_coverage": {
+                "seed.py": {"parent_id": None, "discovery_mutation": {}},
+            }
+        }
+        with patch("lafleur.lineage.load_coverage_state", return_value=state):
+            result = render_ancestry_svg(Path("state.pkl"), "nonexistent.py")
+            self.assertIsNone(result)
+
+    def test_extract_functions_callable_without_argparse(self):
+        """All extract functions accept plain Python arguments."""
+        pfc = {
+            "seed.py": {"parent_id": None, "discovery_mutation": {}},
+            "a.py": {"parent_id": "seed.py", "discovery_mutation": {"strategy": "havoc"}},
+            "b.py": {"parent_id": "seed.py", "discovery_mutation": {"strategy": "spam"}},
+        }
+        graph = build_adjacency_graph(pfc)
+
+        # Each function should accept plain Python args, no argparse namespace
+        ancestry = extract_ancestry(graph, "a.py")
+        self.assertIsInstance(ancestry.nodes, set)
+
+        desc = extract_descendants(graph, "seed.py", max_depth=5, collapse_sterile=True)
+        self.assertIsInstance(desc.nodes, set)
+
+        mrca = extract_mrca(graph, ["a.py", "b.py"])
+        self.assertIsInstance(mrca.nodes, set)
+
+        forest = extract_forest(graph, max_depth=10, min_descendants=0, min_strahler=0)
+        self.assertIsInstance(forest.nodes, set)
+
+        metrics = compute_tree_metrics(desc, graph)
+        self.assertIsInstance(metrics.max_strahler, int)
+
+        decorated = decorate(desc, graph, label_style="standard", no_color=False)
+        self.assertIsInstance(decorated.nodes, dict)
+
+        dot = emit_dot(decorated, include_legend=True, no_color=False)
+        self.assertIsInstance(dot, str)
 
 
 if __name__ == "__main__":

@@ -46,6 +46,9 @@ The static portion of a [Test Case](#test-case) that handles imports, setup code
 ### Bounded Run
 A fuzzing run with explicit limits on sessions and/or mutations, enabled via diagnostic mode options (`--max-sessions`, `--max-mutations-per-session`). Useful for smoke tests, CI integration, and mutator development.
 
+### Branching Factor
+A structural metric computed by [`lafleur-lineage`](#lafleur-lineage). The number of direct [Children](#child--mutant) of an internal [Corpus](#corpus) node. Reported as mean and max across all internal nodes in a subgraph. High branching indicates a [Parent](#parent) that spawned many successful mutations in parallel.
+
 ### Breadth-First
 The default session strategy where the [Orchestrator](#lafleurorchestrator) selects a different [Parent](#parent) from the [Corpus](#corpus) for each session, exploring the coverage landscape broadly. Contrast with [Deepening / Depth-First](#deepening--depth-first).
 
@@ -200,6 +203,9 @@ A coverage item (edge, [UOP](#uop-micro-operation), or [Rare Event](#rare-event)
 ### Grace Period
 In the [MutatorScoreTracker](#mutatorscoretracker), new or rarely-used candidates (fewer than `min_attempts` uses) receive a neutral weight of 1.0 regardless of their score. This prevents the learning engine from prematurely dismissing a [Transformer](#transformer) that hasn't had enough attempts to prove itself.
 
+### Ghost Node
+In [`lafleur-lineage`](#lafleur-lineage) output, a placeholder node representing a [Corpus](#corpus) file that was removed by [Corpus Pruning](#corpus-pruning) but whose [Tombstone](#tombstone) metadata preserves the [Lineage](#lineage) chain. Rendered with dotted borders and gray text. Ghost nodes allow ancestry visualization to pass through pruned intermediates without breaking the chain.
+
 ### Guard
 A runtime check inserted by the JIT compiler into optimized [Traces](#trace). Guards verify that the assumptions made during compilation still hold — for example, that a variable is still an integer, a global hasn't changed, or a type's version tag matches. Guard failure triggers [Deoptimization](#deoptimization). Many lafleur [Mutators](#transformer) specifically target guard failure.
 
@@ -240,6 +246,9 @@ A scoring term for [Children](#child--mutant) that produce deep JIT executor cha
 
 ## I
 
+### Imbalance
+A structural metric computed by [`lafleur-lineage`](#lafleur-lineage). Measures how unevenly a [Parent](#parent)'s [Children](#child--mutant) contributed to the [Lineage](#lineage) tree, calculated as the coefficient of variation of children's subtree sizes. High imbalance means one [Lineage](#lineage) branch dominates while siblings went [Sterile](#sterile--sterility).
+
 ### Instance
 A single running lafleur process, identified by a UUID (`run_id`) and a human-readable name (`instance_name`). Multiple instances can run in parallel on different cores, each with its own working directory. See also [Campaign](#campaign).
 
@@ -271,6 +280,9 @@ The number of times a bytecode must execute before the JIT considers it "hot" an
 ### `lafleur-campaign`
 CLI tool that aggregates metrics from multiple fuzzing [Instances](#instance) into a fleet-wide dashboard. Deduplicates crashes, produces coverage totals, generates HTML reports with visualizations, and integrates with the [Crash Registry](#crash-registry) for [Regression](#regression) detection. See also [Campaign](#campaign).
 
+### `lafleur-lineage`
+CLI tool (`lafleur/lineage.py`) that generates Graphviz DOT graphs from the [Corpus](#corpus)'s [Lineage](#lineage) relationships. Supports five modes: [Ancestry](#ancestry-mode) (trace a file back to its [Seed](#seed)), [Descendants](#descendants-mode) (show what a file produced), [MRCA](#mrca-most-recent-common-ancestor) (find the common ancestor of two files), [Forest](#forest-mode) (overview of all lineage trees), and multi-lineage session crash ancestry. Computes [Strahler Stream Order](#strahler-stream-order), [Branching Factor](#branching-factor), and [Imbalance](#imbalance) metrics. Supports DOT, JSON, and interactive HTML output.
+
 ### `lafleur-jit-tweak`
 CLI tool that modifies CPython's internal JIT parameters ([JIT Threshold](#jit-threshold), `trace_stack_size`) to make the JIT more aggressive and easier to fuzz. Requires rebuilding CPython after running.
 
@@ -299,6 +311,9 @@ The session minimizer tool (`minimize.py`) that takes a complex multi-script cra
 
 ### Mixer, The
 The [Session Bundle](#session-bundle) assembly strategy that probabilistically injects 1–3 random [Polluter](#polluter) scripts from the [Corpus](#corpus) before the main test case. Polluters fill [Bloom Filters](#bloom-filter), fragment memory, and stress the JIT's global watchers, creating a [Hot JIT](#hot-jit) state. Triggered with `MIXER_PROBABILITY` (30% of non-[Solo](#solo-session) sessions).
+
+### MRCA (Most Recent Common Ancestor)
+In [`lafleur-lineage`](#lafleur-lineage), the deepest [Corpus](#corpus) file that is an ancestor of two or more target files. Computed by intersecting the ancestry chains of each target. The MRCA represents the point where a productive [Lineage](#lineage) forked into independently evolving branches. Borrowed from phylogenetics.
 
 ### MRE (Minimal Reproducible Example)
 The smallest possible [Test Case](#test-case) that still triggers a specific crash. Produced by the [Minimizer](#minimizer) from a full crash bundle.
@@ -418,8 +433,14 @@ The threshold of consecutive unproductive [Mutations](#mutation) after which act
 ### Structural Metrics
 Per-[Harness](#harness) measurements extracted from JIT trace logs: `trace_length` ([UOP](#uop-micro-operation) count in a successfully generated optimized [Trace](#trace)) and `side_exits` (count of [Deoptimization](#deoptimization)/exit UOPs). Used in [Corpus](#corpus) scoring to reward complex, branchy traces.
 
+### Strahler Stream Order
+A structural complexity metric computed by [`lafleur-lineage`](#lafleur-lineage), borrowed from hydrology. Leaves have order 1. An internal node's order equals its maximum child's order (if unique) or maximum + 1 (if two or more children share the maximum). High Strahler order indicates a "watershed" node in the [Lineage](#lineage) tree — the confluence of multiple deep, balanced subtrees representing independently productive evolutionary branches.
+
 ### Stub
 A JIT-compiled [Trace](#trace) with very small [Code Size](#code-size) (< 5 bytes). Stubs often indicate degenerate compilation where the JIT produced nearly empty machine code. Earns a +5 bonus in the [InterestingnessScorer](#interestingnessscorer).
+
+### Success Rate
+In [`lafleur-lineage`](#lafleur-lineage), the ratio of a [Parent](#parent)'s [Fertile](#fertile--fertility) outputs to its total mutation attempts: `total_finds / total_mutations_against`. Distinguishes genuinely productive parents from those that produced many [Children](#child--mutant) simply because they were selected for [Mutation](#mutation) many times. Requires the `total_mutations_against` counter in [Corpus](#corpus) metadata.
 
 ## T
 
@@ -428,6 +449,9 @@ A scoring bonus (+20) for [Children](#child--mutant) that provoke high JIT [Exit
 
 ### Tachycardia Decay
 After [Dynamic Density Clamping](#dynamic-density-clamping), the saved [Exit Density](#exit-density) is multiplied by a decay factor (0.95). This creates gentle downward pressure — the target for the next generation is 95% of the clamped value, preventing [Lineages](#lineage) from permanently riding a single high-density spike.
+
+### Tombstone
+A minimal metadata entry retained in `per_file_coverage` when a [Corpus](#corpus) file is removed by pruning. Contains only `parent_id`, `discovery_mutation`, `lineage_depth`, `discovery_time`, and `is_pruned: True`. Preserves [Lineage](#lineage) chain connectivity for [`lafleur-lineage`](#lafleur-lineage) [Ghost Nodes](#ghost-node) while releasing the bulk of the metadata (coverage data, hashes, etc.).
 
 ### TelemetryManager
 The component (`telemetry.py`) that tracks [Run](#run) statistics, logs time-series datapoints for [Campaign](#campaign) analysis, records [Corpus](#corpus) evolution stats, and generates `corpus_stats.json`.

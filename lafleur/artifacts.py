@@ -406,7 +406,13 @@ class ArtifactManager:
         return crash_dir
 
     def save_session_crash(
-        self, scripts: list[Path], exit_code: int, crash_signature: CrashSignature | None = None
+        self,
+        scripts: list[Path],
+        exit_code: int,
+        crash_signature: CrashSignature | None = None,
+        *,
+        parent_id: str | None = None,
+        polluter_ids: list[str] | None = None,
     ) -> Path:
         """
         Save a session crash bundle containing all scripts in the sequence.
@@ -433,6 +439,13 @@ class ArtifactManager:
             metadata_path = crash_dir / "metadata.json"
             metadata = crash_signature.to_dict()
             metadata["timestamp"] = timestamp
+            # Record corpus filenames for lineage tracing
+            session_corpus_files: dict[str, str | list[str] | None] = {
+                "warmup": parent_id,
+            }
+            if polluter_ids:
+                session_corpus_files["polluters"] = polluter_ids
+            metadata["session_corpus_files"] = session_corpus_files
             metadata_path.write_text(json.dumps(metadata, indent=2))
 
         script_names = []
@@ -476,6 +489,7 @@ class ArtifactManager:
         *,
         parent_id: str | None = None,
         mutation_info: MutationInfo | None = None,
+        polluter_ids: list[str] | None = None,
     ) -> bool:
         """
         Check for crashes, determine the cause (Signal/Retcode/Keyword), and save artifacts.
@@ -489,6 +503,7 @@ class ArtifactManager:
             session_files: List of all scripts in the session (for session mode)
             parent_id: Parent corpus file being mutated (for health monitoring).
             mutation_info: Mutation context dict (for health monitoring).
+            polluter_ids: Corpus filenames of polluter scripts (for session mode).
 
         Returns:
             True if a crash was detected and saved (stat key: "crashes_found" handled by caller)
@@ -590,7 +605,13 @@ class ArtifactManager:
                     f"  [SESSION] Saving crash bundle with {num_scripts} script(s).",
                     file=sys.stderr,
                 )
-                crash_dir = self.save_session_crash(scripts_to_save, return_code, crash_signature)
+                crash_dir = self.save_session_crash(
+                    scripts_to_save,
+                    return_code,
+                    crash_signature,
+                    parent_id=parent_id,
+                    polluter_ids=polluter_ids,
+                )
 
                 # Determine log destination name
                 log_suffix = self._get_log_suffix(log_to_save)

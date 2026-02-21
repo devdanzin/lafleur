@@ -94,6 +94,8 @@ def generate_corpus_stats(corpus_manager: CorpusManager) -> dict[str, Any]:
     mutator_counter: Counter[str] = Counter()  # Individual transformers
 
     for filename, metadata in per_file_coverage.items():
+        if metadata.get("is_pruned", False):
+            continue
         all_file_ids.add(filename)
 
         # Count sterile files
@@ -132,7 +134,9 @@ def generate_corpus_stats(corpus_manager: CorpusManager) -> dict[str, Any]:
 
     # Calculate tree topology
     root_count = sum(
-        1 for metadata in per_file_coverage.values() if metadata.get("parent_id") is None
+        1
+        for metadata in per_file_coverage.values()
+        if metadata.get("parent_id") is None and not metadata.get("is_pruned", False)
     )
 
     # Leaf files are those that never appear as a parent

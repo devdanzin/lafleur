@@ -476,6 +476,7 @@ class ExecutionManager:
 
             # Build the command based on session fuzzing mode
             session_files: list[Path] | None = None
+            polluter_ids: list[str] | None = None
             if self.session_fuzz:
                 if random.random() < SOLO_SESSION_PROBABILITY:
                     # Solo session: child only, cold JIT
@@ -508,6 +509,7 @@ class ExecutionManager:
                             pass
 
                         if polluters:
+                            polluter_ids = [p.name for p in polluters]
                             session_files = polluters + [parent_path, child_source_path]
                             print(
                                 f"  [MIXER] Active: Added {len(polluters)} polluter(s) to session.",
@@ -554,6 +556,7 @@ class ExecutionManager:
                 nojit_cv=nojit_cv,
                 parent_path=parent_path,
                 session_files=session_files if self.session_fuzz else None,
+                polluter_ids=polluter_ids,
             ), None
         except subprocess.TimeoutExpired:
             self.artifact_manager.handle_timeout(child_source_path, child_log_path, parent_path)

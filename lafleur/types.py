@@ -124,7 +124,9 @@ class CorpusFileMetadata(TypedDict, total=False):
     # --- Mutable runtime state ---
     mutations_since_last_find: int
     total_finds: int
+    total_mutations_against: int
     is_sterile: bool
+    is_pruned: bool  # Tombstone marker for pruned files
 
     # --- Post-hoc additions (may be absent on most entries) ---
     subsumed_children_count: int  # Set by prune_corpus only

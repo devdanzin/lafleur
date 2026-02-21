@@ -21,7 +21,15 @@ from lafleur.coverage import (
     merge_coverage_into_global,
     parse_log_for_edge_coverage,
 )
-from lafleur.types import JitStats, MutationInfo
+from lafleur.types import (
+    AnalysisResult,
+    CrashResult,
+    DivergenceResult,
+    JitStats,
+    MutationInfo,
+    NewCoverageResult,
+    NoChangeResult,
+)
 from lafleur.utils import ExecutionResult
 
 if TYPE_CHECKING:
@@ -578,8 +586,8 @@ class ScoringManager:
         mutation_seed: int,
         parent_file_size: int,
         parent_lineage_edge_count: int,
-    ) -> dict:
-        """Orchestrate the analysis of a run and return a dictionary of findings."""
+    ) -> AnalysisResult:
+        """Orchestrate the analysis of a run and return an AnalysisResult."""
         if self.artifact_manager is None or self.corpus_manager is None:
             raise RuntimeError("ScoringManager requires artifact_manager and corpus_manager")
         if self._get_core_code is None:
@@ -595,7 +603,7 @@ class ScoringManager:
                 exec_result.divergence_reason or "unknown",
             )
             self.run_stats["divergences_found"] = self.run_stats.get("divergences_found", 0) + 1
-            return {"status": "DIVERGENCE"}
+            return DivergenceResult(status="DIVERGENCE", mutation_info=mutation_info or {})
 
         log_content = ""
         try:
@@ -613,12 +621,12 @@ class ScoringManager:
             parent_id=parent_id,
             mutation_info=mutation_info,
         ):
-            return {
-                "status": "CRASH",
-                "mutation_info": mutation_info or {},
-                "parent_id": parent_id,
-                "fingerprint": self.artifact_manager.last_crash_fingerprint,
-            }
+            return CrashResult(
+                status="CRASH",
+                mutation_info=mutation_info or {},
+                parent_id=parent_id,
+                fingerprint=self.artifact_manager.last_crash_fingerprint,
+            )
 
         child_coverage = parse_log_for_edge_coverage(exec_result.log_path, self.coverage_manager)
 
@@ -656,7 +664,7 @@ class ScoringManager:
                 mutation_seed,
             )
 
-        return {"status": "NO_CHANGE"}
+        return NoChangeResult(status="NO_CHANGE")
 
     def _prepare_new_coverage_result(
         self,
@@ -667,8 +675,8 @@ class ScoringManager:
         parent_id: str | None,
         mutation_info: MutationInfo,
         mutation_seed: int,
-    ) -> dict:
-        """Deduplicate, commit coverage, apply density decay, and build the result dict."""
+    ) -> AnalysisResult:
+        """Deduplicate, commit coverage, apply density decay, and build the result."""
         assert self.corpus_manager is not None
         assert self._get_core_code is not None
 
@@ -692,7 +700,7 @@ class ScoringManager:
                     str(e),
                     strategy=mutation_info.get("strategy") if mutation_info else None,
                 )
-            return {"status": "NO_CHANGE"}
+            return NoChangeResult(status="NO_CHANGE")
 
         content_hash = hashlib.sha256(core_code_to_save.encode("utf-8")).hexdigest()
         coverage_hash = self._calculate_coverage_hash(child_coverage)
@@ -704,7 +712,7 @@ class ScoringManager:
             )
             if self.health_monitor:
                 self.health_monitor.record_duplicate_rejected(content_hash, coverage_hash)
-            return {"status": "NO_CHANGE"}
+            return NoChangeResult(status="NO_CHANGE")
 
         # This is the crucial step: if it's new and not a duplicate, we commit the coverage.
         self._update_global_coverage(child_coverage)
@@ -769,18 +777,18 @@ class ScoringManager:
         jit_stats_for_save["child_delta_max_exit_density"] = saved_delta_density
         jit_stats_for_save["child_delta_total_exits"] = saved_delta_exits
 
-        saved_mutation_info = {**mutation_info, "jit_stats": jit_stats_for_save}
+        saved_mutation_info: MutationInfo = {**mutation_info, "jit_stats": jit_stats_for_save}
 
-        return {
-            "status": "NEW_COVERAGE",
-            "core_code": core_code_to_save,
-            "baseline_coverage": child_coverage,
-            "content_hash": content_hash,
-            "coverage_hash": coverage_hash,
-            "execution_time_ms": exec_result.execution_time_ms,
-            "parent_id": parent_id,
-            "mutation_info": saved_mutation_info,
-            "mutation_seed": mutation_seed,
-            "jit_avg_time_ms": exec_result.jit_avg_time_ms,
-            "nojit_avg_time_ms": exec_result.nojit_avg_time_ms,
-        }
+        return NewCoverageResult(
+            status="NEW_COVERAGE",
+            core_code=core_code_to_save,
+            baseline_coverage=child_coverage,
+            content_hash=content_hash,
+            coverage_hash=coverage_hash,
+            execution_time_ms=exec_result.execution_time_ms,
+            parent_id=parent_id,
+            mutation_info=saved_mutation_info,
+            mutation_seed=mutation_seed,
+            jit_avg_time_ms=exec_result.jit_avg_time_ms,
+            nojit_avg_time_ms=exec_result.nojit_avg_time_ms,
+        )

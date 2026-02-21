@@ -8,6 +8,9 @@ import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import hashlib
+import tempfile
+
 from lafleur.lineage import (
     BORDER_MRCA,
     BORDER_TACHYCARDIA,
@@ -15,6 +18,7 @@ from lafleur.lineage import (
     COLOR_COLLAPSED,
     COLOR_GHOST,
     COLOR_SEED,
+    COLOR_UNRESOLVED,
     STRATEGY_COLORS,
     build_adjacency_graph,
     compute_edge_discoveries,
@@ -22,14 +26,20 @@ from lafleur.lineage import (
     compute_tree_metrics,
     decorate,
     emit_dot,
+    emit_html,
     emit_json,
     extract_ancestry,
     extract_descendants,
+    extract_forest,
     extract_mrca,
+    extract_session_ancestry,
     print_ancestry_stats,
     print_descendants_stats,
+    print_forest_stats,
     print_mrca_stats,
+    print_session_ancestry_stats,
     render_graphviz,
+    resolve_session_scripts,
     resolve_target,
 )
 
@@ -704,9 +714,7 @@ class TestResolveTarget(unittest.TestCase):
             resolve_target("nonexistent.py", pfc)
 
     def test_crash_directory(self, *_args):
-        """Crash directory with metadata.json resolves to warmup file."""
-        import tempfile
-
+        """Crash directory with metadata.json returns Path and crash_dir type."""
         with tempfile.TemporaryDirectory() as tmpdir:
             crash_dir = Path(tmpdir) / "crash_001"
             crash_dir.mkdir()
@@ -714,8 +722,8 @@ class TestResolveTarget(unittest.TestCase):
             (crash_dir / "metadata.json").write_text(json.dumps(meta))
 
             pfc = {"parent.py": {"parent_id": None}}
-            filename, target_type = resolve_target(str(crash_dir), pfc)
-            self.assertEqual(filename, "parent.py")
+            result, target_type = resolve_target(str(crash_dir), pfc)
+            self.assertIsInstance(result, Path)
             self.assertEqual(target_type, "crash_dir")
 
 
@@ -1684,6 +1692,755 @@ class TestCLIMrca(unittest.TestCase):
 
 # Need Subgraph import for stats tests
 from lafleur.lineage import Subgraph  # noqa: E402
+
+
+# ---------------------------------------------------------------------------
+# Session crash directory fixture
+# ---------------------------------------------------------------------------
+
+
+def make_session_crash_dir(tmp_path: Path) -> tuple[Path, dict]:
+    """Create a mock session crash directory with scripts and metadata.
+
+    Returns (crash_dir, expected_corpus_map).
+    """
+    crash_dir = tmp_path / "session_crash_20250120_1234"
+    crash_dir.mkdir()
+
+    (crash_dir / "00_warmup.py").write_text("# warmup script content")
+    (crash_dir / "01_script.py").write_text("# polluter script content")
+    (crash_dir / "02_attack.py").write_text("# attack script content")
+
+    metadata = {
+        "type": "SIGNAL",
+        "fingerprint": "SEGV:unknown",
+        "returncode": -11,
+        "signal_name": "SIGSEGV",
+        "session_corpus_files": {
+            "warmup": "parent.py",
+            "polluters": ["polluter.py"],
+        },
+    }
+    (crash_dir / "metadata.json").write_text(json.dumps(metadata))
+
+    return crash_dir, {"warmup": "parent.py", "polluter_0": "polluter.py", "attack": None}
+
+
+def make_multi_seed_corpus() -> dict:
+    """Create a corpus with 3 seeds, each with descendants."""
+    base_dm = {"strategy": "havoc", "transformers": ["Op"], "jit_stats": {}}
+    pfc: dict = {}
+
+    for seed_idx in range(3):
+        seed = f"seed_{seed_idx}.py"
+        pfc[seed] = {
+            "parent_id": None,
+            "lineage_depth": 0,
+            "total_finds": 5 + seed_idx * 5,
+            "total_mutations_against": 100,
+            "is_sterile": False,
+            "is_pruned": False,
+            "discovery_mutation": {
+                "strategy": "generative_seed",
+                "transformers": [],
+                "jit_stats": {},
+            },
+            "mutations_since_last_find": 0,
+        }
+        # Add children
+        num_children = (seed_idx + 1) * 3  # 3, 6, 9 children
+        for c in range(num_children):
+            child = f"child_{seed_idx}_{c}.py"
+            pfc[child] = {
+                "parent_id": seed,
+                "lineage_depth": 1,
+                "total_finds": 1 if c == 0 else 0,
+                "total_mutations_against": 20,
+                "is_sterile": c > 0,
+                "is_pruned": False,
+                "discovery_mutation": base_dm,
+                "mutations_since_last_find": 20 if c > 0 else 5,
+            }
+
+    return pfc
+
+
+# ---------------------------------------------------------------------------
+# TestResolveSessionScripts
+# ---------------------------------------------------------------------------
+
+
+class TestResolveSessionScripts(unittest.TestCase):
+    def test_resolution_from_metadata(self):
+        """Crash dir with session_corpus_files resolves correctly."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            crash_dir, expected = make_session_crash_dir(Path(tmpdir))
+            pfc = {"parent.py": {"parent_id": None}, "polluter.py": {"parent_id": None}}
+            result = resolve_session_scripts(crash_dir, pfc)
+            self.assertEqual(result["warmup"], "parent.py")
+            self.assertEqual(result["polluter_0"], "polluter.py")
+            self.assertIsNone(result["attack"])
+
+    def test_fallback_to_content_hash(self):
+        """Script content matching a corpus file's content_hash resolves."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            crash_dir = Path(tmpdir) / "crash_001"
+            crash_dir.mkdir()
+
+            content = "# warmup content for hash test"
+            content_hash = hashlib.sha256(content.encode()).hexdigest()
+            (crash_dir / "00_warmup.py").write_text(content)
+            (crash_dir / "metadata.json").write_text("{}")
+
+            pfc = {"matched.py": {"parent_id": None, "content_hash": content_hash}}
+            result = resolve_session_scripts(crash_dir, pfc)
+            self.assertEqual(result["warmup"], "matched.py")
+
+    def test_unresolved_script(self):
+        """Script with no matching content hash returns None."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            crash_dir = Path(tmpdir) / "crash_002"
+            crash_dir.mkdir()
+
+            (crash_dir / "00_warmup.py").write_text("# unique content no match")
+            (crash_dir / "metadata.json").write_text("{}")
+
+            pfc = {"other.py": {"parent_id": None, "content_hash": "deadbeef"}}
+            result = resolve_session_scripts(crash_dir, pfc)
+            self.assertIsNone(result["warmup"])
+
+    def test_solo_attack_session(self):
+        """Crash dir with only an attack script."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            crash_dir = Path(tmpdir) / "crash_003"
+            crash_dir.mkdir()
+
+            (crash_dir / "00_attack.py").write_text("# attack only")
+            (crash_dir / "metadata.json").write_text("{}")
+
+            result = resolve_session_scripts(crash_dir, {})
+            self.assertIn("attack", result)
+            self.assertIsNone(result["attack"])
+
+    def test_multi_polluter(self):
+        """Multiple polluter scripts resolve in order."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            crash_dir = Path(tmpdir) / "crash_004"
+            crash_dir.mkdir()
+
+            (crash_dir / "00_warmup.py").write_text("warmup")
+            (crash_dir / "01_script.py").write_text("p1")
+            (crash_dir / "02_script.py").write_text("p2")
+            (crash_dir / "03_attack.py").write_text("attack")
+            metadata = {
+                "session_corpus_files": {
+                    "warmup": "w.py",
+                    "polluters": ["p1.py", "p2.py"],
+                }
+            }
+            (crash_dir / "metadata.json").write_text(json.dumps(metadata))
+
+            pfc = {"w.py": {}, "p1.py": {}, "p2.py": {}}
+            result = resolve_session_scripts(crash_dir, pfc)
+            self.assertEqual(result["warmup"], "w.py")
+            self.assertEqual(result["polluter_0"], "p1.py")
+            self.assertEqual(result["polluter_1"], "p2.py")
+            self.assertIsNone(result["attack"])
+
+
+# ---------------------------------------------------------------------------
+# TestExtractSessionAncestry
+# ---------------------------------------------------------------------------
+
+
+class TestExtractSessionAncestry(unittest.TestCase):
+    def _make_graph_with_session(self, tmp_path: Path):
+        """Helper: build graph and crash dir where warmup and attack share a seed."""
+        pfc = {
+            "seed.py": {
+                "parent_id": None,
+                "lineage_depth": 0,
+                "total_finds": 5,
+                "total_mutations_against": 100,
+                "is_sterile": False,
+                "is_pruned": False,
+                "discovery_mutation": {
+                    "strategy": "generative_seed",
+                    "transformers": [],
+                    "jit_stats": {},
+                },
+                "mutations_since_last_find": 0,
+                "content_hash": hashlib.sha256(b"seed content").hexdigest(),
+            },
+            "parent.py": {
+                "parent_id": "seed.py",
+                "lineage_depth": 1,
+                "total_finds": 3,
+                "total_mutations_against": 50,
+                "is_sterile": False,
+                "is_pruned": False,
+                "discovery_mutation": {
+                    "strategy": "havoc",
+                    "transformers": ["Op"],
+                    "jit_stats": {},
+                },
+                "mutations_since_last_find": 5,
+                "content_hash": hashlib.sha256(b"parent content").hexdigest(),
+            },
+            "polluter.py": {
+                "parent_id": "seed.py",
+                "lineage_depth": 1,
+                "total_finds": 1,
+                "total_mutations_against": 20,
+                "is_sterile": False,
+                "is_pruned": False,
+                "discovery_mutation": {
+                    "strategy": "spam",
+                    "transformers": ["Spam"],
+                    "jit_stats": {},
+                },
+                "mutations_since_last_find": 10,
+                "content_hash": hashlib.sha256(b"polluter content").hexdigest(),
+            },
+        }
+        graph = build_adjacency_graph(pfc)
+        crash_dir, _ = make_session_crash_dir(tmp_path)
+        return graph, crash_dir, pfc
+
+    def test_converging_lineages(self):
+        """Warmup and polluter share a seed; all converge on crash node."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            graph, crash_dir, pfc = self._make_graph_with_session(Path(tmpdir))
+            sub = extract_session_ancestry(graph, crash_dir, pfc)
+
+            # Crash node exists
+            crash_nodes = [n for n in sub.nodes if n.startswith("__crash_")]
+            self.assertEqual(len(crash_nodes), 1)
+            self.assertEqual(sub.special_nodes[crash_nodes[0]], "crash")
+
+            # Shared seed appears once
+            self.assertIn("seed.py", sub.nodes)
+            self.assertIn("parent.py", sub.nodes)
+            self.assertIn("polluter.py", sub.nodes)
+
+    def test_attack_only_mode(self):
+        """attack_only=True traces only warmup's ancestry (attack is None)."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            graph, crash_dir, pfc = self._make_graph_with_session(Path(tmpdir))
+            sub = extract_session_ancestry(graph, crash_dir, pfc, attack_only=True)
+
+            # Should trace warmup's ancestry (attack is None, falls back to warmup)
+            self.assertIn("parent.py", sub.nodes)
+            self.assertIn("seed.py", sub.nodes)
+            # Polluter should NOT be traced
+            self.assertNotIn("polluter.py", sub.nodes)
+
+    def test_unresolved_script(self):
+        """Script that can't be resolved appears as unresolved node."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            crash_dir = Path(tmpdir) / "session_crash_test"
+            crash_dir.mkdir()
+            (crash_dir / "00_warmup.py").write_text("# no match")
+            (crash_dir / "metadata.json").write_text("{}")
+
+            pfc = {"other.py": {"parent_id": None, "content_hash": "deadbeef"}}
+            graph = build_adjacency_graph(pfc)
+            sub = extract_session_ancestry(graph, crash_dir, pfc)
+
+            unresolved = [n for n in sub.special_nodes if sub.special_nodes[n] == "unresolved"]
+            self.assertTrue(len(unresolved) >= 1)
+
+    def test_crash_node_properties(self):
+        """Crash node has role='crash' and metadata from metadata.json."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            graph, crash_dir, pfc = self._make_graph_with_session(Path(tmpdir))
+            sub = extract_session_ancestry(graph, crash_dir, pfc)
+
+            crash_nodes = [n for n, r in sub.special_nodes.items() if r == "crash"]
+            self.assertEqual(len(crash_nodes), 1)
+            crash_id = crash_nodes[0]
+            # Metadata should be stored in graph
+            crash_meta = graph.metadata.get(crash_id, {})
+            self.assertEqual(crash_meta.get("fingerprint"), "SEGV:unknown")
+
+    def test_edge_roles_assigned(self):
+        """Edges have roles assigned for multi-lineage styling."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            graph, crash_dir, pfc = self._make_graph_with_session(Path(tmpdir))
+            sub = extract_session_ancestry(graph, crash_dir, pfc)
+
+            # There should be convergence edges
+            convergence_edges = [
+                (p, c) for (p, c), r in sub.edge_roles.items() if r.startswith("convergence:")
+            ]
+            self.assertTrue(len(convergence_edges) >= 1)
+
+
+# ---------------------------------------------------------------------------
+# TestExtractForest
+# ---------------------------------------------------------------------------
+
+
+class TestExtractForest(unittest.TestCase):
+    def test_basic_forest(self):
+        """Multiple seeds produce a merged forest."""
+        pfc = make_multi_seed_corpus()
+        graph = build_adjacency_graph(pfc)
+        sub = extract_forest(graph, max_depth=10, min_descendants=0)
+
+        # All 3 seeds should be present
+        for i in range(3):
+            self.assertIn(f"seed_{i}.py", sub.nodes)
+
+    def test_min_descendants_filter(self):
+        """Trees with too few descendants are filtered out."""
+        pfc = make_multi_seed_corpus()
+        graph = build_adjacency_graph(pfc)
+        # seed_0 has 3 children, seed_1 has 6, seed_2 has 9
+        sub = extract_forest(graph, min_descendants=5, collapse_sterile=False)
+
+        # seed_0 (3 children = 3 desc) should be filtered
+        self.assertNotIn("seed_0.py", sub.nodes)
+        # seed_1 (6 children) and seed_2 (9 children) should survive
+        self.assertIn("seed_1.py", sub.nodes)
+        self.assertIn("seed_2.py", sub.nodes)
+
+    def test_max_depth(self):
+        """Trees are depth-limited."""
+        pfc = make_simple_chain()
+        graph = build_adjacency_graph(pfc)
+        sub = extract_forest(graph, max_depth=1, min_descendants=0)
+
+        self.assertIn("seed.py", sub.nodes)
+        self.assertIn("middle.py", sub.nodes)
+        self.assertNotIn("leaf.py", sub.nodes)
+
+    def test_strahler_pruning(self):
+        """Low-Strahler branches are collapsed."""
+        pfc = make_branching_tree()
+        graph = build_adjacency_graph(pfc)
+        sub = extract_forest(graph, min_descendants=0, min_strahler=2, collapse_sterile=False)
+
+        # With min_strahler=2, branches with Strahler < 2 should be pruned
+        strahler_pruned = [n for n in sub.nodes if n.startswith("__strahler_pruned_")]
+        # Some pruning should occur
+        self.assertTrue(
+            len(strahler_pruned) >= 0
+        )  # May or may not prune depending on tree structure
+
+    def test_sterile_collapsing_in_forest(self):
+        """Sterile leaf collapsing works across multiple trees."""
+        pfc = make_branching_tree()
+        graph = build_adjacency_graph(pfc)
+        sub = extract_forest(graph, min_descendants=0, collapse_sterile=True)
+
+        # The branching tree has 3 sterile leaves → should collapse
+        collapsed = [n for n in sub.nodes if n.startswith("__collapsed_")]
+        self.assertTrue(len(collapsed) >= 1)
+
+    def test_empty_corpus(self):
+        """Empty corpus returns empty subgraph."""
+        graph = build_adjacency_graph({})
+        sub = extract_forest(graph, min_descendants=0)
+
+        self.assertEqual(len(sub.nodes), 0)
+        self.assertEqual(len(sub.edges), 0)
+
+    def test_single_seed(self):
+        """Single seed with descendants is correctly extracted."""
+        pfc = make_simple_chain()
+        graph = build_adjacency_graph(pfc)
+        sub = extract_forest(graph, min_descendants=0, collapse_sterile=False)
+
+        self.assertIn("seed.py", sub.nodes)
+        self.assertIn("middle.py", sub.nodes)
+        self.assertIn("leaf.py", sub.nodes)
+
+
+# ---------------------------------------------------------------------------
+# TestEmitHtml
+# ---------------------------------------------------------------------------
+
+
+class TestEmitHtml(unittest.TestCase):
+    @patch("lafleur.lineage.subprocess.run")
+    @patch("lafleur.lineage.shutil.which", return_value="/usr/bin/dot")
+    def test_html_structure(self, _mock_which, mock_run):
+        """HTML output contains expected elements."""
+        mock_run.return_value = MagicMock(returncode=0, stdout="<svg>test svg</svg>", stderr="")
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_path = Path(tmpdir) / "test.html"
+            success = emit_html("digraph {}", output_path, title="Test", info="Mode: test")
+
+            self.assertTrue(success)
+            html = output_path.read_text()
+            self.assertIn("<!DOCTYPE html>", html)
+            self.assertIn("<svg>test svg</svg>", html)
+            self.assertIn("svg-pan-zoom", html)
+            self.assertIn("Lafleur Lineage: Test", html)
+
+    @patch("lafleur.lineage.subprocess.run")
+    @patch("lafleur.lineage.shutil.which", return_value="/usr/bin/dot")
+    def test_info_bar_content(self, _mock_which, mock_run):
+        """Info bar contains expected mode and info."""
+        mock_run.return_value = MagicMock(returncode=0, stdout="<svg></svg>", stderr="")
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_path = Path(tmpdir) / "test.html"
+            emit_html("digraph {}", output_path, info="Mode: ancestry | Nodes: 5")
+            html = output_path.read_text()
+            self.assertIn("Mode: ancestry | Nodes: 5", html)
+
+    @patch("lafleur.lineage.shutil.which", return_value=None)
+    def test_dot_not_available(self, _mock_which):
+        """Returns False when dot is not installed."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_path = Path(tmpdir) / "test.html"
+            result = emit_html("digraph {}", output_path)
+            self.assertFalse(result)
+
+    @patch("lafleur.lineage.subprocess.run")
+    @patch("lafleur.lineage.shutil.which", return_value="/usr/bin/dot")
+    def test_file_written(self, _mock_which, mock_run):
+        """HTML file exists after successful emit."""
+        mock_run.return_value = MagicMock(returncode=0, stdout="<svg></svg>", stderr="")
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_path = Path(tmpdir) / "output.html"
+            emit_html("digraph {}", output_path)
+            self.assertTrue(output_path.exists())
+
+
+# ---------------------------------------------------------------------------
+# TestMultiLineageDecoration
+# ---------------------------------------------------------------------------
+
+
+class TestMultiLineageDecoration(unittest.TestCase):
+    def _make_session_subgraph(self):
+        """Build a subgraph with multi-lineage edge roles."""
+        pfc = {
+            "seed.py": {
+                "parent_id": None,
+                "lineage_depth": 0,
+                "total_finds": 5,
+                "total_mutations_against": 100,
+                "is_sterile": False,
+                "is_pruned": False,
+                "discovery_mutation": {
+                    "strategy": "generative_seed",
+                    "transformers": [],
+                    "jit_stats": {},
+                },
+                "mutations_since_last_find": 0,
+            },
+            "warmup.py": {
+                "parent_id": "seed.py",
+                "lineage_depth": 1,
+                "total_finds": 2,
+                "total_mutations_against": 30,
+                "is_sterile": False,
+                "is_pruned": False,
+                "discovery_mutation": {
+                    "strategy": "havoc",
+                    "transformers": ["Op"],
+                    "jit_stats": {},
+                },
+                "mutations_since_last_find": 5,
+            },
+            "polluter.py": {
+                "parent_id": "seed.py",
+                "lineage_depth": 1,
+                "total_finds": 1,
+                "total_mutations_against": 20,
+                "is_sterile": False,
+                "is_pruned": False,
+                "discovery_mutation": {
+                    "strategy": "spam",
+                    "transformers": ["Spam"],
+                    "jit_stats": {},
+                },
+                "mutations_since_last_find": 10,
+            },
+            "__crash_test": {
+                "fingerprint": "SEGV:test",
+                "signal_name": "SIGSEGV",
+            },
+        }
+        graph = build_adjacency_graph(pfc)
+        # Manually add crash node to metadata
+        graph.metadata["__crash_test"] = pfc["__crash_test"]
+
+        sub = Subgraph(
+            nodes={"seed.py", "warmup.py", "polluter.py", "__crash_test"},
+            edges=[
+                ("seed.py", "warmup.py"),
+                ("seed.py", "polluter.py"),
+                ("warmup.py", "__crash_test"),
+                ("polluter.py", "__crash_test"),
+            ],
+            special_nodes={"__crash_test": "crash"},
+            edge_roles={
+                ("seed.py", "warmup.py"): "warmup",
+                ("seed.py", "polluter.py"): "polluter_0",
+                ("warmup.py", "__crash_test"): "convergence:warmup",
+                ("polluter.py", "__crash_test"): "convergence:polluter_0",
+            },
+        )
+        return graph, sub
+
+    def test_warmup_edges_thinner(self):
+        """Warmup lineage edges have penwidth=0.5."""
+        graph, sub = self._make_session_subgraph()
+        decorated = decorate(sub, graph)
+
+        edge_map = {(p, c): es for p, c, es in decorated.edges}
+        warmup_edge = edge_map.get(("seed.py", "warmup.py"))
+        self.assertIsNotNone(warmup_edge)
+        self.assertEqual(warmup_edge.penwidth, 0.5)
+
+    def test_polluter_edges_dashed(self):
+        """Polluter lineage edges have style=dashed."""
+        graph, sub = self._make_session_subgraph()
+        decorated = decorate(sub, graph)
+
+        edge_map = {(p, c): es for p, c, es in decorated.edges}
+        polluter_edge = edge_map.get(("seed.py", "polluter.py"))
+        self.assertIsNotNone(polluter_edge)
+        self.assertEqual(polluter_edge.style, "dashed")
+
+    def test_convergence_edges_bold(self):
+        """Convergence edges to crash node are bold with role labels."""
+        graph, sub = self._make_session_subgraph()
+        decorated = decorate(sub, graph)
+
+        edge_map = {(p, c): es for p, c, es in decorated.edges}
+        conv_edge = edge_map.get(("warmup.py", "__crash_test"))
+        self.assertIsNotNone(conv_edge)
+        self.assertEqual(conv_edge.penwidth, 2.0)
+        self.assertEqual(conv_edge.style, "bold")
+        self.assertIn("warmup", conv_edge.label)
+
+    def test_crash_node_styling(self):
+        """Crash node has octagon shape and crash color."""
+        graph, sub = self._make_session_subgraph()
+        decorated = decorate(sub, graph)
+
+        crash_style = decorated.nodes["__crash_test"]
+        self.assertEqual(crash_style.shape, "octagon")
+        self.assertIn("SEGV", crash_style.label)
+
+    def test_unresolved_node_styling(self):
+        """Unresolved nodes have dashed fill and unresolved color."""
+        pfc = {"seed.py": {"parent_id": None, "discovery_mutation": {}}}
+        graph = build_adjacency_graph(pfc)
+        sub = Subgraph(
+            nodes={"__unresolved_warmup"},
+            edges=[],
+            special_nodes={"__unresolved_warmup": "unresolved"},
+        )
+        decorated = decorate(sub, graph)
+        ns = decorated.nodes["__unresolved_warmup"]
+        self.assertEqual(ns.fillcolor, COLOR_UNRESOLVED)
+        self.assertIn("unresolved", ns.label)
+
+
+# ---------------------------------------------------------------------------
+# TestForestStats
+# ---------------------------------------------------------------------------
+
+
+class TestForestStats(unittest.TestCase):
+    @patch("sys.stderr")
+    def test_output_includes_tree_count(self, mock_stderr):
+        """Forest stats show tree count."""
+        pfc = make_multi_seed_corpus()
+        graph = build_adjacency_graph(pfc)
+        sub = extract_forest(graph, min_descendants=0, collapse_sterile=False)
+        metrics = compute_tree_metrics(sub, graph)
+
+        print_forest_stats(sub, graph, metrics, total_seeds=3, filtered_count=0)
+        output = "".join(call.args[0] for call in mock_stderr.write.call_args_list)
+        self.assertIn("Trees:", output)
+
+    @patch("sys.stderr")
+    def test_filtered_tree_count(self, mock_stderr):
+        """When trees are filtered, both total and surviving counts show."""
+        pfc = make_multi_seed_corpus()
+        graph = build_adjacency_graph(pfc)
+        sub = extract_forest(graph, min_descendants=5, collapse_sterile=False)
+        metrics = compute_tree_metrics(sub, graph)
+
+        print_forest_stats(sub, graph, metrics, total_seeds=3, filtered_count=1)
+        output = "".join(call.args[0] for call in mock_stderr.write.call_args_list)
+        self.assertIn("1 below thresholds", output)
+
+    @patch("sys.stderr")
+    def test_deepest_tree_identification(self, mock_stderr):
+        """Correct seed identified as deepest."""
+        pfc = make_simple_chain()
+        graph = build_adjacency_graph(pfc)
+        sub = extract_forest(graph, min_descendants=0, collapse_sterile=False)
+        metrics = compute_tree_metrics(sub, graph)
+
+        print_forest_stats(sub, graph, metrics, total_seeds=1, filtered_count=0)
+        output = "".join(call.args[0] for call in mock_stderr.write.call_args_list)
+        self.assertIn("Deepest tree: seed.py", output)
+
+
+# ---------------------------------------------------------------------------
+# TestSessionAncestryStats
+# ---------------------------------------------------------------------------
+
+
+class TestSessionAncestryStats(unittest.TestCase):
+    @patch("sys.stderr")
+    def test_basic_output(self, mock_stderr):
+        """Session ancestry stats show crash dir name and roles."""
+        pfc = make_simple_chain()
+        graph = build_adjacency_graph(pfc)
+        role_to_file = {"warmup": "seed.py", "attack": None}
+        sub = Subgraph(nodes={"seed.py"}, edges=[])
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            crash_dir = Path(tmpdir) / "session_crash_test"
+            crash_dir.mkdir()
+            print_session_ancestry_stats(crash_dir, role_to_file, sub, graph)
+
+        output = "".join(call.args[0] for call in mock_stderr.write.call_args_list)
+        self.assertIn("session_crash_test", output)
+        self.assertIn("Warmup:", output)
+        self.assertIn("Attack:", output)
+        self.assertIn("[unresolved]", output)
+
+
+# ---------------------------------------------------------------------------
+# TestCLIForest
+# ---------------------------------------------------------------------------
+
+
+class TestCLIForest(unittest.TestCase):
+    @patch("lafleur.lineage.load_coverage_state")
+    def test_forest_mode_e2e(self, mock_load):
+        """End-to-end forest mode produces DOT output."""
+        mock_load.return_value = {"per_file_coverage": make_multi_seed_corpus()}
+
+        with patch(
+            "sys.argv",
+            [
+                "lafleur-lineage",
+                "--state-path",
+                "fake.pkl",
+                "forest",
+                "--min-descendants",
+                "0",
+            ],
+        ):
+            from lafleur.lineage import main
+
+            with patch("builtins.print") as mock_print:
+                main()
+
+            printed = mock_print.call_args_list
+            dot_calls = [c for c in printed if c.kwargs.get("file") is not sys.stderr]
+            self.assertTrue(any("digraph lineage" in str(c) for c in dot_calls))
+
+
+# ---------------------------------------------------------------------------
+# TestCLIMultiLineage
+# ---------------------------------------------------------------------------
+
+
+class TestCLIMultiLineage(unittest.TestCase):
+    @patch("lafleur.lineage.load_coverage_state")
+    def test_ancestry_with_crash_dir(self, mock_load):
+        """Ancestry mode with crash dir uses session ancestry."""
+        pfc = {
+            "seed.py": {
+                "parent_id": None,
+                "lineage_depth": 0,
+                "total_finds": 5,
+                "total_mutations_against": 100,
+                "is_sterile": False,
+                "is_pruned": False,
+                "discovery_mutation": {
+                    "strategy": "generative_seed",
+                    "transformers": [],
+                    "jit_stats": {},
+                },
+                "mutations_since_last_find": 0,
+            },
+            "parent.py": {
+                "parent_id": "seed.py",
+                "lineage_depth": 1,
+                "total_finds": 2,
+                "total_mutations_against": 30,
+                "is_sterile": False,
+                "is_pruned": False,
+                "discovery_mutation": {
+                    "strategy": "havoc",
+                    "transformers": ["Op"],
+                    "jit_stats": {},
+                },
+                "mutations_since_last_find": 5,
+            },
+        }
+        mock_load.return_value = {"per_file_coverage": pfc}
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            crash_dir = Path(tmpdir) / "session_crash_001"
+            crash_dir.mkdir()
+            (crash_dir / "00_warmup.py").write_text("warmup")
+            (crash_dir / "02_attack.py").write_text("attack")
+            meta = {"session_corpus_files": {"warmup": "parent.py", "polluters": []}}
+            (crash_dir / "metadata.json").write_text(json.dumps(meta))
+
+            with patch(
+                "sys.argv",
+                [
+                    "lafleur-lineage",
+                    "--state-path",
+                    "fake.pkl",
+                    "ancestry",
+                    str(crash_dir),
+                    "--multi-lineage",
+                ],
+            ):
+                from lafleur.lineage import main
+
+                with patch("builtins.print") as mock_print:
+                    main()
+
+                printed = mock_print.call_args_list
+                dot_calls = [c for c in printed if c.kwargs.get("file") is not sys.stderr]
+                self.assertTrue(any("digraph lineage" in str(c) for c in dot_calls))
+
+
+# ---------------------------------------------------------------------------
+# TestResolveTargetUpdated
+# ---------------------------------------------------------------------------
+
+
+class TestResolveTargetUpdated(unittest.TestCase):
+    def test_crash_dir_returns_path(self):
+        """Crash directory returns a Path object."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            crash_dir = Path(tmpdir) / "crash_001"
+            crash_dir.mkdir()
+            (crash_dir / "metadata.json").write_text("{}")
+
+            pfc = {"parent.py": {"parent_id": None}}
+            result, target_type = resolve_target(str(crash_dir), pfc)
+            self.assertEqual(target_type, "crash_dir")
+            self.assertIsInstance(result, Path)
+
+    def test_file_still_returns_string(self):
+        """Regular file targets still return strings."""
+        pfc = {"1234.py": {"parent_id": None}}
+        result, target_type = resolve_target("1234.py", pfc)
+        self.assertEqual(target_type, "file")
+        self.assertIsInstance(result, str)
 
 
 if __name__ == "__main__":

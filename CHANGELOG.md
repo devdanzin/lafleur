@@ -51,6 +51,10 @@ All notable changes to this project should be documented in this file.
 - Tree metrics for `lafleur-lineage`: branching factor, subtree sizes, imbalance (coefficient of variation), and success rate (exact with `total_mutations_against`, lower-bound fallback), with `--show-success-rate` CLI flag, by @devdanzin.
 - `--show-discoveries` flag for `lafleur-lineage` that labels edges with specific UOP edges and rare events discovered (ancestry/mrca modes), using reverse coverage maps for human-readable names, by @devdanzin.
 - Enriched JSON output for `lafleur-lineage` including per-node metrics (Strahler, subtree size, branching factor, imbalance, success rate) and per-edge discovery labels, by @devdanzin.
+- Multi-lineage session crash ancestry for `lafleur-lineage`: `--multi-lineage` traces all session scripts' lineages converging on a crash node, with role-based edge styling (warmup=thinner, polluter=dashed, convergence=bold), unresolved script nodes, and session ancestry statistics, by @devdanzin.
+- `--attack-only` flag for `lafleur-lineage` ancestry mode to trace only the attack script's lineage, ignoring warmup and polluter scripts, by @devdanzin.
+- Forest mode for `lafleur-lineage`: `forest` subcommand shows all lineage trees in the corpus with `--max-depth`, `--min-descendants`, `--min-strahler` filtering, `--no-collapse-sterile` option, and Strahler-based pruning of low-complexity branches, by @devdanzin.
+- HTML pan/zoom output for `lafleur-lineage`: `--html PATH` generates an interactive HTML file wrapping SVG with svg-pan-zoom.js for navigating large lineage graphs, by @devdanzin.
 
 ### Enhanced
 

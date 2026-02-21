@@ -9,20 +9,26 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from lafleur.lineage import (
+    BORDER_MRCA,
+    BORDER_TACHYCARDIA,
+    BORDER_ZOMBIE,
     COLOR_COLLAPSED,
     COLOR_GHOST,
     COLOR_SEED,
-    BORDER_TACHYCARDIA,
-    BORDER_ZOMBIE,
     STRATEGY_COLORS,
     build_adjacency_graph,
+    compute_edge_discoveries,
+    compute_strahler,
+    compute_tree_metrics,
     decorate,
     emit_dot,
     emit_json,
     extract_ancestry,
     extract_descendants,
+    extract_mrca,
     print_ancestry_stats,
     print_descendants_stats,
+    print_mrca_stats,
     render_graphviz,
     resolve_target,
 )
@@ -854,6 +860,830 @@ class TestCLI(unittest.TestCase):
             # Should have at least one call with JSON content
             json_output = str(json_calls[0])
             self.assertIn("nodes", json_output)
+
+
+# ---------------------------------------------------------------------------
+# TestExtractMrca
+# ---------------------------------------------------------------------------
+
+
+def make_y_shape() -> dict:
+    """Create a Y-shape: seed → A → B and seed → A → C."""
+    base_dm = {"strategy": "havoc", "transformers": ["OpSwap"], "jit_stats": {}}
+    return {
+        "seed.py": {
+            "parent_id": None,
+            "lineage_depth": 0,
+            "total_finds": 5,
+            "total_mutations_against": 100,
+            "is_sterile": False,
+            "is_pruned": False,
+            "discovery_mutation": {
+                "strategy": "generative_seed",
+                "transformers": [],
+                "jit_stats": {},
+            },
+            "mutations_since_last_find": 0,
+        },
+        "A.py": {
+            "parent_id": "seed.py",
+            "lineage_depth": 1,
+            "total_finds": 2,
+            "total_mutations_against": 50,
+            "is_sterile": False,
+            "is_pruned": False,
+            "discovery_mutation": base_dm,
+            "mutations_since_last_find": 10,
+        },
+        "B.py": {
+            "parent_id": "A.py",
+            "lineage_depth": 2,
+            "total_finds": 0,
+            "total_mutations_against": 20,
+            "is_sterile": True,
+            "is_pruned": False,
+            "discovery_mutation": {
+                "strategy": "sniper",
+                "transformers": ["Sniper"],
+                "jit_stats": {},
+            },
+            "mutations_since_last_find": 20,
+        },
+        "C.py": {
+            "parent_id": "A.py",
+            "lineage_depth": 2,
+            "total_finds": 1,
+            "total_mutations_against": 30,
+            "is_sterile": False,
+            "is_pruned": False,
+            "discovery_mutation": {"strategy": "spam", "transformers": ["Spam"], "jit_stats": {}},
+            "mutations_since_last_find": 5,
+        },
+    }
+
+
+class TestExtractMrca(unittest.TestCase):
+    def test_simple_y_shape(self):
+        """MRCA of B and C should be A."""
+        pfc = make_y_shape()
+        graph = build_adjacency_graph(pfc)
+        sub = extract_mrca(graph, ["B.py", "C.py"])
+
+        self.assertIn("A.py", sub.nodes)
+        self.assertIn("B.py", sub.nodes)
+        self.assertIn("C.py", sub.nodes)
+        self.assertEqual(sub.special_nodes.get("A.py"), "mrca")
+        self.assertIn(("A.py", "B.py"), sub.edges)
+        self.assertIn(("A.py", "C.py"), sub.edges)
+
+    def test_one_is_ancestor_of_other(self):
+        """MRCA of A and B should be A."""
+        pfc = make_y_shape()
+        graph = build_adjacency_graph(pfc)
+        sub = extract_mrca(graph, ["A.py", "B.py"])
+
+        self.assertEqual(sub.special_nodes.get("A.py"), "mrca")
+        self.assertIn(("A.py", "B.py"), sub.edges)
+
+    def test_same_file(self):
+        """MRCA of A and A should be A."""
+        pfc = make_y_shape()
+        graph = build_adjacency_graph(pfc)
+        sub = extract_mrca(graph, ["A.py", "A.py"])
+
+        self.assertIn("A.py", sub.nodes)
+        self.assertEqual(sub.special_nodes.get("A.py"), "mrca")
+
+    def test_disjoint_seeds(self):
+        """Different seeds → no MRCA."""
+        pfc = {
+            "seed1.py": {
+                "parent_id": None,
+                "lineage_depth": 0,
+                "is_pruned": False,
+                "discovery_mutation": {
+                    "strategy": "generative_seed",
+                    "transformers": [],
+                    "jit_stats": {},
+                },
+            },
+            "seed2.py": {
+                "parent_id": None,
+                "lineage_depth": 0,
+                "is_pruned": False,
+                "discovery_mutation": {
+                    "strategy": "generative_seed",
+                    "transformers": [],
+                    "jit_stats": {},
+                },
+            },
+            "A.py": {
+                "parent_id": "seed1.py",
+                "lineage_depth": 1,
+                "is_pruned": False,
+                "discovery_mutation": {"strategy": "havoc", "transformers": [], "jit_stats": {}},
+            },
+            "B.py": {
+                "parent_id": "seed2.py",
+                "lineage_depth": 1,
+                "is_pruned": False,
+                "discovery_mutation": {"strategy": "havoc", "transformers": [], "jit_stats": {}},
+            },
+        }
+        graph = build_adjacency_graph(pfc)
+        sub = extract_mrca(graph, ["A.py", "B.py"])
+
+        self.assertNotIn("mrca", sub.special_nodes.values())
+        # Both full paths should be included
+        self.assertIn("seed1.py", sub.nodes)
+        self.assertIn("seed2.py", sub.nodes)
+        self.assertIn("A.py", sub.nodes)
+        self.assertIn("B.py", sub.nodes)
+
+    def test_three_targets(self):
+        """seed → X → {A, Y→B, Y→Z→C}. MRCA of A, B, C should be X."""
+        pfc = {
+            "seed.py": {
+                "parent_id": None,
+                "lineage_depth": 0,
+                "is_pruned": False,
+                "discovery_mutation": {
+                    "strategy": "generative_seed",
+                    "transformers": [],
+                    "jit_stats": {},
+                },
+            },
+            "X.py": {
+                "parent_id": "seed.py",
+                "lineage_depth": 1,
+                "is_pruned": False,
+                "discovery_mutation": {"strategy": "havoc", "transformers": [], "jit_stats": {}},
+            },
+            "A.py": {
+                "parent_id": "X.py",
+                "lineage_depth": 2,
+                "is_pruned": False,
+                "discovery_mutation": {"strategy": "havoc", "transformers": [], "jit_stats": {}},
+            },
+            "Y.py": {
+                "parent_id": "X.py",
+                "lineage_depth": 2,
+                "is_pruned": False,
+                "discovery_mutation": {"strategy": "havoc", "transformers": [], "jit_stats": {}},
+            },
+            "B.py": {
+                "parent_id": "Y.py",
+                "lineage_depth": 3,
+                "is_pruned": False,
+                "discovery_mutation": {"strategy": "havoc", "transformers": [], "jit_stats": {}},
+            },
+            "Z.py": {
+                "parent_id": "Y.py",
+                "lineage_depth": 3,
+                "is_pruned": False,
+                "discovery_mutation": {"strategy": "havoc", "transformers": [], "jit_stats": {}},
+            },
+            "C.py": {
+                "parent_id": "Z.py",
+                "lineage_depth": 4,
+                "is_pruned": False,
+                "discovery_mutation": {"strategy": "havoc", "transformers": [], "jit_stats": {}},
+            },
+        }
+        graph = build_adjacency_graph(pfc)
+        sub = extract_mrca(graph, ["A.py", "B.py", "C.py"])
+        self.assertEqual(sub.special_nodes.get("X.py"), "mrca")
+
+    def test_deep_common_ancestor(self):
+        """Long chain with late fork at depth 10."""
+        pfc = {}
+        for i in range(12):
+            name = f"{i:04d}.py"
+            parent = f"{i - 1:04d}.py" if i > 0 else None
+            pfc[name] = {
+                "parent_id": parent,
+                "lineage_depth": i,
+                "is_pruned": False,
+                "discovery_mutation": {"strategy": "havoc", "transformers": [], "jit_stats": {}},
+            }
+        # Fork at 0010.py
+        pfc["fork_a.py"] = {
+            "parent_id": "0010.py",
+            "lineage_depth": 11,
+            "is_pruned": False,
+            "discovery_mutation": {"strategy": "havoc", "transformers": [], "jit_stats": {}},
+        }
+        pfc["fork_b.py"] = {
+            "parent_id": "0010.py",
+            "lineage_depth": 11,
+            "is_pruned": False,
+            "discovery_mutation": {"strategy": "havoc", "transformers": [], "jit_stats": {}},
+        }
+        graph = build_adjacency_graph(pfc)
+        sub = extract_mrca(graph, ["fork_a.py", "fork_b.py"])
+        self.assertEqual(sub.special_nodes.get("0010.py"), "mrca")
+
+
+# ---------------------------------------------------------------------------
+# TestStrahler
+# ---------------------------------------------------------------------------
+
+
+class TestStrahler(unittest.TestCase):
+    def test_single_node(self):
+        pfc = {"root.py": {"parent_id": None, "is_pruned": False, "discovery_mutation": {}}}
+        graph = build_adjacency_graph(pfc)
+        sub = extract_descendants(graph, "root.py", collapse_sterile=False)
+        strahler = compute_strahler(graph, sub)
+        self.assertEqual(strahler["root.py"], 1)
+
+    def test_linear_chain(self):
+        """5-node chain: all Strahler = 1."""
+        pfc = {}
+        for i in range(5):
+            pfc[f"{i}.py"] = {
+                "parent_id": f"{i - 1}.py" if i > 0 else None,
+                "lineage_depth": i,
+                "is_pruned": False,
+                "is_sterile": False,
+                "discovery_mutation": {"strategy": "havoc", "transformers": [], "jit_stats": {}},
+            }
+        graph = build_adjacency_graph(pfc)
+        sub = extract_descendants(graph, "0.py", collapse_sterile=False)
+        strahler = compute_strahler(graph, sub)
+        for node in pfc:
+            self.assertEqual(strahler[node], 1)
+
+    def test_perfect_binary_tree(self):
+        """Perfect binary tree depth 3 (7 nodes). Root Strahler = 3."""
+        pfc = {
+            "r.py": {
+                "parent_id": None,
+                "lineage_depth": 0,
+                "is_pruned": False,
+                "is_sterile": False,
+                "discovery_mutation": {
+                    "strategy": "generative_seed",
+                    "transformers": [],
+                    "jit_stats": {},
+                },
+            },
+            "l1.py": {
+                "parent_id": "r.py",
+                "lineage_depth": 1,
+                "is_pruned": False,
+                "is_sterile": False,
+                "discovery_mutation": {"strategy": "havoc", "transformers": [], "jit_stats": {}},
+            },
+            "r1.py": {
+                "parent_id": "r.py",
+                "lineage_depth": 1,
+                "is_pruned": False,
+                "is_sterile": False,
+                "discovery_mutation": {"strategy": "havoc", "transformers": [], "jit_stats": {}},
+            },
+            "ll.py": {
+                "parent_id": "l1.py",
+                "lineage_depth": 2,
+                "is_pruned": False,
+                "is_sterile": False,
+                "discovery_mutation": {"strategy": "havoc", "transformers": [], "jit_stats": {}},
+            },
+            "lr.py": {
+                "parent_id": "l1.py",
+                "lineage_depth": 2,
+                "is_pruned": False,
+                "is_sterile": False,
+                "discovery_mutation": {"strategy": "havoc", "transformers": [], "jit_stats": {}},
+            },
+            "rl.py": {
+                "parent_id": "r1.py",
+                "lineage_depth": 2,
+                "is_pruned": False,
+                "is_sterile": False,
+                "discovery_mutation": {"strategy": "havoc", "transformers": [], "jit_stats": {}},
+            },
+            "rr.py": {
+                "parent_id": "r1.py",
+                "lineage_depth": 2,
+                "is_pruned": False,
+                "is_sterile": False,
+                "discovery_mutation": {"strategy": "havoc", "transformers": [], "jit_stats": {}},
+            },
+        }
+        graph = build_adjacency_graph(pfc)
+        sub = extract_descendants(graph, "r.py", collapse_sterile=False)
+        strahler = compute_strahler(graph, sub)
+        self.assertEqual(strahler["r.py"], 3)
+        self.assertEqual(strahler["l1.py"], 2)
+        self.assertEqual(strahler["r1.py"], 2)
+        self.assertEqual(strahler["ll.py"], 1)
+
+    def test_imbalanced_tree(self):
+        """Root with one deep chain (Strahler=1) and one leaf (Strahler=1).
+        Two children with same max → root = 2."""
+        pfc = {
+            "root.py": {
+                "parent_id": None,
+                "lineage_depth": 0,
+                "is_pruned": False,
+                "is_sterile": False,
+                "discovery_mutation": {
+                    "strategy": "generative_seed",
+                    "transformers": [],
+                    "jit_stats": {},
+                },
+            },
+            "leaf.py": {
+                "parent_id": "root.py",
+                "lineage_depth": 1,
+                "is_pruned": False,
+                "is_sterile": False,
+                "discovery_mutation": {"strategy": "havoc", "transformers": [], "jit_stats": {}},
+            },
+            "c1.py": {
+                "parent_id": "root.py",
+                "lineage_depth": 1,
+                "is_pruned": False,
+                "is_sterile": False,
+                "discovery_mutation": {"strategy": "havoc", "transformers": [], "jit_stats": {}},
+            },
+            "c2.py": {
+                "parent_id": "c1.py",
+                "lineage_depth": 2,
+                "is_pruned": False,
+                "is_sterile": False,
+                "discovery_mutation": {"strategy": "havoc", "transformers": [], "jit_stats": {}},
+            },
+            "c3.py": {
+                "parent_id": "c2.py",
+                "lineage_depth": 3,
+                "is_pruned": False,
+                "is_sterile": False,
+                "discovery_mutation": {"strategy": "havoc", "transformers": [], "jit_stats": {}},
+            },
+        }
+        graph = build_adjacency_graph(pfc)
+        sub = extract_descendants(graph, "root.py", collapse_sterile=False)
+        strahler = compute_strahler(graph, sub)
+        self.assertEqual(strahler["root.py"], 2)
+        self.assertEqual(strahler["c3.py"], 1)
+
+
+# ---------------------------------------------------------------------------
+# TestTreeMetrics
+# ---------------------------------------------------------------------------
+
+
+class TestTreeMetrics(unittest.TestCase):
+    def test_branching_factor(self):
+        pfc = make_branching_tree()
+        graph = build_adjacency_graph(pfc)
+        sub = extract_descendants(graph, "seed.py", collapse_sterile=False)
+        metrics = compute_tree_metrics(sub, graph)
+
+        # seed has 5 children, child_a has 2
+        self.assertEqual(metrics.branching_factors["seed.py"], 5)
+        self.assertEqual(metrics.branching_factors["child_a.py"], 2)
+        self.assertEqual(metrics.max_branching, 5)
+
+    def test_subtree_sizes(self):
+        pfc = make_simple_chain()
+        graph = build_adjacency_graph(pfc)
+        sub = extract_descendants(graph, "seed.py", collapse_sterile=False)
+        metrics = compute_tree_metrics(sub, graph)
+
+        self.assertEqual(metrics.subtree_sizes["seed.py"], 3)
+        self.assertEqual(metrics.subtree_sizes["middle.py"], 2)
+        self.assertEqual(metrics.subtree_sizes["leaf.py"], 1)
+
+    def test_imbalance_cv_balanced(self):
+        """Two children with equal subtree size → CV ≈ 0."""
+        pfc = {
+            "root.py": {
+                "parent_id": None,
+                "lineage_depth": 0,
+                "is_pruned": False,
+                "is_sterile": False,
+                "total_finds": 0,
+                "total_mutations_against": 0,
+                "discovery_mutation": {
+                    "strategy": "generative_seed",
+                    "transformers": [],
+                    "jit_stats": {},
+                },
+                "mutations_since_last_find": 0,
+            },
+            "a.py": {
+                "parent_id": "root.py",
+                "lineage_depth": 1,
+                "is_pruned": False,
+                "is_sterile": False,
+                "total_finds": 0,
+                "total_mutations_against": 10,
+                "discovery_mutation": {"strategy": "havoc", "transformers": [], "jit_stats": {}},
+                "mutations_since_last_find": 10,
+            },
+            "b.py": {
+                "parent_id": "root.py",
+                "lineage_depth": 1,
+                "is_pruned": False,
+                "is_sterile": False,
+                "total_finds": 0,
+                "total_mutations_against": 10,
+                "discovery_mutation": {"strategy": "havoc", "transformers": [], "jit_stats": {}},
+                "mutations_since_last_find": 10,
+            },
+        }
+        graph = build_adjacency_graph(pfc)
+        sub = extract_descendants(graph, "root.py", collapse_sterile=False)
+        metrics = compute_tree_metrics(sub, graph)
+        self.assertAlmostEqual(metrics.imbalance_cv["root.py"], 0.0)
+
+    def test_success_rate_exact(self):
+        pfc = make_simple_chain()
+        graph = build_adjacency_graph(pfc)
+        sub = extract_descendants(graph, "seed.py", collapse_sterile=False)
+        metrics = compute_tree_metrics(sub, graph)
+
+        # middle.py: total_finds=1, total_mutations_against=20 → 0.05
+        self.assertAlmostEqual(metrics.success_rates["middle.py"], 1 / 20)
+        # leaf.py: total_finds=0, total_mutations_against=100 → 0.0
+        self.assertAlmostEqual(metrics.success_rates["leaf.py"], 0.0)
+
+    def test_success_rate_lower_bound(self):
+        """Without total_mutations_against → uses fallback."""
+        pfc = {
+            "seed.py": {
+                "parent_id": None,
+                "lineage_depth": 0,
+                "is_pruned": False,
+                "is_sterile": False,
+                "total_finds": 0,
+                "discovery_mutation": {
+                    "strategy": "generative_seed",
+                    "transformers": [],
+                    "jit_stats": {},
+                },
+                "mutations_since_last_find": 0,
+            },
+            "child.py": {
+                "parent_id": "seed.py",
+                "lineage_depth": 1,
+                "is_pruned": False,
+                "is_sterile": False,
+                "total_finds": 5,
+                "mutations_since_last_find": 95,
+                # No total_mutations_against → 0
+                "discovery_mutation": {"strategy": "havoc", "transformers": [], "jit_stats": {}},
+            },
+        }
+        graph = build_adjacency_graph(pfc)
+        sub = extract_descendants(graph, "seed.py", collapse_sterile=False)
+        metrics = compute_tree_metrics(sub, graph)
+
+        # Fallback: 5 / max(1, 5 + 95) = 5/100 = 0.05
+        self.assertAlmostEqual(metrics.success_rates["child.py"], 0.05)
+
+    def test_success_rate_seed_is_none(self):
+        pfc = make_simple_chain()
+        graph = build_adjacency_graph(pfc)
+        sub = extract_descendants(graph, "seed.py", collapse_sterile=False)
+        metrics = compute_tree_metrics(sub, graph)
+
+        self.assertIsNone(metrics.success_rates["seed.py"])
+
+
+# ---------------------------------------------------------------------------
+# TestComputeEdgeDiscoveries
+# ---------------------------------------------------------------------------
+
+
+class TestComputeEdgeDiscoveries(unittest.TestCase):
+    def test_child_discovers_new_edges(self):
+        pfc = {
+            "parent.py": {
+                "parent_id": None,
+                "lineage_coverage_profile": {"h1": {"edges": {1, 2, 3}, "rare_events": set()}},
+                "baseline_coverage": {},
+                "discovery_mutation": {},
+            },
+            "child.py": {
+                "parent_id": "parent.py",
+                "lineage_coverage_profile": {},
+                "baseline_coverage": {"h1": {"edges": [1, 2, 3, 4, 5], "rare_events": []}},
+                "discovery_mutation": {},
+            },
+        }
+        graph = build_adjacency_graph(pfc)
+        state = {"edge_map": {"edge_4": 4, "edge_5": 5}, "rare_event_map": {}}
+        discoveries = compute_edge_discoveries("parent.py", "child.py", graph, state)
+        self.assertTrue(
+            any("edge_4" in d or "edge_5" in d or "4" in d or "5" in d for d in discoveries)
+        )
+
+    def test_child_discovers_rare_event(self):
+        pfc = {
+            "parent.py": {
+                "parent_id": None,
+                "lineage_coverage_profile": {"h1": {"edges": set(), "rare_events": set()}},
+                "baseline_coverage": {},
+                "discovery_mutation": {},
+            },
+            "child.py": {
+                "parent_id": "parent.py",
+                "lineage_coverage_profile": {},
+                "baseline_coverage": {"h1": {"edges": [], "rare_events": [100]}},
+                "discovery_mutation": {},
+            },
+        }
+        graph = build_adjacency_graph(pfc)
+        state = {"edge_map": {}, "rare_event_map": {"trace_opt_failed": 100}}
+        discoveries = compute_edge_discoveries("parent.py", "child.py", graph, state)
+        self.assertTrue(any("RARE" in d for d in discoveries))
+
+    def test_no_new_discoveries(self):
+        pfc = {
+            "parent.py": {
+                "parent_id": None,
+                "lineage_coverage_profile": {"h1": {"edges": {1, 2}, "rare_events": set()}},
+                "baseline_coverage": {},
+                "discovery_mutation": {},
+            },
+            "child.py": {
+                "parent_id": "parent.py",
+                "lineage_coverage_profile": {},
+                "baseline_coverage": {"h1": {"edges": [1, 2], "rare_events": []}},
+                "discovery_mutation": {},
+            },
+        }
+        graph = build_adjacency_graph(pfc)
+        state = {"edge_map": {}, "rare_event_map": {}}
+        discoveries = compute_edge_discoveries("parent.py", "child.py", graph, state)
+        self.assertEqual(discoveries, [])
+
+    def test_reverse_map_lookup(self):
+        pfc = {
+            "parent.py": {
+                "parent_id": None,
+                "lineage_coverage_profile": {"h1": {"edges": set(), "rare_events": set()}},
+                "baseline_coverage": {},
+                "discovery_mutation": {},
+            },
+            "child.py": {
+                "parent_id": "parent.py",
+                "lineage_coverage_profile": {},
+                "baseline_coverage": {"h1": {"edges": [42], "rare_events": [99]}},
+                "discovery_mutation": {},
+            },
+        }
+        graph = build_adjacency_graph(pfc)
+        state = {
+            "edge_map": {"_FOR_ITER_GEN_FRAME": 42},
+            "rare_event_map": {"deopt_cold_exit": 99},
+        }
+        discoveries = compute_edge_discoveries("parent.py", "child.py", graph, state)
+        self.assertTrue(any("_FOR_ITER_GEN_FRAME" in d for d in discoveries))
+        self.assertTrue(any("deopt_cold_exit" in d for d in discoveries))
+
+
+# ---------------------------------------------------------------------------
+# TestMrcaDecoration
+# ---------------------------------------------------------------------------
+
+
+class TestMrcaDecoration(unittest.TestCase):
+    def test_mrca_node_has_blue_border(self):
+        pfc = make_y_shape()
+        graph = build_adjacency_graph(pfc)
+        sub = extract_mrca(graph, ["B.py", "C.py"])
+        decorated = decorate(sub, graph)
+
+        # A.py is the MRCA
+        a_style = decorated.nodes["A.py"]
+        self.assertEqual(a_style.color, BORDER_MRCA)
+        self.assertEqual(a_style.penwidth, 3.0)
+
+    def test_non_mrca_nodes_no_blue_border(self):
+        pfc = make_y_shape()
+        graph = build_adjacency_graph(pfc)
+        sub = extract_mrca(graph, ["B.py", "C.py"])
+        decorated = decorate(sub, graph)
+
+        for node_id, ns in decorated.nodes.items():
+            if node_id != "A.py":
+                self.assertNotEqual(ns.color, BORDER_MRCA)
+
+
+# ---------------------------------------------------------------------------
+# TestMrcaStats
+# ---------------------------------------------------------------------------
+
+
+class TestMrcaStats(unittest.TestCase):
+    @patch("sys.stderr")
+    def test_mrca_stats_with_common_ancestor(self, mock_stderr):
+        pfc = make_y_shape()
+        graph = build_adjacency_graph(pfc)
+        print_mrca_stats(["B.py", "C.py"], "A.py", Subgraph(nodes=set(), edges=[]), graph)
+
+        output = "".join(call.args[0] for call in mock_stderr.write.call_args_list)
+        self.assertIn("Common ancestor: A.py", output)
+        self.assertIn("Branch to B.py", output)
+        self.assertIn("Branch to C.py", output)
+
+    @patch("sys.stderr")
+    def test_mrca_stats_disjoint(self, mock_stderr):
+        pfc = {
+            "seed1.py": {
+                "parent_id": None,
+                "lineage_depth": 0,
+                "is_pruned": False,
+                "discovery_mutation": {
+                    "strategy": "generative_seed",
+                    "transformers": [],
+                    "jit_stats": {},
+                },
+            },
+            "A.py": {
+                "parent_id": "seed1.py",
+                "lineage_depth": 1,
+                "is_pruned": False,
+                "discovery_mutation": {"strategy": "havoc", "transformers": [], "jit_stats": {}},
+            },
+        }
+        graph = build_adjacency_graph(pfc)
+        print_mrca_stats(["A.py", "B.py"], None, Subgraph(nodes=set(), edges=[]), graph)
+
+        output = "".join(call.args[0] for call in mock_stderr.write.call_args_list)
+        self.assertIn("No common ancestor", output)
+
+
+# ---------------------------------------------------------------------------
+# TestShowStrahler / TestShowSuccessRate in labels
+# ---------------------------------------------------------------------------
+
+
+class TestShowStrahlerLabel(unittest.TestCase):
+    def test_strahler_in_label(self):
+        pfc = make_simple_chain()
+        graph = build_adjacency_graph(pfc)
+        sub = extract_descendants(graph, "seed.py", collapse_sterile=False)
+        metrics = compute_tree_metrics(sub, graph)
+        decorated = decorate(sub, graph, show_strahler=True, metrics=metrics)
+
+        self.assertIn("S=1", decorated.nodes["seed.py"].label)
+
+    def test_strahler_not_in_label_by_default(self):
+        pfc = make_simple_chain()
+        graph = build_adjacency_graph(pfc)
+        sub = extract_descendants(graph, "seed.py", collapse_sterile=False)
+        decorated = decorate(sub, graph)
+
+        self.assertNotIn("S=", decorated.nodes["seed.py"].label)
+
+
+class TestShowSuccessRateLabel(unittest.TestCase):
+    def test_success_rate_in_label(self):
+        pfc = make_simple_chain()
+        graph = build_adjacency_graph(pfc)
+        sub = extract_descendants(graph, "seed.py", collapse_sterile=False)
+        metrics = compute_tree_metrics(sub, graph)
+        decorated = decorate(sub, graph, show_success_rate=True, metrics=metrics)
+
+        # middle.py has total_mutations_against=20, total_finds=1
+        self.assertIn("rate=", decorated.nodes["middle.py"].label)
+
+    def test_success_rate_not_on_seed(self):
+        pfc = make_simple_chain()
+        graph = build_adjacency_graph(pfc)
+        sub = extract_descendants(graph, "seed.py", collapse_sterile=False)
+        metrics = compute_tree_metrics(sub, graph)
+        decorated = decorate(sub, graph, show_success_rate=True, metrics=metrics)
+
+        self.assertNotIn("rate=", decorated.nodes["seed.py"].label)
+
+
+# ---------------------------------------------------------------------------
+# TestShowDiscoveries
+# ---------------------------------------------------------------------------
+
+
+class TestShowDiscoveries(unittest.TestCase):
+    def test_discoveries_in_edge_label(self):
+        pfc = {
+            "parent.py": {
+                "parent_id": None,
+                "lineage_depth": 0,
+                "is_pruned": False,
+                "is_sterile": False,
+                "total_finds": 1,
+                "total_mutations_against": 10,
+                "lineage_coverage_profile": {"h1": {"edges": set(), "rare_events": set()}},
+                "baseline_coverage": {},
+                "discovery_mutation": {
+                    "strategy": "generative_seed",
+                    "transformers": [],
+                    "jit_stats": {},
+                },
+                "mutations_since_last_find": 0,
+            },
+            "child.py": {
+                "parent_id": "parent.py",
+                "lineage_depth": 1,
+                "is_pruned": False,
+                "is_sterile": False,
+                "total_finds": 0,
+                "total_mutations_against": 5,
+                "lineage_coverage_profile": {},
+                "baseline_coverage": {"h1": {"edges": [42], "rare_events": []}},
+                "discovery_mutation": {
+                    "strategy": "havoc",
+                    "transformers": ["Op"],
+                    "jit_stats": {},
+                },
+                "mutations_since_last_find": 5,
+            },
+        }
+        graph = build_adjacency_graph(pfc)
+        sub = extract_ancestry(graph, "child.py")
+        state = {"edge_map": {"_GUARD_TYPE": 42}, "rare_event_map": {}}
+        decorated = decorate(sub, graph, show_discoveries=True, state=state)
+
+        # Find edge from parent to child
+        edge_styles = {(p, c): es for p, c, es in decorated.edges}
+        es = edge_styles.get(("parent.py", "child.py"))
+        self.assertIsNotNone(es)
+        self.assertIn("_GUARD_TYPE", es.label)
+
+
+# ---------------------------------------------------------------------------
+# TestEnrichedJson
+# ---------------------------------------------------------------------------
+
+
+class TestEnrichedJson(unittest.TestCase):
+    def test_json_includes_metrics(self):
+        pfc = make_simple_chain()
+        graph = build_adjacency_graph(pfc)
+        sub = extract_descendants(graph, "seed.py", collapse_sterile=False)
+        metrics = compute_tree_metrics(sub, graph)
+        decorated = decorate(sub, graph)
+        output = emit_json(decorated, graph, sub, metrics=metrics)
+        data = json.loads(output)
+
+        # Nodes should have metrics
+        for node in data["nodes"]:
+            self.assertIn("metrics", node)
+            self.assertIn("strahler", node["metrics"])
+            self.assertIn("subtree_size", node["metrics"])
+            self.assertIn("success_rate", node["metrics"])
+
+        # Statistics should include aggregates
+        self.assertIn("max_strahler", data["statistics"])
+        self.assertIn("mean_branching", data["statistics"])
+
+    def test_json_includes_discoveries(self):
+        pfc = make_simple_chain()
+        graph = build_adjacency_graph(pfc)
+        sub = extract_descendants(graph, "seed.py", collapse_sterile=False)
+        decorated = decorate(sub, graph)
+        discoveries = {("seed.py", "middle.py"): ["+edge_foo"]}
+        output = emit_json(decorated, graph, sub, edge_discoveries=discoveries)
+        data = json.loads(output)
+
+        edge = next(e for e in data["edges"] if e["source"] == "seed.py")
+        self.assertIn("discoveries", edge)
+        self.assertEqual(edge["discoveries"], ["+edge_foo"])
+
+
+# ---------------------------------------------------------------------------
+# TestCLI - MRCA mode
+# ---------------------------------------------------------------------------
+
+
+class TestCLIMrca(unittest.TestCase):
+    @patch("lafleur.lineage.load_coverage_state")
+    def test_mrca_mode_e2e(self, mock_load):
+        """End-to-end MRCA mode produces DOT output."""
+        mock_load.return_value = {"per_file_coverage": make_y_shape()}
+
+        with patch(
+            "sys.argv",
+            ["lafleur-lineage", "--state-path", "fake.pkl", "mrca", "B.py", "C.py"],
+        ):
+            from lafleur.lineage import main
+
+            with patch("builtins.print") as mock_print:
+                main()
+
+            printed = mock_print.call_args_list
+            dot_calls = [c for c in printed if c.kwargs.get("file") is not sys.stderr]
+            self.assertTrue(any("digraph lineage" in str(c) for c in dot_calls))
+
+
+# Need Subgraph import for stats tests
+from lafleur.lineage import Subgraph  # noqa: E402
 
 
 if __name__ == "__main__":

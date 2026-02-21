@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import pickle
 import shutil
 import subprocess
@@ -18,6 +19,7 @@ import sys
 from collections import defaultdict, deque
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
+from statistics import mean
 
 # ---------------------------------------------------------------------------
 # Data structures
@@ -112,6 +114,29 @@ STRATEGY_STYLES: dict[str, str] = {
 
 FERTILE_THRESHOLD = 5  # total_finds >= this → fertile styling
 ANCESTRY_DEPTH_LIMIT = 200
+BORDER_MRCA = "#007bff"
+
+
+# ---------------------------------------------------------------------------
+# Tree metrics
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class TreeMetrics:
+    """Computed structural metrics for a subgraph."""
+
+    strahler: dict[str, int]  # node_id → Strahler order
+    branching_factors: dict[str, int]  # internal node_id → number of children
+    subtree_sizes: dict[str, int]  # node_id → total descendants including self
+    imbalance_cv: dict[str, float]  # internal node_id → CV of children's subtree sizes
+    success_rates: dict[str, float | None]  # node_id → success rate (None if insufficient)
+    # Aggregates
+    max_strahler: int
+    mean_branching: float
+    max_branching: int
+    mean_imbalance: float
+
 
 # ---------------------------------------------------------------------------
 # Graph construction
@@ -290,6 +315,295 @@ def extract_descendants(
 
 
 # ---------------------------------------------------------------------------
+# Subgraph extraction: MRCA
+# ---------------------------------------------------------------------------
+
+
+def _get_ancestor_list(graph: LineageGraph, target: str) -> list[str]:
+    """Get ordered ancestor list for a target (target first, seed last)."""
+    ancestors: list[str] = []
+    current = target
+    visited: set[str] = set()
+
+    for _ in range(ANCESTRY_DEPTH_LIMIT):
+        if current in visited:
+            break
+        visited.add(current)
+        ancestors.append(current)
+
+        if current not in graph.metadata:
+            break
+
+        parent_id = graph.parent.get(current)
+        if parent_id is None:
+            break
+        current = parent_id
+
+    return ancestors
+
+
+def extract_mrca(graph: LineageGraph, targets: list[str]) -> Subgraph:
+    """Find the MRCA of multiple files and return the subgraph from MRCA to each target.
+
+    Returns a Subgraph containing:
+    - The MRCA node (in special_nodes with role "mrca")
+    - Diverging branches from MRCA to each target
+
+    If targets share no common ancestor (different seeds), returns all full
+    paths as disconnected components with no MRCA marked.
+    """
+    if not targets:
+        return Subgraph(nodes=set(), edges=[])
+
+    # Compute ancestor lists
+    ancestor_lists: list[list[str]] = []
+    ancestor_sets: list[set[str]] = []
+    for t in targets:
+        ancestors = _get_ancestor_list(graph, t)
+        ancestor_lists.append(ancestors)
+        ancestor_sets.append(set(ancestors))
+
+    # Find MRCA: walk first target's ancestors from target toward root
+    mrca: str | None = None
+    for candidate in ancestor_lists[0]:
+        if all(candidate in aset for aset in ancestor_sets[1:]):
+            mrca = candidate
+            break
+
+    nodes: set[str] = set()
+    edges: list[tuple[str, str]] = []
+    special_nodes: dict[str, str] = {}
+
+    if mrca is not None:
+        special_nodes[mrca] = "mrca"
+        # For each target, collect path from MRCA to target
+        for ancestors in ancestor_lists:
+            # ancestors is target-first, seed-last
+            path: list[str] = []
+            for a in ancestors:
+                path.append(a)
+                if a == mrca:
+                    break
+            # path is target → ... → mrca; reverse to mrca → ... → target
+            path.reverse()
+            for n in path:
+                nodes.add(n)
+            for i in range(len(path) - 1):
+                edge = (path[i], path[i + 1])
+                if edge not in edges:
+                    edges.append(edge)
+    else:
+        # Disjoint seeds — return all full paths
+        for ancestors in ancestor_lists:
+            ancestors_reversed = list(reversed(ancestors))  # seed → ... → target
+            for n in ancestors_reversed:
+                nodes.add(n)
+            for i in range(len(ancestors_reversed) - 1):
+                edge = (ancestors_reversed[i], ancestors_reversed[i + 1])
+                if edge not in edges:
+                    edges.append(edge)
+
+    return Subgraph(nodes=nodes, edges=edges, special_nodes=special_nodes)
+
+
+# ---------------------------------------------------------------------------
+# Tree metrics computation
+# ---------------------------------------------------------------------------
+
+
+def compute_strahler(graph: LineageGraph, subgraph: Subgraph) -> dict[str, int]:
+    """Compute Strahler stream order for each node in the subgraph.
+
+    Strahler order rules:
+    - Leaves (no children in subgraph): order = 1
+    - Internal node: if only one child has the maximum order among children,
+      order = that maximum. If two or more children share the maximum,
+      order = maximum + 1.
+    """
+    # Build children map within the subgraph
+    sub_children: dict[str, list[str]] = defaultdict(list)
+    for parent_node, child_node in subgraph.edges:
+        sub_children[parent_node].append(child_node)
+
+    strahler: dict[str, int] = {}
+
+    def _compute(node: str) -> int:
+        if node in strahler:
+            return strahler[node]
+        children = sub_children.get(node, [])
+        if not children:
+            strahler[node] = 1
+            return 1
+        child_orders = [_compute(c) for c in children]
+        max_order = max(child_orders)
+        count_max = child_orders.count(max_order)
+        order = max_order + 1 if count_max >= 2 else max_order
+        strahler[node] = order
+        return order
+
+    for node in subgraph.nodes:
+        _compute(node)
+
+    return strahler
+
+
+def compute_tree_metrics(
+    subgraph: Subgraph,
+    graph: LineageGraph,
+) -> TreeMetrics:
+    """Compute all structural metrics for the subgraph."""
+    # Children map within subgraph
+    sub_children: dict[str, list[str]] = defaultdict(list)
+    for parent_node, child_node in subgraph.edges:
+        sub_children[parent_node].append(child_node)
+
+    # Strahler
+    strahler = compute_strahler(graph, subgraph)
+
+    # Subtree sizes (post-order)
+    subtree_sizes: dict[str, int] = {}
+
+    def _subtree_size(node: str) -> int:
+        if node in subtree_sizes:
+            return subtree_sizes[node]
+        children = sub_children.get(node, [])
+        size = 1 + sum(_subtree_size(c) for c in children)
+        subtree_sizes[node] = size
+        return size
+
+    for node in subgraph.nodes:
+        _subtree_size(node)
+
+    # Branching factor
+    branching_factors: dict[str, int] = {}
+    for node in subgraph.nodes:
+        children = sub_children.get(node, [])
+        if children:
+            branching_factors[node] = len(children)
+
+    # Imbalance CV
+    imbalance_cv: dict[str, float] = {}
+    for node, children in sub_children.items():
+        if len(children) >= 2:
+            child_sizes = [subtree_sizes.get(c, 1) for c in children]
+            m = mean(child_sizes)
+            if m > 0:
+                std = math.sqrt(sum((s - m) ** 2 for s in child_sizes) / len(child_sizes))
+                imbalance_cv[node] = std / m
+            else:
+                imbalance_cv[node] = 0.0
+
+    # Success rates
+    success_rates: dict[str, float | None] = {}
+    for node in subgraph.nodes:
+        if node.startswith("__collapsed_"):
+            continue
+        meta = graph.metadata.get(node, {})
+        if meta.get("parent_id") is None:
+            # Seed — not mutated
+            success_rates[node] = None
+            continue
+        total_mutations = meta.get("total_mutations_against", 0)
+        total_finds = meta.get("total_finds", 0)
+        if total_mutations > 0:
+            success_rates[node] = total_finds / total_mutations
+        else:
+            # Fallback lower bound
+            denom = max(1, total_finds + meta.get("mutations_since_last_find", 0))
+            success_rates[node] = total_finds / denom
+
+    # Aggregates
+    max_strahler = max(strahler.values()) if strahler else 0
+    bf_values = list(branching_factors.values())
+    mean_branching = mean(bf_values) if bf_values else 0.0
+    max_branching = max(bf_values) if bf_values else 0
+    cv_values = list(imbalance_cv.values())
+    mean_imbalance = mean(cv_values) if cv_values else 0.0
+
+    return TreeMetrics(
+        strahler=strahler,
+        branching_factors=branching_factors,
+        subtree_sizes=subtree_sizes,
+        imbalance_cv=imbalance_cv,
+        success_rates=success_rates,
+        max_strahler=max_strahler,
+        mean_branching=mean_branching,
+        max_branching=max_branching,
+        mean_imbalance=mean_imbalance,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Edge discovery computation
+# ---------------------------------------------------------------------------
+
+
+def compute_edge_discoveries(
+    parent_id: str,
+    child_id: str,
+    graph: LineageGraph,
+    state: dict,
+) -> list[str]:
+    """Compute what new coverage the child discovered relative to its parent.
+
+    Diffs child's baseline_coverage edges/rare_events against parent's
+    lineage_coverage_profile. Returns human-readable strings for the
+    most notable discoveries (up to 3).
+    """
+    parent_meta = graph.metadata.get(parent_id, {})
+    child_meta = graph.metadata.get(child_id, {})
+
+    # Parent lineage coverage (uses set[int])
+    parent_lineage = parent_meta.get("lineage_coverage_profile", {})
+    parent_edges: set[int] = set()
+    parent_rare: set[int] = set()
+    for harness_data in parent_lineage.values():
+        if isinstance(harness_data, dict):
+            edges = harness_data.get("edges", set())
+            parent_edges.update(edges if isinstance(edges, set) else set(edges))
+            rare = harness_data.get("rare_events", set())
+            parent_rare.update(rare if isinstance(rare, set) else set(rare))
+
+    # Child baseline coverage
+    child_baseline = child_meta.get("baseline_coverage", {})
+    child_edges: set[int] = set()
+    child_rare: set[int] = set()
+    for harness_data in child_baseline.values():
+        if isinstance(harness_data, dict):
+            edges = harness_data.get("edges", [])
+            child_edges.update(edges if isinstance(edges, set) else set(edges))
+            rare = harness_data.get("rare_events", [])
+            child_rare.update(rare if isinstance(rare, set) else set(rare))
+
+    new_edges = child_edges - parent_edges
+    new_rare = child_rare - parent_rare
+
+    if not new_edges and not new_rare:
+        return []
+
+    # Build reverse maps for human-readable names
+    edge_map = state.get("edge_map", {})
+    rare_event_map = state.get("rare_event_map", {})
+    rev_edge = {v: k for k, v in edge_map.items()} if edge_map else {}
+    rev_rare = {v: k for k, v in rare_event_map.items()} if rare_event_map else {}
+
+    discoveries: list[str] = []
+
+    # Prefer rare events (more meaningful)
+    for rid in sorted(new_rare)[:2]:
+        name = rev_rare.get(rid, str(rid))
+        discoveries.append(f"+RARE:{name}")
+
+    # Then edges
+    remaining = 3 - len(discoveries)
+    for eid in sorted(new_edges)[:remaining]:
+        name = rev_edge.get(eid, str(eid))
+        discoveries.append(f"+{name}")
+
+    return discoveries
+
+
+# ---------------------------------------------------------------------------
 # Decoration
 # ---------------------------------------------------------------------------
 
@@ -298,10 +612,18 @@ def _build_node_label(
     node: str,
     metadata: dict,
     label_style: str,
+    metrics: TreeMetrics | None = None,
+    show_strahler: bool = False,
+    show_success_rate: bool = False,
 ) -> str:
     """Build a node label based on the label style."""
     if label_style == "minimal":
-        return node
+        parts = [node]
+        if show_strahler and metrics and node in metrics.strahler:
+            parts.append(f"S={metrics.strahler[node]}")
+        if show_success_rate and metrics:
+            parts.extend(_success_rate_label_parts(node, metadata, metrics))
+        return "\\n".join(parts) if len(parts) > 1 else node
 
     dm = metadata.get("discovery_mutation", {})
     strategy = dm.get("strategy", "?")
@@ -317,6 +639,12 @@ def _build_node_label(
     parts.append(f"depth={depth} finds={finds}")
     parts.append(f"density={density:.3f} edges={edges_count}")
 
+    if show_strahler and metrics and node in metrics.strahler:
+        parts.append(f"S={metrics.strahler[node]}")
+
+    if show_success_rate and metrics:
+        parts.extend(_success_rate_label_parts(node, metadata, metrics))
+
     if label_style == "verbose":
         exec_time = metadata.get("execution_time_ms", 0)
         file_size = metadata.get("file_size_bytes", 0)
@@ -329,6 +657,22 @@ def _build_node_label(
             parts.append(f"  {key}={val}")
 
     return "\\n".join(parts)
+
+
+def _success_rate_label_parts(node: str, metadata: dict, metrics: TreeMetrics) -> list[str]:
+    """Build success rate label parts for a node."""
+    if metadata.get("parent_id") is None:
+        return []  # Seed — skip
+    rate = metrics.success_rates.get(node)
+    if rate is None:
+        return []
+    total_mutations = metadata.get("total_mutations_against", 0)
+    total_finds = metadata.get("total_finds", 0)
+    if total_mutations > 0:
+        return [f"rate={total_finds}/{total_mutations} ({rate:.1%})"]
+    else:
+        denom = max(1, total_finds + metadata.get("mutations_since_last_find", 0))
+        return [f"rate\\u2265{total_finds}/{denom} (\\u2264{rate:.1%})"]
 
 
 def _build_tooltip(metadata: dict) -> str:
@@ -361,6 +705,11 @@ def decorate(
     graph: LineageGraph,
     label_style: str = "standard",
     no_color: bool = False,
+    metrics: TreeMetrics | None = None,
+    show_strahler: bool = False,
+    show_success_rate: bool = False,
+    show_discoveries: bool = False,
+    state: dict | None = None,
 ) -> DecoratedGraph:
     """Assign visual properties to nodes and edges."""
     node_styles: dict[str, NodeStyle] = {}
@@ -391,45 +740,24 @@ def decorate(
                 ns.fillcolor = COLOR_COLLAPSED
                 ns.label = f"{count} sterile leaves"
                 ns.tooltip = ""
+            elif role == "mrca":
+                # MRCA gets normal node styling plus blue border overlay
+                metadata = graph.metadata.get(node, {})
+                ns = _decorate_corpus_node(
+                    node, metadata, label_style, metrics, show_strahler, show_success_rate
+                )
+                ns.color = BORDER_MRCA
+                ns.penwidth = 3.0
+                node_styles[node] = ns
+                continue
             node_styles[node] = ns
             continue
 
         # Priority 2: normal corpus nodes
         metadata = graph.metadata.get(node, {})
-        parent_id = metadata.get("parent_id")
-        is_pruned = metadata.get("is_pruned", False)
-        is_sterile = metadata.get("is_sterile", False)
-        total_finds = metadata.get("total_finds", 0)
-
-        if parent_id is None and not is_pruned:
-            # Seed
-            ns.shape = "doubleoctagon"
-            ns.fillcolor = COLOR_SEED
-        elif is_sterile:
-            ns.fillcolor = COLOR_STERILE
-            ns.style = "filled,dashed"
-        elif total_finds >= FERTILE_THRESHOLD:
-            ns.fillcolor = COLOR_FERTILE
-            ns.fontcolor = "white"
-        else:
-            ns.fillcolor = COLOR_NORMAL
-
-        # Priority 3: border overlays
-        dm = metadata.get("discovery_mutation", {})
-        jit_stats = dm.get("jit_stats", {})
-
-        if jit_stats.get("zombie_traces", 0) > 0:
-            ns.color = BORDER_ZOMBIE
-            ns.penwidth = 3.0
-
-        if jit_stats.get("max_exit_density", 0.0) > 0.1:
-            ns.color = BORDER_TACHYCARDIA
-            ns.penwidth = 2.0
-
-        # Label and tooltip
-        ns.label = _build_node_label(node, metadata, label_style)
-        ns.tooltip = _build_tooltip(metadata)
-
+        ns = _decorate_corpus_node(
+            node, metadata, label_style, metrics, show_strahler, show_success_rate
+        )
         node_styles[node] = ns
 
     # Edge decoration
@@ -449,6 +777,12 @@ def decorate(
             es.label = f"{strategy}\\n{', '.join(transformers)}" if transformers else strategy
         else:
             es.label = f"{strategy} ({len(transformers)})" if transformers else strategy
+
+        # Append discovery labels
+        if show_discoveries and state is not None:
+            discoveries = compute_edge_discoveries(parent_node, child_node, graph, state)
+            if discoveries:
+                es.label = es.label + "\\n" + "\\n".join(discoveries)
 
         # Make fertile edges more prominent
         if child_meta.get("total_finds", 0) >= FERTILE_THRESHOLD:
@@ -472,6 +806,52 @@ def decorate(
     }
 
     return DecoratedGraph(nodes=node_styles, edges=edge_list, graph_attrs=graph_attrs)
+
+
+def _decorate_corpus_node(
+    node: str,
+    metadata: dict,
+    label_style: str,
+    metrics: TreeMetrics | None,
+    show_strahler: bool,
+    show_success_rate: bool,
+) -> NodeStyle:
+    """Build NodeStyle for a normal corpus node."""
+    ns = NodeStyle()
+    parent_id = metadata.get("parent_id")
+    is_pruned = metadata.get("is_pruned", False)
+    is_sterile = metadata.get("is_sterile", False)
+    total_finds = metadata.get("total_finds", 0)
+
+    if parent_id is None and not is_pruned:
+        ns.shape = "doubleoctagon"
+        ns.fillcolor = COLOR_SEED
+    elif is_sterile:
+        ns.fillcolor = COLOR_STERILE
+        ns.style = "filled,dashed"
+    elif total_finds >= FERTILE_THRESHOLD:
+        ns.fillcolor = COLOR_FERTILE
+        ns.fontcolor = "white"
+    else:
+        ns.fillcolor = COLOR_NORMAL
+
+    # Border overlays
+    dm = metadata.get("discovery_mutation", {})
+    jit_stats = dm.get("jit_stats", {})
+
+    if jit_stats.get("zombie_traces", 0) > 0:
+        ns.color = BORDER_ZOMBIE
+        ns.penwidth = 3.0
+
+    if jit_stats.get("max_exit_density", 0.0) > 0.1:
+        ns.color = BORDER_TACHYCARDIA
+        ns.penwidth = 2.0
+
+    ns.label = _build_node_label(
+        node, metadata, label_style, metrics, show_strahler, show_success_rate
+    )
+    ns.tooltip = _build_tooltip(metadata)
+    return ns
 
 
 # ---------------------------------------------------------------------------
@@ -542,37 +922,64 @@ def _quote(text: str) -> str:
 # ---------------------------------------------------------------------------
 
 
-def emit_json(decorated: DecoratedGraph, graph: LineageGraph, subgraph: Subgraph) -> str:
+def emit_json(
+    decorated: DecoratedGraph,
+    graph: LineageGraph,
+    subgraph: Subgraph,
+    metrics: TreeMetrics | None = None,
+    edge_discoveries: dict[tuple[str, str], list[str]] | None = None,
+) -> str:
     """Emit the decorated graph as JSON."""
     nodes_list = []
     for node_id, ns in decorated.nodes.items():
         meta = graph.metadata.get(node_id, {})
-        nodes_list.append(
-            {
-                "id": node_id,
-                "metadata": meta,
-                "style": asdict(ns),
+        node_entry: dict = {
+            "id": node_id,
+            "metadata": meta,
+            "style": asdict(ns),
+        }
+        if metrics is not None:
+            node_entry["metrics"] = {
+                "strahler": metrics.strahler.get(node_id, 0),
+                "subtree_size": metrics.subtree_sizes.get(node_id, 0),
+                "branching_factor": metrics.branching_factors.get(node_id, 0),
+                "imbalance_cv": metrics.imbalance_cv.get(node_id, 0.0),
+                "success_rate": metrics.success_rates.get(node_id),
+                "success_rate_exact": (
+                    graph.metadata.get(node_id, {}).get("total_mutations_against", 0) > 0
+                    if node_id in graph.metadata
+                    else False
+                ),
             }
-        )
+        nodes_list.append(node_entry)
 
     edges_list = []
     for parent_node, child_node, es in decorated.edges:
-        edges_list.append(
-            {
-                "source": parent_node,
-                "target": child_node,
-                "style": asdict(es),
-            }
-        )
+        edge_entry: dict = {
+            "source": parent_node,
+            "target": child_node,
+            "style": asdict(es),
+        }
+        if edge_discoveries and (parent_node, child_node) in edge_discoveries:
+            edge_entry["discoveries"] = edge_discoveries[(parent_node, child_node)]
+        edges_list.append(edge_entry)
+
+    stats: dict = {
+        "node_count": len(subgraph.nodes),
+        "edge_count": len(subgraph.edges),
+        "collapsed_count": len(subgraph.collapsed),
+    }
+    if metrics is not None:
+        stats["max_strahler"] = metrics.max_strahler
+        stats["mean_branching"] = round(metrics.mean_branching, 1)
+        stats["mean_imbalance"] = round(metrics.mean_imbalance, 2)
+        rates = [r for r in metrics.success_rates.values() if r is not None]
+        stats["mean_success_rate"] = round(mean(rates), 4) if rates else None
 
     result = {
         "nodes": nodes_list,
         "edges": edges_list,
-        "statistics": {
-            "node_count": len(subgraph.nodes),
-            "edge_count": len(subgraph.edges),
-            "collapsed_count": len(subgraph.collapsed),
-        },
+        "statistics": stats,
     }
     return json.dumps(result, indent=2, default=str)
 
@@ -666,7 +1073,9 @@ def print_ancestry_stats(chain: list[str], graph: LineageGraph) -> None:
         )
 
 
-def print_descendants_stats(subgraph: Subgraph, graph: LineageGraph) -> None:
+def print_descendants_stats(
+    subgraph: Subgraph, graph: LineageGraph, metrics: TreeMetrics | None = None
+) -> None:
     """Print descendants-mode statistics to stderr."""
     seed_count = 0
     mutation_count = 0
@@ -730,6 +1139,81 @@ def print_descendants_stats(subgraph: Subgraph, graph: LineageGraph) -> None:
     print(f"  Sterile nodes: {sterile_count} ({sterile_pct:.0f}%)", file=sys.stderr)
     print(f"  Zombie traces: {zombie_count} nodes", file=sys.stderr)
     print(f"  Tachycardia events: {tachycardia_count} nodes", file=sys.stderr)
+
+    if metrics is not None:
+        print(
+            f"  Branching factor: mean={metrics.mean_branching:.1f}, max={metrics.max_branching}",
+            file=sys.stderr,
+        )
+        print(f"  Imbalance (CV): mean={metrics.mean_imbalance:.2f}", file=sys.stderr)
+        print(f"  Strahler order: max={metrics.max_strahler}", file=sys.stderr)
+        rates = [r for r in metrics.success_rates.values() if r is not None]
+        if rates:
+            mean_rate = mean(rates) * 100
+            sorted_rates = sorted(rates)
+            mid = len(sorted_rates) // 2
+            median_rate = (
+                sorted_rates[mid] * 100
+                if len(sorted_rates) % 2
+                else (sorted_rates[mid - 1] + sorted_rates[mid]) / 2 * 100
+            )
+            print(
+                f"  Success rate: mean={mean_rate:.1f}%, median={median_rate:.1f}%",
+                file=sys.stderr,
+            )
+
+
+def print_mrca_stats(
+    targets: list[str],
+    mrca: str | None,
+    subgraph: Subgraph,
+    graph: LineageGraph,
+) -> None:
+    """Print MRCA-mode statistics to stderr."""
+    target_names = " and ".join(targets)
+    print(f"MRCA of {target_names}:", file=sys.stderr)
+
+    if mrca is None:
+        print("  No common ancestor — targets descend from different seeds.", file=sys.stderr)
+        for t in targets:
+            ancestors = _get_ancestor_list(graph, t)
+            seed = ancestors[-1] if ancestors else "?"
+            depth = len(ancestors) - 1
+            print(f"  {t}: seed={seed}, depth={depth}", file=sys.stderr)
+        return
+
+    mrca_meta = graph.metadata.get(mrca, {})
+    mrca_depth = mrca_meta.get("lineage_depth", 0)
+    # Find seed
+    ancestors = _get_ancestor_list(graph, mrca)
+    seed = ancestors[-1] if ancestors else mrca
+
+    print(f"  Common ancestor: {mrca} (depth={mrca_depth}, seed={seed})", file=sys.stderr)
+
+    for t in targets:
+        t_ancestors = _get_ancestor_list(graph, t)
+        # Count mutations from MRCA to target
+        branch: list[str] = []
+        for a in t_ancestors:
+            branch.append(a)
+            if a == mrca:
+                break
+        branch.reverse()  # mrca → ... → target
+        strategies = []
+        for n in branch[1:]:  # skip mrca itself
+            dm = graph.metadata.get(n, {}).get("discovery_mutation", {})
+            strategies.append(dm.get("strategy", "?"))
+        strategy_path = "→".join(strategies) if strategies else "(none)"
+        print(
+            f"  Branch to {t}: {len(branch) - 1} mutations ({strategy_path})",
+            file=sys.stderr,
+        )
+
+    dm = mrca_meta.get("discovery_mutation", {})
+    print(
+        f"  Divergence point strategy: {dm.get('strategy', '?')} at {mrca}",
+        file=sys.stderr,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -855,6 +1339,21 @@ Examples:
         default="LR",
         help="Graph direction (default: LR)",
     )
+    parser.add_argument(
+        "--show-strahler",
+        action="store_true",
+        help="Display Strahler stream order numbers on nodes",
+    )
+    parser.add_argument(
+        "--show-success-rate",
+        action="store_true",
+        help="Display success rate (finds/attempts) on nodes",
+    )
+    parser.add_argument(
+        "--show-discoveries",
+        action="store_true",
+        help="Label edges with specific coverage discoveries (ancestry/mrca modes only)",
+    )
 
     subparsers = parser.add_subparsers(dest="mode", help="Visualization mode")
 
@@ -874,6 +1373,17 @@ Examples:
         help="Don't collapse sterile leaf clusters",
     )
 
+    # MRCA subcommand
+    mrca_parser = subparsers.add_parser(
+        "mrca",
+        help="Find the most recent common ancestor of two or more files",
+    )
+    mrca_parser.add_argument(
+        "targets",
+        nargs="+",
+        help="Two or more corpus filenames or paths",
+    )
+
     args = parser.parse_args()
 
     if args.mode is None:
@@ -888,10 +1398,13 @@ Examples:
     graph = build_adjacency_graph(per_file_coverage)
 
     # Extract subgraph based on mode
+    mrca_node: str | None = None
+    mrca_targets: list[str] = []
+    chain: list[str] | None = None
+
     if args.mode == "ancestry":
         target, _ = resolve_target(args.target, per_file_coverage)
         subgraph = extract_ancestry(graph, target)
-        # Build ordered chain for stats
         chain = _extract_ancestry_chain(graph, target)
     elif args.mode == "descendants":
         root, _ = resolve_target(args.root, per_file_coverage)
@@ -901,25 +1414,58 @@ Examples:
             max_depth=args.max_depth,
             collapse_sterile=not args.no_collapse_sterile,
         )
-        chain = None
+    elif args.mode == "mrca":
+        mrca_targets = [resolve_target(t, per_file_coverage)[0] for t in args.targets]
+        subgraph = extract_mrca(graph, mrca_targets)
+        # Identify MRCA node
+        for node, role in subgraph.special_nodes.items():
+            if role == "mrca":
+                mrca_node = node
+                break
     else:
         parser.print_help()
         sys.exit(0)
 
+    # Compute metrics
+    metrics = compute_tree_metrics(subgraph, graph)
+
+    # Only show discoveries for ancestry/mrca modes
+    effective_show_discoveries = args.show_discoveries and args.mode in ("ancestry", "mrca")
+
     # Decorate
-    decorated = decorate(subgraph, graph, label_style=args.label_style, no_color=args.no_color)
+    decorated = decorate(
+        subgraph,
+        graph,
+        label_style=args.label_style,
+        no_color=args.no_color,
+        metrics=metrics,
+        show_strahler=args.show_strahler,
+        show_success_rate=args.show_success_rate,
+        show_discoveries=effective_show_discoveries,
+        state=state if effective_show_discoveries else None,
+    )
     decorated.graph_attrs["rankdir"] = args.layout
+
+    # Compute edge discoveries for JSON output
+    edge_discoveries: dict[tuple[str, str], list[str]] | None = None
+    if effective_show_discoveries and state is not None:
+        edge_discoveries = {}
+        for parent_node, child_node in subgraph.edges:
+            disc = compute_edge_discoveries(parent_node, child_node, graph, state)
+            if disc:
+                edge_discoveries[(parent_node, child_node)] = disc
 
     # Emit
     if args.json:
-        output = emit_json(decorated, graph, subgraph)
+        output = emit_json(
+            decorated, graph, subgraph, metrics=metrics, edge_discoveries=edge_discoveries
+        )
     else:
         output = emit_dot(decorated)
 
     # Render or write
     if args.render:
         output_path = args.output or Path(f"lineage.{args.format}")
-        # Always render from DOT, even if --json was requested
         dot_output = emit_dot(decorated)
         success = render_graphviz(dot_output, output_path, fmt=args.format)
         if success:
@@ -935,7 +1481,9 @@ Examples:
     if args.mode == "ancestry" and chain is not None:
         print_ancestry_stats(chain, graph)
     elif args.mode == "descendants":
-        print_descendants_stats(subgraph, graph)
+        print_descendants_stats(subgraph, graph, metrics=metrics)
+    elif args.mode == "mrca":
+        print_mrca_stats(mrca_targets, mrca_node, subgraph, graph)
 
 
 def _extract_ancestry_chain(graph: LineageGraph, target: str) -> list[str]:

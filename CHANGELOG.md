@@ -55,6 +55,16 @@ All notable changes to this project should be documented in this file.
 - `--attack-only` flag for `lafleur-lineage` ancestry mode to trace only the attack script's lineage, ignoring warmup and polluter scripts, by @devdanzin.
 - Forest mode for `lafleur-lineage`: `forest` subcommand shows all lineage trees in the corpus with `--max-depth`, `--min-descendants`, `--min-strahler` filtering, `--no-collapse-sterile` option, and Strahler-based pruning of low-complexity branches, by @devdanzin.
 - HTML pan/zoom output for `lafleur-lineage`: `--html PATH` generates an interactive HTML file wrapping SVG with svg-pan-zoom.js for navigating large lineage graphs, by @devdanzin.
+- `--include-crashes` flag for `lafleur-lineage` that scans crash directories and attaches crash nodes as red octagon leaves on the lineage graph wherever the crashing child's parent_id matches a corpus file, by @devdanzin.
+- Color/shape legend subgraph in `lafleur-lineage` DOT output, showing node types (seed, normal, fertile, sterile, crash, pruned) and strategy edge colors, suppressible with `--no-legend`, by @devdanzin.
+- Programmatic API: `render_ancestry_svg()` convenience function for embedding lineage graphs in campaign/report tools, by @devdanzin.
+
+### Documentation
+
+- Added `lafleur-lineage` to architecture overview standalone tools section, by @devdanzin.
+- Added glossary entries: Branching Factor, Ghost Node, Imbalance, lafleur-lineage, MRCA, Strahler Stream Order, Success Rate, Tombstone, by @devdanzin.
+- Documented `total_mutations_against` and `is_pruned` fields in state formats guide, by @devdanzin.
+- Added complete `lafleur-lineage` section to TOOLING.md with modes, options, example workflow, and output formats, by @devdanzin.
 
 ### Enhanced
 

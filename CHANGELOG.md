@@ -45,6 +45,7 @@ All notable changes to this project should be documented in this file.
 - A `total_mutations_against` lifetime counter on corpus file metadata, enabling accurate success rate calculation (`total_finds / total_mutations_against`) for the lineage tool, by @devdanzin.
 - **Tombstone metadata** for pruned corpus files: pruning now retains a minimal metadata entry (`parent_id`, `discovery_mutation`, `lineage_depth`, `discovery_time`, `is_pruned: True`) instead of deleting entirely, preserving lineage graph connectivity for the lineage tool, by @devdanzin.
 - **Session corpus filenames** in crash metadata: session crash bundles now record the parent corpus filename and polluter IDs in `metadata.json` under `session_corpus_files`, enabling direct lineage-to-crash mapping without content-hash searching, by @devdanzin.
+- A `lafleur-lineage` CLI tool for corpus lineage visualization with ancestry mode (trace a file back to its seed) and descendants mode (show what a file produced), DOT/JSON output, optional Graphviz rendering, strategy-colored edges, ghost nodes for pruned intermediates, sterile leaf collapsing, and statistics summary, by @devdanzin.
 
 ### Enhanced
 

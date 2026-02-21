@@ -42,6 +42,7 @@ lafleur-report = "lafleur.report:main"
 lafleur-campaign = "lafleur.campaign:main"
 lafleur-triage = "lafleur.triage:main"
 lafleur-driver = "lafleur.driver:main"
+lafleur-lineage = "lafleur.lineage:main"
 
 
 [tool.mypy]

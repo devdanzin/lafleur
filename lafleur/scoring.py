@@ -23,6 +23,7 @@ from lafleur.coverage import (
 )
 from lafleur.types import (
     AnalysisResult,
+    CorpusFileMetadata,
     CrashResult,
     DivergenceResult,
     JitStats,
@@ -636,7 +637,9 @@ class ScoringManager:
         # Retrieve parent JIT stats from metadata
         parent_jit_stats: JitStats = {}
         if parent_id:
-            parent_metadata = self.coverage_manager.state["per_file_coverage"].get(parent_id, {})
+            parent_metadata: CorpusFileMetadata = self.coverage_manager.state[
+                "per_file_coverage"
+            ].get(parent_id, {})
             parent_jit_stats = parent_metadata.get("discovery_mutation", {}).get("jit_stats", {})
 
         is_interesting = self.score_and_decide_interestingness(

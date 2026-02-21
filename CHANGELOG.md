@@ -41,6 +41,7 @@ All notable changes to this project should be documented in this file.
 - Added `compile(result, "<test>", "exec")` validation to 93 test methods across all mutator test files, catching scope violations (`return`/`yield` outside function, `break`/`continue` outside loop, `nonlocal` misuse) that `ast.parse()` alone misses, by @devdanzin.
 - `JitStats` and `MutationInfo` TypedDicts in `lafleur/types.py` for structural typing of the two most widely shared dict schemas, enabling mypy to catch key typos and missing fields across scoring, orchestrator, corpus manager, mutation controller, and corpus analysis modules, by @devdanzin.
 - `AnalysisResult` frozen dataclass hierarchy (`NewCoverageResult`, `CrashResult`, `NoChangeResult`, `DivergenceResult`) replacing the untyped `analysis_data` dict returned by `analyze_run()`, enabling `isinstance()` dispatch and compile-time verification of variant-specific field access, by @devdanzin.
+- `CorpusFileMetadata` and `LineageHarnessData` TypedDicts in `lafleur/types.py` for structural typing of `per_file_coverage` entries — the most widely accessed data structure in the codebase (~15 fields, 8 consuming modules), enabling mypy to catch key typos and type mismatches across corpus manager, orchestrator, scoring, corpus analysis, and state tool, by @devdanzin.
 
 ### Enhanced
 

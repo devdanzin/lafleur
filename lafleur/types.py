@@ -17,6 +17,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TypedDict
 
+from lafleur.coverage import HarnessCoverage
+
 
 class JitStats(TypedDict, total=False):
     """JIT vitals parsed from driver log output and stored in discovery_mutation.
@@ -66,6 +68,66 @@ class MutationInfo(TypedDict, total=False):
     targets: list[str]
     seed: int
     runtime_seed: int
+
+
+# ---------------------------------------------------------------------------
+# LineageHarnessData / CorpusFileMetadata — per_file_coverage entry typing
+# ---------------------------------------------------------------------------
+
+
+class LineageHarnessData(TypedDict, total=False):
+    """Coverage data for a single harness within a lineage profile.
+
+    Unlike HarnessCoverage (which uses Counter[int] for hit counts),
+    lineage profiles use set[int] since they only track presence/absence
+    across the ancestry chain.
+    """
+
+    uops: set[int]
+    edges: set[int]
+    rare_events: set[int]
+    max_trace_length: int
+    max_side_exits: int
+
+
+class CorpusFileMetadata(TypedDict, total=False):
+    """Metadata for a single corpus file in per_file_coverage.
+
+    This is the most widely accessed data structure in the codebase.
+    Uses total=False because:
+    - Old pickle files may lack fields added in later versions
+      (content_hash, coverage_hash, mutation_seed were added post-launch).
+    - Some fields (subsumed_children_count) are only set by specific
+      operations and may not exist on most entries.
+    - All consumers already use .get() with defaults.
+
+    See doc/dev/05_state_and_data_formats.md for field semantics.
+    """
+
+    # --- Identity & lineage ---
+    parent_id: str | None
+    lineage_depth: int
+    content_hash: str
+    coverage_hash: str
+
+    # --- Discovery context ---
+    discovery_time: str  # ISO 8601
+    execution_time_ms: int
+    file_size_bytes: int
+    discovery_mutation: MutationInfo
+    mutation_seed: int
+
+    # --- Coverage data ---
+    baseline_coverage: dict[str, HarnessCoverage]
+    lineage_coverage_profile: dict[str, LineageHarnessData]
+
+    # --- Mutable runtime state ---
+    mutations_since_last_find: int
+    total_finds: int
+    is_sterile: bool
+
+    # --- Post-hoc additions (may be absent on most entries) ---
+    subsumed_children_count: int  # Set by prune_corpus only
 
 
 # ---------------------------------------------------------------------------

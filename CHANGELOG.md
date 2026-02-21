@@ -42,6 +42,9 @@ All notable changes to this project should be documented in this file.
 - `JitStats` and `MutationInfo` TypedDicts in `lafleur/types.py` for structural typing of the two most widely shared dict schemas, enabling mypy to catch key typos and missing fields across scoring, orchestrator, corpus manager, mutation controller, and corpus analysis modules, by @devdanzin.
 - `AnalysisResult` frozen dataclass hierarchy (`NewCoverageResult`, `CrashResult`, `NoChangeResult`, `DivergenceResult`) replacing the untyped `analysis_data` dict returned by `analyze_run()`, enabling `isinstance()` dispatch and compile-time verification of variant-specific field access, by @devdanzin.
 - `CorpusFileMetadata` and `LineageHarnessData` TypedDicts in `lafleur/types.py` for structural typing of `per_file_coverage` entries — the most widely accessed data structure in the codebase (~15 fields, 8 consuming modules), enabling mypy to catch key typos and type mismatches across corpus manager, orchestrator, scoring, corpus analysis, and state tool, by @devdanzin.
+- A `total_mutations_against` lifetime counter on corpus file metadata, enabling accurate success rate calculation (`total_finds / total_mutations_against`) for the lineage tool, by @devdanzin.
+- **Tombstone metadata** for pruned corpus files: pruning now retains a minimal metadata entry (`parent_id`, `discovery_mutation`, `lineage_depth`, `discovery_time`, `is_pruned: True`) instead of deleting entirely, preserving lineage graph connectivity for the lineage tool, by @devdanzin.
+- **Session corpus filenames** in crash metadata: session crash bundles now record the parent corpus filename and polluter IDs in `metadata.json` under `session_corpus_files`, enabling direct lineage-to-crash mapping without content-hash searching, by @devdanzin.
 
 ### Enhanced
 

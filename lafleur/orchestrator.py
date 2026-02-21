@@ -423,6 +423,11 @@ class LafleurOrchestrator:
             A tuple of (flow_control, new_filename). new_filename is set for
             NEW_COVERAGE and DIVERGENCE statuses, None otherwise.
         """
+        # Lifetime mutation attempt counter — fires on every outcome
+        parent_metadata["total_mutations_against"] = (
+            parent_metadata.get("total_mutations_against", 0) + 1
+        )
+
         if isinstance(analysis_data, (DivergenceResult, NewCoverageResult)):
             mutation_info = analysis_data.mutation_info
             strategy = mutation_info.get("strategy")

@@ -621,6 +621,7 @@ class ScoringManager:
             exec_result.session_files,
             parent_id=parent_id,
             mutation_info=mutation_info,
+            polluter_ids=exec_result.polluter_ids,
         ):
             return CrashResult(
                 status="CRASH",

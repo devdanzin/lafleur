@@ -575,8 +575,11 @@ class TestCorpusManagerPruneCorpus(unittest.TestCase):
         with patch("lafleur.corpus_manager.CORPUS_DIR", corpus_dir):
             self.corpus_manager.prune_corpus(dry_run=False)
 
-        # test1 should be removed
-        self.assertNotIn("test1.py", self.state["per_file_coverage"])
+        # test1 should be replaced with a tombstone (not deleted entirely)
+        self.assertIn("test1.py", self.state["per_file_coverage"])
+        tombstone = self.state["per_file_coverage"]["test1.py"]
+        self.assertTrue(tombstone.get("is_pruned"))
+        self.assertNotIn("baseline_coverage", tombstone)
         self.assertIn("test2.py", self.state["per_file_coverage"])
         self.assertFalse((corpus_dir / "test1.py").exists())
 
@@ -850,9 +853,10 @@ class TestPruneCorpusScalability(unittest.TestCase):
         with patch("lafleur.corpus_manager.CORPUS_DIR", corpus_dir):
             self.corpus_manager.prune_corpus(dry_run=False)
 
-        # Original should be pruned — minimized has equal coverage and better metrics
+        # Original should be pruned (tombstone) — minimized has equal coverage and better metrics
         self.assertFalse((corpus_dir / "original.py").exists())
-        self.assertNotIn("original.py", self.state["per_file_coverage"])
+        self.assertIn("original.py", self.state["per_file_coverage"])
+        self.assertTrue(self.state["per_file_coverage"]["original.py"].get("is_pruned"))
         self.assertIn("minimized.py", self.state["per_file_coverage"])
 
     def test_prune_equal_coverage_equal_metrics_not_subsumed(self):
@@ -938,7 +942,8 @@ class TestPruneCorpusScalability(unittest.TestCase):
             self.corpus_manager.prune_corpus(dry_run=False)
 
         self.assertFalse((corpus_dir / "a.py").exists())
-        self.assertNotIn("a.py", self.state["per_file_coverage"])
+        self.assertIn("a.py", self.state["per_file_coverage"])
+        self.assertTrue(self.state["per_file_coverage"]["a.py"].get("is_pruned"))
         self.assertIn("b.py", self.state["per_file_coverage"])
         mock_save.assert_called_once()
         self.assertIsNone(self.corpus_manager.scheduler._cached_scores)
@@ -991,13 +996,16 @@ class TestPruneCorpusScalability(unittest.TestCase):
         with patch("lafleur.corpus_manager.CORPUS_DIR", corpus_dir):
             self.corpus_manager.prune_corpus(dry_run=False)
 
-        # All 100 subsumed files should be gone
-        remaining = set(self.state["per_file_coverage"].keys())
+        # All 100 subsumed files should be tombstones
         for i in range(100):
-            self.assertNotIn(f"sub_{i}.py", remaining)
-        # All 400 base files should remain
+            entry = self.state["per_file_coverage"].get(f"sub_{i}.py")
+            self.assertIsNotNone(entry, f"sub_{i}.py missing from per_file_coverage")
+            self.assertTrue(entry.get("is_pruned"), f"sub_{i}.py not marked as pruned")
+        # All 400 base files should remain live
         for i in range(400):
-            self.assertIn(f"base_{i}.py", remaining)
+            entry = self.state["per_file_coverage"].get(f"base_{i}.py")
+            self.assertIsNotNone(entry, f"base_{i}.py missing from per_file_coverage")
+            self.assertFalse(entry.get("is_pruned", False), f"base_{i}.py should not be pruned")
 
 
 class TestCorpusManagerGetFilesToAnalyze(unittest.TestCase):
@@ -1264,6 +1272,215 @@ class TestSelectParentSterileFiltering(unittest.TestCase):
         """Returns None when corpus is completely empty."""
         result = self.corpus_manager.select_parent()
         self.assertIsNone(result)
+
+
+class TestTotalMutationsAgainst(unittest.TestCase):
+    """Tests for the total_mutations_against counter (Change 1)."""
+
+    def test_add_new_file_initializes_counter(self):
+        """add_new_file() should create metadata with total_mutations_against: 0."""
+        temp_dir = tempfile.TemporaryDirectory()
+        temp_path = Path(temp_dir.name)
+        corpus_dir = temp_path / "corpus"
+        corpus_dir.mkdir()
+
+        state = {
+            "global_coverage": {"edges": {}, "uops": {}, "rare_events": {}},
+            "per_file_coverage": {},
+        }
+        coverage_manager = CoverageManager(state)
+        run_stats = {"corpus_file_counter": 0}
+
+        with (
+            patch("lafleur.corpus_manager.CORPUS_DIR", corpus_dir),
+            patch("lafleur.corpus_manager.TMP_DIR"),
+        ):
+            cm = CorpusManager(
+                coverage_state=coverage_manager,
+                run_stats=run_stats,
+                fusil_path="",
+                get_boilerplate_func=lambda: "",
+                execution_timeout=10,
+            )
+
+        with (
+            patch("lafleur.corpus_manager.save_coverage_state"),
+            patch("lafleur.corpus_manager.CORPUS_DIR", corpus_dir),
+        ):
+            cm.add_new_file(
+                core_code="x = 1",
+                baseline_coverage={},
+                execution_time_ms=50,
+                parent_id=None,
+                mutation_info={"strategy": "test"},
+                mutation_seed=42,
+                content_hash="abc",
+                coverage_hash="def",
+                build_lineage_func=lambda p, c: {},
+            )
+
+        metadata = state["per_file_coverage"]["1.py"]
+        self.assertEqual(metadata["total_mutations_against"], 0)
+        temp_dir.cleanup()
+
+    def test_backward_compat_missing_field(self):
+        """Metadata lacking total_mutations_against should default to 0 via .get()."""
+        metadata = {"total_finds": 5, "mutations_since_last_find": 3}
+        value = metadata.get("total_mutations_against", 0) + 1
+        self.assertEqual(value, 1)
+
+
+class TestTombstoneMetadata(unittest.TestCase):
+    """Tests for tombstone metadata on pruned files (Change 2)."""
+
+    def setUp(self):
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.temp_path = Path(self.temp_dir.name)
+
+        self.state = {
+            "global_coverage": {"edges": {}, "uops": {}, "rare_events": {}},
+            "per_file_coverage": {},
+        }
+        self.coverage_manager = CoverageManager(self.state)
+        self.run_stats = {"corpus_file_counter": 0}
+
+        with patch("lafleur.corpus_manager.CORPUS_DIR", self.temp_path / "corpus"):
+            with patch("lafleur.corpus_manager.TMP_DIR", self.temp_path / "tmp"):
+                self.corpus_manager = CorpusManager(
+                    coverage_state=self.coverage_manager,
+                    run_stats=self.run_stats,
+                    fusil_path="",
+                    get_boilerplate_func=lambda: "",
+                    execution_timeout=10,
+                )
+
+    def tearDown(self):
+        self.temp_dir.cleanup()
+
+    @patch("lafleur.corpus_manager.save_coverage_state")
+    def test_tombstone_preserves_lineage_fields(self, mock_save):
+        """Pruned files should retain parent_id, discovery_mutation, lineage_depth, discovery_time."""
+        corpus_dir = self.temp_path / "corpus"
+        corpus_dir.mkdir(parents=True, exist_ok=True)
+        (corpus_dir / "child.py").write_text("# child")
+        (corpus_dir / "parent.py").write_text("# parent")
+
+        self.state["per_file_coverage"]["child.py"] = {
+            "lineage_coverage_profile": {"f1": {"edges": {1, 2}}},
+            "file_size_bytes": 1000,
+            "execution_time_ms": 100,
+            "parent_id": "grandparent.py",
+            "discovery_mutation": {"strategy": "havoc", "transformers": ["OperatorSwapper"]},
+            "lineage_depth": 2,
+            "discovery_time": "2025-01-01T00:00:00",
+            "baseline_coverage": {"f1": {"edges": {1: 5, 2: 3}}},
+            "content_hash": "abc",
+            "coverage_hash": "def",
+        }
+        self.state["per_file_coverage"]["parent.py"] = {
+            "lineage_coverage_profile": {"f1": {"edges": {1, 2, 3}}},
+            "file_size_bytes": 500,
+            "execution_time_ms": 50,
+        }
+
+        with patch("lafleur.corpus_manager.CORPUS_DIR", corpus_dir):
+            self.corpus_manager.prune_corpus(dry_run=False)
+
+        tombstone = self.state["per_file_coverage"]["child.py"]
+        self.assertTrue(tombstone["is_pruned"])
+        self.assertEqual(tombstone["parent_id"], "grandparent.py")
+        self.assertEqual(tombstone["discovery_mutation"]["strategy"], "havoc")
+        self.assertEqual(tombstone["lineage_depth"], 2)
+        self.assertEqual(tombstone["discovery_time"], "2025-01-01T00:00:00")
+        # Bulk fields should NOT be present
+        self.assertNotIn("baseline_coverage", tombstone)
+        self.assertNotIn("content_hash", tombstone)
+        self.assertNotIn("coverage_hash", tombstone)
+        self.assertNotIn("lineage_coverage_profile", tombstone)
+
+    def test_scheduler_skips_tombstones(self):
+        """calculate_scores() should not include tombstones in returned scores."""
+        self.state["per_file_coverage"]["live.py"] = {
+            "baseline_coverage": {},
+            "execution_time_ms": 50,
+            "file_size_bytes": 500,
+            "total_finds": 0,
+            "lineage_depth": 1,
+        }
+        self.state["per_file_coverage"]["dead.py"] = {
+            "is_pruned": True,
+            "parent_id": None,
+            "lineage_depth": 0,
+        }
+
+        scheduler = CorpusScheduler(self.coverage_manager)
+        scores = scheduler.calculate_scores()
+
+        self.assertIn("live.py", scores)
+        self.assertNotIn("dead.py", scores)
+
+    def test_select_parent_skips_tombstones(self):
+        """select_parent() should never return a tombstone filename."""
+        self.state["per_file_coverage"]["live.py"] = {
+            "baseline_coverage": {},
+            "execution_time_ms": 50,
+            "file_size_bytes": 500,
+            "total_finds": 0,
+            "lineage_depth": 1,
+        }
+        self.state["per_file_coverage"]["dead.py"] = {
+            "is_pruned": True,
+            "parent_id": None,
+            "lineage_depth": 0,
+        }
+
+        with patch("lafleur.corpus_manager.CORPUS_DIR", Path("/mock")):
+            for _ in range(20):
+                result = self.corpus_manager.select_parent()
+                if result:
+                    self.assertNotEqual(result[0].name, "dead.py")
+
+    @patch("lafleur.corpus_manager.save_coverage_state")
+    def test_tombstone_preserves_lineage_chain(self, mock_save):
+        """A → B → C chain: pruning B should leave tombstone that preserves linkage."""
+        corpus_dir = self.temp_path / "corpus"
+        corpus_dir.mkdir(parents=True, exist_ok=True)
+        (corpus_dir / "a.py").write_text("# a")
+        (corpus_dir / "b.py").write_text("# b")
+        (corpus_dir / "c.py").write_text("# c")
+
+        self.state["per_file_coverage"]["a.py"] = {
+            "lineage_coverage_profile": {"f1": {"edges": {1, 2, 3, 4}}},
+            "file_size_bytes": 400,
+            "execution_time_ms": 40,
+            "parent_id": None,
+            "lineage_depth": 0,
+        }
+        # B has subset of A's edges and worse metrics — will be subsumed
+        self.state["per_file_coverage"]["b.py"] = {
+            "lineage_coverage_profile": {"f1": {"edges": {1, 2}}},
+            "file_size_bytes": 1000,
+            "execution_time_ms": 100,
+            "parent_id": "a.py",
+            "lineage_depth": 1,
+            "discovery_mutation": {"strategy": "havoc"},
+        }
+        self.state["per_file_coverage"]["c.py"] = {
+            "lineage_coverage_profile": {"f1": {"edges": {5, 6}}},
+            "file_size_bytes": 500,
+            "execution_time_ms": 50,
+            "parent_id": "b.py",
+            "lineage_depth": 2,
+        }
+
+        with patch("lafleur.corpus_manager.CORPUS_DIR", corpus_dir):
+            self.corpus_manager.prune_corpus(dry_run=False)
+
+        # C still points to B, B's tombstone still points to A
+        self.assertEqual(self.state["per_file_coverage"]["c.py"]["parent_id"], "b.py")
+        b_tombstone = self.state["per_file_coverage"]["b.py"]
+        self.assertTrue(b_tombstone["is_pruned"])
+        self.assertEqual(b_tombstone["parent_id"], "a.py")
 
 
 if __name__ == "__main__":

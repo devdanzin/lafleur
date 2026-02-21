@@ -997,6 +997,43 @@ class TestHandleAnalysisDataFlowControl(unittest.TestCase):
         with self.assertRaises((AttributeError, FrozenInstanceError)):
             data.new_filename = "should_fail"
 
+    def test_total_mutations_against_increments_on_every_outcome(self):
+        """total_mutations_against should increment regardless of result type."""
+        parent_metadata = {"total_mutations_against": 0}
+
+        # NO_CHANGE
+        data = NoChangeResult(status="NO_CHANGE")
+        self.orchestrator._handle_analysis_data(data, 0, parent_metadata, None)
+        self.assertEqual(parent_metadata["total_mutations_against"], 1)
+
+        # CRASH
+        data = CrashResult(status="CRASH", mutation_info={}, parent_id=None)
+        self.orchestrator._handle_analysis_data(data, 1, parent_metadata, None)
+        self.assertEqual(parent_metadata["total_mutations_against"], 2)
+
+        # NEW_COVERAGE
+        data = NewCoverageResult(
+            status="NEW_COVERAGE",
+            mutation_info={},
+            core_code="x = 1",
+            baseline_coverage={},
+            content_hash="abc",
+            coverage_hash="def",
+            execution_time_ms=100,
+            parent_id="parent.py",
+            mutation_seed=42,
+        )
+        with patch("sys.stdout", new_callable=io.StringIO):
+            self.orchestrator._handle_analysis_data(data, 2, parent_metadata, None)
+        self.assertEqual(parent_metadata["total_mutations_against"], 3)
+
+    def test_total_mutations_against_backward_compat(self):
+        """Missing total_mutations_against field should default to 0."""
+        parent_metadata = {}  # No total_mutations_against key
+        data = NoChangeResult(status="NO_CHANGE")
+        self.orchestrator._handle_analysis_data(data, 0, parent_metadata, None)
+        self.assertEqual(parent_metadata["total_mutations_against"], 1)
+
 
 class TestPrepareParentContext(unittest.TestCase):
     """Test _prepare_parent_context method."""

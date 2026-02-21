@@ -86,6 +86,8 @@ class CorpusScheduler:
             "per_file_coverage", {}
         )
         for filename, metadata in per_file.items():
+            if metadata.get("is_pruned", False):
+                continue
             score = self.BASE_SCORE
 
             # --- Heuristic 1: Performance (lower is better) ---
@@ -320,12 +322,12 @@ class CorpusManager:
             "per_file_coverage", {}
         )
 
-        # Filter out sterile files entirely — they can never produce interesting
+        # Filter out sterile and pruned files — they can never produce interesting
         # children and waste full sessions when selected.
         corpus_files = [
             filename
             for filename, metadata in per_file.items()
-            if not metadata.get("is_sterile", False)
+            if not metadata.get("is_sterile", False) and not metadata.get("is_pruned", False)
         ]
 
         if not corpus_files:
@@ -399,6 +401,7 @@ class CorpusManager:
             "file_size_bytes": len(core_code.encode("utf-8")),
             "mutations_since_last_find": 0,
             "total_finds": 0,
+            "total_mutations_against": 0,
             "is_sterile": False,
             "discovery_mutation": mutation_info,
             "mutation_seed": mutation_seed,
@@ -662,13 +665,20 @@ class CorpusManager:
             print(f"\n[!] DRY RUN complete. {len(files_to_prune)} files would be pruned.")
             return
 
-        # Actually delete files
+        # Replace pruned files with tombstone metadata (preserves lineage chains)
         for filename in files_to_prune:
             filepath = CORPUS_DIR / filename
             if filepath.exists():
                 filepath.unlink()
-            if filename in self.coverage_state.state["per_file_coverage"]:
-                del self.coverage_state.state["per_file_coverage"][filename]
+            original = self.coverage_state.state["per_file_coverage"].get(filename)
+            if original is not None:
+                self.coverage_state.state["per_file_coverage"][filename] = {
+                    "parent_id": original.get("parent_id"),
+                    "discovery_mutation": original.get("discovery_mutation"),
+                    "lineage_depth": original.get("lineage_depth"),
+                    "discovery_time": original.get("discovery_time"),
+                    "is_pruned": True,
+                }
 
         # Track subsumer counts (only when actually pruning)
         subsumer_counts: dict[str, int] = {}

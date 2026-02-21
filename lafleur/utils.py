@@ -317,3 +317,4 @@ class ExecutionResult:
     nojit_cv: float | None = None
     parent_path: Path | None = None
     session_files: list[Path] | None = None
+    polluter_ids: list[str] | None = None

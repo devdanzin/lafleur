@@ -307,6 +307,8 @@ class TestCheckForCrash(unittest.TestCase):
                     session_files,
                     -11,
                     self.fingerprinter.analyze(-11, "Segmentation fault"),
+                    parent_id=None,
+                    polluter_ids=None,
                 )
 
     def test_crash_with_segfault_returns_true(self):
@@ -1043,6 +1045,96 @@ class TestSaveStandaloneCrash(unittest.TestCase):
                     if meta.get("fingerprint") == "SEGV:test":
                         found = True
         self.assertTrue(found, "Campaign aggregator pattern should find the crash")
+
+
+class TestSessionCrashCorpusFilenames(unittest.TestCase):
+    """Tests for session_corpus_files in crash metadata (Change 3)."""
+
+    def setUp(self):
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.temp_path = Path(self.temp_dir.name)
+        self.crashes_dir = self.temp_path / "crashes"
+        self.crashes_dir.mkdir()
+
+        self.artifact_manager = ArtifactManager(
+            crashes_dir=self.crashes_dir,
+            timeouts_dir=self.temp_path / "timeouts",
+            divergences_dir=self.temp_path / "divergences",
+            regressions_dir=self.temp_path / "regressions",
+            fingerprinter=CrashFingerprinter(),
+            max_timeout_log_bytes=10_000_000,
+            max_crash_log_bytes=10_000_000,
+            session_fuzz=True,
+        )
+
+    def tearDown(self):
+        self.temp_dir.cleanup()
+
+    def test_session_crash_includes_corpus_filenames(self):
+        """save_session_crash metadata should include session_corpus_files."""
+        scripts = [Path("/tmp/parent.py"), Path("/tmp/child.py")]
+        signature = CrashSignature(
+            category="SIGNAL",
+            crash_type=CrashType.RAW_SEGFAULT,
+            returncode=-11,
+            signal_name="SIGSEGV",
+            fingerprint="test_crash",
+        )
+
+        crash_dir = self.artifact_manager.save_session_crash(
+            scripts,
+            -11,
+            signature,
+            parent_id="42.py",
+            polluter_ids=["10.py", "20.py"],
+        )
+
+        metadata = json.loads((crash_dir / "metadata.json").read_text())
+        self.assertIn("session_corpus_files", metadata)
+        corpus_files = metadata["session_corpus_files"]
+        self.assertEqual(corpus_files["warmup"], "42.py")
+        self.assertEqual(corpus_files["polluters"], ["10.py", "20.py"])
+
+    def test_session_crash_without_polluters(self):
+        """Standard session (no polluters) should have warmup but no polluters key."""
+        scripts = [Path("/tmp/parent.py"), Path("/tmp/child.py")]
+        signature = CrashSignature(
+            category="SIGNAL",
+            crash_type=CrashType.RAW_SEGFAULT,
+            returncode=-11,
+            signal_name="SIGSEGV",
+            fingerprint="test_crash",
+        )
+
+        crash_dir = self.artifact_manager.save_session_crash(
+            scripts,
+            -11,
+            signature,
+            parent_id="42.py",
+        )
+
+        metadata = json.loads((crash_dir / "metadata.json").read_text())
+        corpus_files = metadata["session_corpus_files"]
+        self.assertEqual(corpus_files["warmup"], "42.py")
+        self.assertNotIn("polluters", corpus_files)
+
+    def test_backward_compat_no_corpus_filenames(self):
+        """Calling without corpus file args should still work (no crash)."""
+        scripts = [Path("/tmp/child.py")]
+        signature = CrashSignature(
+            category="SIGNAL",
+            crash_type=CrashType.RAW_SEGFAULT,
+            returncode=-11,
+            signal_name="SIGSEGV",
+            fingerprint="test_crash",
+        )
+
+        crash_dir = self.artifact_manager.save_session_crash(scripts, -11, signature)
+
+        metadata = json.loads((crash_dir / "metadata.json").read_text())
+        # session_corpus_files should still be present with warmup: None
+        corpus_files = metadata["session_corpus_files"]
+        self.assertIsNone(corpus_files["warmup"])
 
 
 if __name__ == "__main__":

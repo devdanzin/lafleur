@@ -10,6 +10,7 @@ Output formats: Graphviz DOT (default), JSON, or rendered images (PNG/SVG/PDF).
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import math
 import pickle
@@ -45,7 +46,10 @@ class Subgraph:
     collapsed: dict[str, int] = field(default_factory=dict)  # summary_node_id → count
     special_nodes: dict[str, str] = field(
         default_factory=dict
-    )  # node_id → role (crash, ghost, mrca)
+    )  # node_id → role (crash, ghost, mrca, unresolved)
+    edge_roles: dict[tuple[str, str], str] = field(
+        default_factory=dict
+    )  # (parent, child) → role (attack, warmup, polluter, convergence)
 
 
 @dataclass
@@ -94,6 +98,7 @@ COLOR_CRASH = "#dc3545"
 COLOR_TIMEOUT = "#fd7e14"
 COLOR_GHOST = "#f0f0f0"
 COLOR_COLLAPSED = "#f0f0f0"
+COLOR_UNRESOLVED = "#ffc107"
 BORDER_ZOMBIE = "#dc3545"
 BORDER_TACHYCARDIA = "#fd7e14"
 
@@ -404,6 +409,270 @@ def extract_mrca(graph: LineageGraph, targets: list[str]) -> Subgraph:
                     edges.append(edge)
 
     return Subgraph(nodes=nodes, edges=edges, special_nodes=special_nodes)
+
+
+# ---------------------------------------------------------------------------
+# Subgraph extraction: session ancestry (multi-lineage)
+# ---------------------------------------------------------------------------
+
+
+def resolve_session_scripts(
+    crash_dir: Path,
+    per_file_coverage: dict[str, dict],
+) -> dict[str, str | None]:
+    """Map session scripts in a crash directory to their corpus filenames.
+
+    Resolution strategy:
+    1. Check metadata.json for 'session_corpus_files' (fastest).
+    2. Fall back to content hash matching against per_file_coverage.
+
+    Returns dict mapping role ("warmup", "polluter_0", ..., "attack")
+    to corpus filename or None if unresolved.
+    """
+    result: dict[str, str | None] = {}
+
+    # Read metadata
+    metadata_path = crash_dir / "metadata.json"
+    metadata: dict = {}
+    if metadata_path.exists():
+        with open(metadata_path) as f:
+            metadata = json.load(f)
+
+    # Strategy 1: session_corpus_files from metadata
+    corpus_files = metadata.get("session_corpus_files", {})
+
+    # List session scripts sorted by prefix number
+    scripts = sorted(p for p in crash_dir.iterdir() if p.suffix == ".py" and p.name[0].isdigit())
+
+    # Build content hash index for fallback
+    hash_to_file: dict[str, str] | None = None
+
+    for script in scripts:
+        name = script.name
+        if "warmup" in name:
+            role = "warmup"
+        elif "attack" in name:
+            role = "attack"
+        else:
+            # Count polluters in order
+            polluter_idx = sum(1 for r in result if r.startswith("polluter_"))
+            role = f"polluter_{polluter_idx}"
+
+        # Try metadata resolution first
+        if role == "warmup" and "warmup" in corpus_files:
+            result[role] = corpus_files["warmup"]
+            continue
+        elif role == "attack":
+            # Attack is typically a new mutation not in corpus
+            result[role] = None
+            continue
+        elif role.startswith("polluter_"):
+            polluters = corpus_files.get("polluters", [])
+            idx = int(role.split("_")[1])
+            if idx < len(polluters):
+                result[role] = polluters[idx]
+                continue
+
+        # Strategy 2: content hash fallback
+        if hash_to_file is None:
+            hash_to_file = {}
+            for filename, meta in per_file_coverage.items():
+                ch = meta.get("content_hash")
+                if ch:
+                    hash_to_file[ch] = filename
+
+        script_content = script.read_text()
+        script_hash = hashlib.sha256(script_content.encode()).hexdigest()
+        result[role] = hash_to_file.get(script_hash)
+
+    return result
+
+
+def extract_session_ancestry(
+    graph: LineageGraph,
+    crash_dir: Path,
+    per_file_coverage: dict[str, dict],
+    attack_only: bool = False,
+) -> Subgraph:
+    """Extract the merged ancestry of all session scripts, converging on a crash node.
+
+    Returns a Subgraph with:
+    - A synthetic crash node in special_nodes with role "crash"
+    - Ancestry paths for each resolved session script
+    - Shared ancestors appear once (paths merge at common nodes)
+    - Unresolved scripts appear as disconnected "unresolved" nodes
+    """
+    role_to_file = resolve_session_scripts(crash_dir, per_file_coverage)
+
+    # Read crash metadata for the crash node label
+    metadata_path = crash_dir / "metadata.json"
+    crash_meta: dict = {}
+    if metadata_path.exists():
+        with open(metadata_path) as f:
+            crash_meta = json.load(f)
+
+    crash_node_id = f"__crash_{crash_dir.name}"
+
+    nodes: set[str] = set()
+    edges: list[tuple[str, str]] = []
+    special_nodes: dict[str, str] = {crash_node_id: "crash"}
+    edge_roles: dict[tuple[str, str], str] = {}
+    collapsed: dict[str, int] = {}
+
+    # Determine which roles to trace
+    if attack_only:
+        roles_to_trace = {k: v for k, v in role_to_file.items() if k == "attack"}
+        # If attack is None (not in corpus), try warmup as fallback
+        if roles_to_trace.get("attack") is None:
+            warmup = role_to_file.get("warmup")
+            if warmup:
+                roles_to_trace = {"warmup": warmup}
+    else:
+        roles_to_trace = role_to_file
+
+    # Extract ancestry for each resolved role
+    for role, corpus_file in roles_to_trace.items():
+        if corpus_file is None:
+            # Unresolved script
+            unresolved_id = f"__unresolved_{role}"
+            nodes.add(unresolved_id)
+            special_nodes[unresolved_id] = "unresolved"
+            edge = (unresolved_id, crash_node_id)
+            edges.append(edge)
+            edge_roles[edge] = f"convergence:{role}"
+            continue
+
+        if corpus_file not in graph.metadata:
+            continue
+
+        # Get ancestry subgraph
+        ancestry = extract_ancestry(graph, corpus_file)
+        nodes.update(ancestry.nodes)
+        special_nodes.update(
+            {k: v for k, v in ancestry.special_nodes.items() if k not in special_nodes}
+        )
+
+        # Tag edges with their originating role
+        for edge in ancestry.edges:
+            if edge not in edges:
+                edges.append(edge)
+            if edge not in edge_roles:
+                edge_roles[edge] = role
+
+        # Convergence edge from this corpus file to the crash node
+        conv_edge = (corpus_file, crash_node_id)
+        edges.append(conv_edge)
+        edge_roles[conv_edge] = f"convergence:{role}"
+
+    nodes.add(crash_node_id)
+
+    # Store crash metadata in graph metadata for label building
+    graph.metadata[crash_node_id] = crash_meta
+
+    return Subgraph(
+        nodes=nodes,
+        edges=edges,
+        collapsed=collapsed,
+        special_nodes=special_nodes,
+        edge_roles=edge_roles,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Subgraph extraction: forest
+# ---------------------------------------------------------------------------
+
+
+def extract_forest(
+    graph: LineageGraph,
+    max_depth: int = 10,
+    min_descendants: int = 2,
+    min_strahler: int = 0,
+    collapse_sterile: bool = True,
+) -> Subgraph:
+    """Extract all lineage trees with aggressive summarization.
+
+    Returns a merged Subgraph of all trees passing the filter thresholds.
+    """
+    all_nodes: set[str] = set()
+    all_edges: list[tuple[str, str]] = []
+    all_collapsed: dict[str, int] = {}
+    all_special_nodes: dict[str, str] = {}
+
+    # Sort roots by descendant count descending (most productive first)
+    root_desc_counts: list[tuple[str, int]] = []
+    for root in graph.roots:
+        sub = extract_descendants(graph, root, max_depth=max_depth, collapse_sterile=False)
+        real_count = len([n for n in sub.nodes if not n.startswith("__")])
+        root_desc_counts.append((root, real_count))
+    root_desc_counts.sort(key=lambda x: x[1], reverse=True)
+
+    for root, desc_count in root_desc_counts:
+        # Filter by min_descendants (the root counts as 1, so descendants = count - 1)
+        if desc_count - 1 < min_descendants:
+            continue
+
+        sub = extract_descendants(
+            graph, root, max_depth=max_depth, collapse_sterile=collapse_sterile
+        )
+
+        # Strahler-based pruning
+        if min_strahler > 0:
+            strahler = compute_strahler(graph, sub)
+
+            # Build children map within subgraph
+            sub_children: dict[str, list[str]] = defaultdict(list)
+            for p, c in sub.edges:
+                sub_children[p].append(c)
+
+            # Walk top-down and prune low-Strahler subtrees
+            pruned_nodes: set[str] = set()
+            strahler_collapsed: dict[str, int] = {}
+
+            def _prune_subtree(node: str) -> set[str]:
+                """Collect all nodes in subtree rooted at node."""
+                result_nodes = {node}
+                for child in sub_children.get(node, []):
+                    result_nodes.update(_prune_subtree(child))
+                return result_nodes
+
+            for node in list(sub.nodes):
+                if node in pruned_nodes or node.startswith("__"):
+                    continue
+                children = sub_children.get(node, [])
+                for child in children:
+                    if child in pruned_nodes:
+                        continue
+                    child_strahler = strahler.get(child, 1)
+                    if child_strahler < min_strahler:
+                        subtree = _prune_subtree(child)
+                        pruned_nodes.update(subtree)
+                        summary_id = f"__strahler_pruned_{node}_{len(subtree)}"
+                        strahler_collapsed[summary_id] = len(subtree)
+                        sub.special_nodes[summary_id] = "collapsed"
+                        sub.nodes.add(summary_id)
+                        sub.edges.append((node, summary_id))
+
+            # Remove pruned nodes and their edges
+            sub.nodes -= pruned_nodes
+            sub.edges = [
+                (p, c) for p, c in sub.edges if p not in pruned_nodes and c not in pruned_nodes
+            ]
+            sub.collapsed.update(strahler_collapsed)
+
+        all_nodes.update(sub.nodes)
+        for edge in sub.edges:
+            if edge not in all_edges:
+                all_edges.append(edge)
+        all_collapsed.update(sub.collapsed)
+        all_special_nodes.update(sub.special_nodes)
+
+    return Subgraph(
+        nodes=all_nodes,
+        edges=all_edges,
+        collapsed=all_collapsed,
+        special_nodes=all_special_nodes,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -732,13 +1001,28 @@ def decorate(
                 ns.shape = "octagon"
                 ns.fillcolor = COLOR_CRASH
                 ns.fontcolor = "white"
-                ns.label = node
+                crash_meta = graph.metadata.get(node, {})
+                fingerprint = crash_meta.get("fingerprint", "")
+                signal_name = crash_meta.get("signal_name", "")
+                crash_label_parts = [node.replace("__crash_", "")]
+                if fingerprint:
+                    crash_label_parts.append(fingerprint)
+                elif signal_name:
+                    crash_label_parts.append(signal_name)
+                ns.label = "\\n".join(crash_label_parts)
                 ns.tooltip = ""
             elif role == "collapsed":
                 count = subgraph.collapsed.get(node, 0)
                 ns.shape = "note"
                 ns.fillcolor = COLOR_COLLAPSED
                 ns.label = f"{count} sterile leaves"
+                ns.tooltip = ""
+            elif role == "unresolved":
+                ns.shape = "box"
+                ns.style = "filled,dashed"
+                ns.fillcolor = COLOR_UNRESOLVED
+                ns.fontcolor = "black"
+                ns.label = node.replace("__unresolved_", "") + "\\n[unresolved]"
                 ns.tooltip = ""
             elif role == "mrca":
                 # MRCA gets normal node styling plus blue border overlay
@@ -763,6 +1047,8 @@ def decorate(
     # Edge decoration
     for parent_node, child_node in subgraph.edges:
         es = EdgeStyle()
+        edge_role = subgraph.edge_roles.get((parent_node, child_node))
+
         child_meta = graph.metadata.get(child_node, {})
         dm = child_meta.get("discovery_mutation", {})
         strategy = dm.get("strategy", "")
@@ -778,14 +1064,28 @@ def decorate(
         else:
             es.label = f"{strategy} ({len(transformers)})" if transformers else strategy
 
+        # Multi-lineage edge role styling
+        if edge_role and edge_role.startswith("convergence:"):
+            conv_role = edge_role.split(":", 1)[1]
+            es.penwidth = 2.0
+            es.style = "bold"
+            es.color = "#333333"
+            es.label = conv_role
+        elif edge_role == "warmup":
+            es.penwidth = 0.5
+        elif edge_role and edge_role.startswith("polluter"):
+            es.style = "dashed"
+            es.penwidth = 0.75
+        # attack edges keep default styling
+
         # Append discovery labels
         if show_discoveries and state is not None:
             discoveries = compute_edge_discoveries(parent_node, child_node, graph, state)
             if discoveries:
                 es.label = es.label + "\\n" + "\\n".join(discoveries)
 
-        # Make fertile edges more prominent
-        if child_meta.get("total_finds", 0) >= FERTILE_THRESHOLD:
+        # Make fertile edges more prominent (only for non-convergence edges)
+        if edge_role != "convergence" and child_meta.get("total_finds", 0) >= FERTILE_THRESHOLD:
             es.penwidth = 2.0
 
         edge_list.append((parent_node, child_node, es))
@@ -1023,6 +1323,120 @@ def render_graphviz(dot_string: str, output_path: Path, fmt: str = "png") -> boo
 
 
 # ---------------------------------------------------------------------------
+# HTML output
+# ---------------------------------------------------------------------------
+
+HTML_TEMPLATE = """\
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>Lafleur Lineage: {title}</title>
+    <style>
+        body {{
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            background: #fafafa;
+        }}
+        #graph-container {{
+            width: 100vw;
+            height: 100vh;
+        }}
+        #info-bar {{
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            background: rgba(255,255,255,0.95);
+            border-bottom: 1px solid #ddd;
+            padding: 8px 16px;
+            font-family: Helvetica, Arial, sans-serif;
+            font-size: 13px;
+            color: #333;
+            z-index: 100;
+        }}
+    </style>
+</head>
+<body>
+    <div id="info-bar">{info}</div>
+    <div id="graph-container">
+        {svg_content}
+    </div>
+    <script src="https://cdn.jsdelivr.net/npm/svg-pan-zoom@3.6.1/dist/svg-pan-zoom.min.js">\
+</script>
+    <script>
+        window.addEventListener('load', function() {{
+            var svgElement = document.querySelector('#graph-container svg');
+            if (svgElement) {{
+                svgElement.style.width = '100%';
+                svgElement.style.height = '100%';
+                svgPanZoom(svgElement, {{
+                    zoomEnabled: true,
+                    controlIconsEnabled: true,
+                    fit: true,
+                    center: true,
+                    minZoom: 0.1,
+                    maxZoom: 20,
+                    zoomScaleSensitivity: 0.3,
+                }});
+            }}
+        }});
+    </script>
+</body>
+</html>
+"""
+
+
+def emit_html(
+    dot_string: str,
+    output_path: Path,
+    title: str = "Lineage Graph",
+    info: str = "",
+) -> bool:
+    """Generate interactive HTML by rendering DOT to SVG and wrapping with pan/zoom.
+
+    Requires Graphviz 'dot' on PATH.
+    Returns True on success, False on failure.
+    """
+    if shutil.which("dot") is None:
+        print(
+            "Error: Graphviz 'dot' command not found. "
+            "Install Graphviz (e.g. 'apt install graphviz') to use --html.",
+            file=sys.stderr,
+        )
+        return False
+
+    try:
+        result = subprocess.run(
+            ["dot", "-Tsvg"],
+            input=dot_string,
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        if result.returncode != 0:
+            print(f"Graphviz error: {result.stderr}", file=sys.stderr)
+            return False
+    except subprocess.TimeoutExpired:
+        print("Error: Graphviz rendering timed out after 60 seconds.", file=sys.stderr)
+        return False
+    except OSError as e:
+        print(f"Error running Graphviz: {e}", file=sys.stderr)
+        return False
+
+    svg_content = result.stdout
+    html = HTML_TEMPLATE.format(
+        title=title,
+        info=info,
+        svg_content=svg_content,
+    )
+    output_path.write_text(html)
+    print(f"HTML written to {output_path}", file=sys.stderr)
+    return True
+
+
+# ---------------------------------------------------------------------------
 # Statistics summary
 # ---------------------------------------------------------------------------
 
@@ -1216,53 +1630,177 @@ def print_mrca_stats(
     )
 
 
+def print_session_ancestry_stats(
+    crash_dir: Path,
+    role_to_file: dict[str, str | None],
+    subgraph: Subgraph,
+    graph: LineageGraph,
+) -> None:
+    """Print session crash ancestry statistics to stderr."""
+    print(f"Session crash: {crash_dir.name}", file=sys.stderr)
+
+    # Identify shared ancestors across lineages
+    all_ancestors: dict[str, set[str]] = {}
+    for role, corpus_file in role_to_file.items():
+        if corpus_file and corpus_file in graph.metadata:
+            ancestors = set(_get_ancestor_list(graph, corpus_file))
+            all_ancestors[role] = ancestors
+
+    # Find shared nodes
+    ancestor_sets = list(all_ancestors.values())
+    shared: set[str] = set()
+    if len(ancestor_sets) >= 2:
+        shared = ancestor_sets[0].intersection(*ancestor_sets[1:])
+
+    for role, corpus_file in sorted(role_to_file.items()):
+        if corpus_file is None:
+            print(f"  {role.capitalize()}: [unresolved]", file=sys.stderr)
+            continue
+        if corpus_file not in graph.metadata:
+            print(f"  {role.capitalize()}: {corpus_file} [not in state]", file=sys.stderr)
+            continue
+
+        ancestor_list = _get_ancestor_list(graph, corpus_file)
+        depth = len(ancestor_list) - 1
+        seed = ancestor_list[-1] if ancestor_list else "?"
+
+        # Build strategy path
+        chain = list(reversed(ancestor_list))
+        strategies = []
+        for node in chain[1:]:
+            dm = graph.metadata.get(node, {}).get("discovery_mutation", {})
+            strategies.append(dm.get("strategy", "?"))
+        strategy_path = "→".join(strategies) if strategies else "(none)"
+
+        line = f"  {role.capitalize()}: {corpus_file} (depth={depth}, seed={seed})"
+
+        # Check for shared ancestors with other lineages
+        if role in all_ancestors and len(all_ancestors) >= 2:
+            my_ancestors = all_ancestors[role]
+            for other_role, other_ancestors in all_ancestors.items():
+                if other_role == role:
+                    continue
+                common = my_ancestors & other_ancestors
+                if common:
+                    # Find deepest shared ancestor
+                    for a in ancestors:
+                        if a in common:
+                            line += f" — shared ancestor with {other_role} at {a}"
+                            break
+                else:
+                    line += f" — disjoint from {other_role}"
+
+        print(line, file=sys.stderr)
+        print(f"    Mutations: {strategy_path}", file=sys.stderr)
+
+    real_nodes = len([n for n in subgraph.nodes if not n.startswith("__")])
+    shared_count = len(shared)
+    unresolved = sum(1 for v in role_to_file.values() if v is None)
+    print(
+        f"  Total nodes in graph: {real_nodes} ({shared_count} shared)",
+        file=sys.stderr,
+    )
+    print(
+        f"  Unresolved scripts: {'none' if unresolved == 0 else str(unresolved)}",
+        file=sys.stderr,
+    )
+
+
+def print_forest_stats(
+    subgraph: Subgraph,
+    graph: LineageGraph,
+    metrics: TreeMetrics,
+    total_seeds: int = 0,
+    filtered_count: int = 0,
+) -> None:
+    """Print forest-mode statistics to stderr."""
+    # Count real nodes and collapsed
+    real_nodes = [n for n in subgraph.nodes if not n.startswith("__")]
+    collapsed_total = sum(subgraph.collapsed.values())
+
+    # Identify trees (roots in the subgraph)
+    tree_roots = [n for n in real_nodes if graph.parent.get(n) is None]
+
+    # Find deepest tree
+    deepest_root = ""
+    deepest_depth = 0
+    most_fertile_root = ""
+    most_fertile_finds = 0
+
+    for root in tree_roots:
+        # Get depth of deepest descendant
+        max_depth = 0
+        desc_count = 0
+        total_finds = 0
+        for node in real_nodes:
+            meta = graph.metadata.get(node, {})
+            ancestors = _get_ancestor_list(graph, node)
+            if root in ancestors:
+                depth = meta.get("lineage_depth", 0)
+                max_depth = max(max_depth, depth)
+                desc_count += 1
+                total_finds += meta.get("total_finds", 0)
+        if max_depth > deepest_depth:
+            deepest_depth = max_depth
+            deepest_root = root
+        if total_finds > most_fertile_finds:
+            most_fertile_finds = total_finds
+            most_fertile_root = root
+
+    # Strategy counts
+    strategy_counts: dict[str, int] = defaultdict(int)
+    for node in real_nodes:
+        meta = graph.metadata.get(node, {})
+        dm = meta.get("discovery_mutation", {})
+        strategy = dm.get("strategy", "unknown")
+        strategy_counts[strategy] += 1
+    strategy_str = ", ".join(f"{k}={v}" for k, v in sorted(strategy_counts.items()))
+
+    print("Corpus Forest:", file=sys.stderr)
+    print(
+        f"  Trees: {len(tree_roots)} (of {total_seeds} seeds, {filtered_count} below thresholds)",
+        file=sys.stderr,
+    )
+    print(
+        f"  Total nodes: {len(real_nodes) + collapsed_total} ({collapsed_total} collapsed)",
+        file=sys.stderr,
+    )
+    if deepest_root:
+        print(f"  Deepest tree: {deepest_root} (depth={deepest_depth})", file=sys.stderr)
+    if most_fertile_root:
+        print(
+            f"  Most fertile tree: {most_fertile_root} ({most_fertile_finds} total finds)",
+            file=sys.stderr,
+        )
+    print(f"  Strategies across corpus: {strategy_str}", file=sys.stderr)
+    print(f"  Strahler: max={metrics.max_strahler}", file=sys.stderr)
+    print(f"  Mean branching: {metrics.mean_branching:.1f}", file=sys.stderr)
+    print(f"  Mean imbalance: {metrics.mean_imbalance:.2f}", file=sys.stderr)
+
+
 # ---------------------------------------------------------------------------
 # Target resolution
 # ---------------------------------------------------------------------------
 
 
-def resolve_target(target_str: str, per_file_coverage: dict[str, dict]) -> tuple[str, str]:
-    """Resolve a CLI target argument to a corpus filename and mode hint.
+def resolve_target(target_str: str, per_file_coverage: dict[str, dict]) -> tuple[str | Path, str]:
+    """Resolve a CLI target argument to a corpus filename or crash dir Path.
 
     Handles:
     - Plain corpus filenames: "1234.py" → ("1234.py", "file")
     - Corpus file paths: "corpus/jit_interesting_tests/1234.py" → ("1234.py", "file")
-    - Crash directory paths: "crashes/session_crash_..." → resolved from metadata
+    - Crash directory paths: "crashes/session_crash_..." → (Path, "crash_dir")
 
-    Returns (corpus_filename, target_type) where target_type is "file" or "crash_dir".
+    Returns (identifier, target_type) where:
+    - target_type "file": identifier is a corpus filename string
+    - target_type "crash_dir": identifier is a Path to the crash directory
     """
     target_path = Path(target_str)
 
     # Check if it's a crash directory
     metadata_json = target_path / "metadata.json"
     if target_path.is_dir() and metadata_json.exists():
-        with open(metadata_json) as f:
-            crash_meta = json.load(f)
-        # Try session_corpus_files first, then parent_id
-        session_files = crash_meta.get("session_corpus_files", {})
-        warmup = session_files.get("warmup")
-        if warmup:
-            if warmup not in per_file_coverage:
-                print(
-                    f"Error: crash warmup file '{warmup}' not found in coverage state.",
-                    file=sys.stderr,
-                )
-                sys.exit(1)
-            return warmup, "crash_dir"
-        parent_id = crash_meta.get("parent_id")
-        if parent_id:
-            if parent_id not in per_file_coverage:
-                print(
-                    f"Error: crash parent '{parent_id}' not found in coverage state.",
-                    file=sys.stderr,
-                )
-                sys.exit(1)
-            return parent_id, "crash_dir"
-        print(
-            f"Error: crash metadata in '{target_str}' has no parent_id or session_corpus_files.",
-            file=sys.stderr,
-        )
-        sys.exit(1)
+        return target_path, "crash_dir"
 
     # Extract basename from file path
     filename = target_path.name if target_path.suffix else target_str
@@ -1288,9 +1826,12 @@ def main() -> None:
 Examples:
   %(prog)s ancestry 1234.py                      # Trace a file back to its seed
   %(prog)s ancestry crashes/session_crash_XXX/    # Trace a crash's lineage
+  %(prog)s ancestry crashes/session_crash_XXX/ --multi-lineage  # All scripts
   %(prog)s descendants 0001.py                    # Show a seed's family tree
   %(prog)s descendants 0001.py --max-depth 5      # Limit depth
   %(prog)s descendants 0001.py --render -o tree.png  # Render to PNG
+  %(prog)s forest --min-strahler 2                # Corpus overview
+  %(prog)s forest --html forest.html              # Interactive HTML
         """,
     )
 
@@ -1354,6 +1895,12 @@ Examples:
         action="store_true",
         help="Label edges with specific coverage discoveries (ancestry/mrca modes only)",
     )
+    parser.add_argument(
+        "--html",
+        type=Path,
+        metavar="PATH",
+        help="Generate interactive HTML with pan/zoom (requires dot on PATH)",
+    )
 
     subparsers = parser.add_subparsers(dest="mode", help="Visualization mode")
 
@@ -1362,6 +1909,16 @@ Examples:
         "ancestry", help="Trace a file's lineage back to its seed"
     )
     ancestry_parser.add_argument("target", help="Corpus filename, file path, or crash directory")
+    ancestry_parser.add_argument(
+        "--multi-lineage",
+        action="store_true",
+        help="Trace all session scripts' lineages (default for session crash dirs)",
+    )
+    ancestry_parser.add_argument(
+        "--attack-only",
+        action="store_true",
+        help="Trace only the attack script's ancestry, ignoring warmup/polluters",
+    )
 
     # Descendants subcommand
     desc_parser = subparsers.add_parser("descendants", help="Show what a file produced")
@@ -1384,6 +1941,35 @@ Examples:
         help="Two or more corpus filenames or paths",
     )
 
+    # Forest subcommand
+    forest_parser = subparsers.add_parser(
+        "forest",
+        help="Overview of all lineage trees in the corpus",
+    )
+    forest_parser.add_argument(
+        "--max-depth",
+        type=int,
+        default=10,
+        help="Maximum tree depth (default: 10)",
+    )
+    forest_parser.add_argument(
+        "--min-descendants",
+        type=int,
+        default=2,
+        help="Hide trees with fewer than N descendants (default: 2)",
+    )
+    forest_parser.add_argument(
+        "--min-strahler",
+        type=int,
+        default=0,
+        help="Prune branches below this Strahler order (default: 0, disabled)",
+    )
+    forest_parser.add_argument(
+        "--no-collapse-sterile",
+        action="store_true",
+        help="Don't collapse sterile leaf clusters",
+    )
+
     args = parser.parse_args()
 
     if args.mode is None:
@@ -1401,13 +1987,39 @@ Examples:
     mrca_node: str | None = None
     mrca_targets: list[str] = []
     chain: list[str] | None = None
+    role_to_file: dict[str, str | None] | None = None
+    crash_dir: Path | None = None
+    total_seeds = len(graph.roots)
 
     if args.mode == "ancestry":
-        target, _ = resolve_target(args.target, per_file_coverage)
-        subgraph = extract_ancestry(graph, target)
-        chain = _extract_ancestry_chain(graph, target)
+        target, target_type = resolve_target(args.target, per_file_coverage)
+        multi_lineage = getattr(args, "multi_lineage", False)
+        attack_only = getattr(args, "attack_only", False)
+
+        if target_type == "crash_dir" and isinstance(target, Path):
+            crash_dir = target
+            if multi_lineage or not attack_only:
+                subgraph = extract_session_ancestry(
+                    graph, crash_dir, per_file_coverage, attack_only=attack_only
+                )
+                role_to_file = resolve_session_scripts(crash_dir, per_file_coverage)
+            else:
+                # attack-only: find the warmup/parent and trace it
+                role_to_file = resolve_session_scripts(crash_dir, per_file_coverage)
+                warmup = role_to_file.get("warmup")
+                if warmup and warmup in graph.metadata:
+                    subgraph = extract_ancestry(graph, warmup)
+                    chain = _extract_ancestry_chain(graph, warmup)
+                else:
+                    print("Error: no resolvable warmup file.", file=sys.stderr)
+                    sys.exit(1)
+        else:
+            assert isinstance(target, str)
+            subgraph = extract_ancestry(graph, target)
+            chain = _extract_ancestry_chain(graph, target)
     elif args.mode == "descendants":
         root, _ = resolve_target(args.root, per_file_coverage)
+        assert isinstance(root, str)
         subgraph = extract_descendants(
             graph,
             root,
@@ -1415,13 +2027,21 @@ Examples:
             collapse_sterile=not args.no_collapse_sterile,
         )
     elif args.mode == "mrca":
-        mrca_targets = [resolve_target(t, per_file_coverage)[0] for t in args.targets]
+        mrca_targets_raw = [resolve_target(t, per_file_coverage) for t in args.targets]
+        mrca_targets = [str(t) for t, _ in mrca_targets_raw]
         subgraph = extract_mrca(graph, mrca_targets)
-        # Identify MRCA node
         for node, role in subgraph.special_nodes.items():
             if role == "mrca":
                 mrca_node = node
                 break
+    elif args.mode == "forest":
+        subgraph = extract_forest(
+            graph,
+            max_depth=args.max_depth,
+            min_descendants=args.min_descendants,
+            min_strahler=args.min_strahler,
+            collapse_sterile=not args.no_collapse_sterile,
+        )
     else:
         parser.print_help()
         sys.exit(0)
@@ -1463,6 +2083,16 @@ Examples:
     else:
         output = emit_dot(decorated)
 
+    # HTML output
+    if args.html:
+        dot_output = emit_dot(decorated)
+        info = f"Mode: {args.mode} | Nodes: {len(subgraph.nodes)}"
+        if metrics:
+            info += f" | Strahler: {metrics.max_strahler}"
+        success = emit_html(dot_output, args.html, title=f"Lafleur Lineage: {args.mode}", info=info)
+        if not success:
+            sys.exit(1)
+
     # Render or write
     if args.render:
         output_path = args.output or Path(f"lineage.{args.format}")
@@ -1478,12 +2108,22 @@ Examples:
         print(output)
 
     # Print statistics to stderr
-    if args.mode == "ancestry" and chain is not None:
-        print_ancestry_stats(chain, graph)
+    if args.mode == "ancestry":
+        if role_to_file is not None and crash_dir is not None:
+            print_session_ancestry_stats(crash_dir, role_to_file, subgraph, graph)
+        elif chain is not None:
+            print_ancestry_stats(chain, graph)
     elif args.mode == "descendants":
         print_descendants_stats(subgraph, graph, metrics=metrics)
     elif args.mode == "mrca":
         print_mrca_stats(mrca_targets, mrca_node, subgraph, graph)
+    elif args.mode == "forest":
+        filtered_count = total_seeds - len(
+            [n for n in subgraph.nodes if not n.startswith("__") and graph.parent.get(n) is None]
+        )
+        print_forest_stats(
+            subgraph, graph, metrics, total_seeds=total_seeds, filtered_count=filtered_count
+        )
 
 
 def _extract_ancestry_chain(graph: LineageGraph, target: str) -> list[str]:

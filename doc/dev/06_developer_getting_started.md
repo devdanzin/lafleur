@@ -88,7 +88,7 @@ cd fusil
 pip install .
 ```
 
-If you prefer not to install `fusil`, you can create a directory named `corpus/jit_interesting_tests/` in your working directory and place your own hand-crafted Python seed files inside it.
+If you prefer not to install `fusil`, you can create a directory named `corpus/jit_interesting_tests/` in your working directory and place your own hand-crafted Python seed files inside it. See [Seed Generation and Management](./11_seeding.md) for seed structure requirements, templates, and best practices.
 
 -----
 

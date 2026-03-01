@@ -396,6 +396,10 @@ Developer documentation is in `doc/dev/`:
 - `05_state_and_data_formats.md`: State file format
 - `06_developer_getting_started.md`: Development setup
 - `07_extending_lafleur.md`: Adding features
+- `08_testing_lafleur.md`: Test suite guide
+- `09_diagnostic_mode.md`: Diagnostic/bounded-run options
+- `10_glossary.md`: Terminology reference
+- `11_seeding.md`: Seed generation, fusil integration, hand-rolled seeds
 
 User-facing documentation is in `docs/`:
 - `TOOLING.md`: Analysis & triage workflow guide (report, campaign, triage tools)

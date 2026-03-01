@@ -137,7 +137,7 @@ The `lafleur` project is organized into modules with clear responsibilities. The
 
 * **`lafleur/learning.py`** — The `MutatorScoreTracker`, an adaptive learning engine that scores mutation strategies and individual transformers based on their historical success. Uses epsilon-greedy selection with attempt-based decay, a grace period for new mutators, and a weight floor to ensure diversity.
 
-* **`lafleur/corpus_manager.py`** — Handles all interactions with the on-disk corpus and the persistent coverage state (`coverage_state.pkl`). Responsible for parent selection (via the `CorpusScheduler`), adding new files, corpus pruning, and generating initial seeds via the fusil seeder.
+* **`lafleur/corpus_manager.py`** — Handles all interactions with the on-disk corpus and the persistent coverage state (`coverage_state.pkl`). Responsible for parent selection (via the `CorpusScheduler`), adding new files, corpus pruning, and generating initial seeds via the fusil seeder. See [Seed Generation and Management](./11_seeding.md) for details on the seeding process.
 
 * **`lafleur/utils.py`** — Reusable helpers including the `TeeLogger` for simultaneous console and file logging, and functions for managing run statistics.
 

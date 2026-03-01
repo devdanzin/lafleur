@@ -66,6 +66,7 @@ All notable changes to this project should be documented in this file.
 - Documented `total_mutations_against` and `is_pruned` fields in state formats guide, by @devdanzin.
 - Added complete `lafleur-lineage` section to TOOLING.md with modes, options, example workflow, and output formats, by @devdanzin.
 - Added seed generation and management guide (`doc/dev/11_seeding.md`) covering fusil integration, seeding workflow, hand-rolled seed templates, and best practices, by @devdanzin.
+- Cross-referenced `11_seeding.md` from CLAUDE.md, architecture overview, glossary (Fusil, Seed), and getting started guide, by @devdanzin.
 
 ### Enhanced
 

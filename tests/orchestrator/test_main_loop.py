@@ -2504,6 +2504,16 @@ class TestMainCLIPlumbing(unittest.TestCase):
             args_namespace = call_args[1]
             self.assertEqual(args_namespace.instance_name, "my-instance")
 
+    def test_no_save_timeouts_default_true(self):
+        """--no-save-timeouts defaults to save_timeouts=True."""
+        _, kwargs = self._run_main(["--fusil-path", "/fake"])
+        self.assertTrue(kwargs["save_timeouts"])
+
+    def test_no_save_timeouts_enabled(self):
+        """--no-save-timeouts passes save_timeouts=False."""
+        _, kwargs = self._run_main(["--fusil-path", "/fake", "--no-save-timeouts"])
+        self.assertFalse(kwargs["save_timeouts"])
+
 
 class TestTeeLoggerCLIPlumbing(unittest.TestCase):
     """Tests for --verbose and --log-path CLI flag integration with TeeLogger."""

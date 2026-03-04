@@ -144,6 +144,7 @@ class LafleurOrchestrator:
         dry_run: bool = False,
         mutator_filter: list[str] | None = None,
         forced_strategy: str | None = None,
+        save_timeouts: bool = True,
     ):
         """Initialize the orchestrator and the corpus manager."""
         self.differential_testing = differential_testing
@@ -245,6 +246,7 @@ class LafleurOrchestrator:
             max_crash_log_bytes=max_crash_log_bytes,
             session_fuzz=session_fuzz,
             health_monitor=self.health_monitor,
+            save_timeouts=save_timeouts,
         )
 
         self.telemetry_manager = TelemetryManager(
@@ -1086,6 +1088,13 @@ def main():
         help="Maximum timeout log size in MB before truncation. (Default: 400)",
     )
     parser.add_argument(
+        "--no-save-timeouts",
+        action="store_true",
+        help="Don't save timeout source/log files to timeouts/. "
+        "Structured metadata is still logged to timeout_events.jsonl. "
+        "JIT hangs and regression timeouts are always saved regardless.",
+    )
+    parser.add_argument(
         "--max-crash-log-size",
         type=int,
         default=400,
@@ -1287,6 +1296,7 @@ def main():
             dry_run=args.dry_run,
             mutator_filter=mutator_filter,
             forced_strategy=args.strategy,
+            save_timeouts=not args.no_save_timeouts,
         )
         if args.prune_corpus:
             orchestrator.corpus_manager.prune_corpus(dry_run=not args.force)

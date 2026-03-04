@@ -360,6 +360,7 @@ class InstanceData:
     corpus_stats: dict[str, Any] | None = None
     health_summary: HealthSummary | None = None
     timeout_summary: TimeoutSummary | None = None
+    timeout_rate: float = 0.0
     status: str = "Unknown"
     speed: float = 0.0
     coverage: int = 0
@@ -407,6 +408,14 @@ class CampaignAggregator:
             "by_category": Counter(),
             "crash_profile": Counter(),
             "top_offenders": Counter(),
+        }
+        self.global_timeout: dict[str, Any] = {
+            "total_timeouts": 0,
+            "total_timeout_seconds": 0.0,
+            "by_type": Counter(),
+            "by_parent": Counter(),
+            "by_strategy": Counter(),
+            "by_transformer": Counter(),
         }
         self.fleet_crash_attribution: CrashAttributionSummary | None = None
 
@@ -521,6 +530,7 @@ class CampaignAggregator:
             self._aggregate_corpus(instance)
             self._aggregate_performance(instance)
             self._aggregate_health(instance)
+            self._aggregate_timeout(instance)
         self._aggregate_crash_attribution()
 
     def _aggregate_crashes(self, instance: InstanceData) -> None:
@@ -630,6 +640,36 @@ class CampaignAggregator:
         for parent_id, count in hs["parent_offenders"].items():
             self.global_health["top_offenders"][f"{instance.name}:{parent_id}"] += count
 
+    def _aggregate_timeout(self, instance: InstanceData) -> None:
+        """Aggregate timeout data from an instance."""
+        # Compute per-instance timeout rate
+        inst_mutations = instance.stats.get("total_mutations", 0) if instance.stats else 0
+        inst_timeouts = 0
+        if instance.timeout_summary:
+            inst_timeouts = instance.timeout_summary["total_timeouts"]
+        elif instance.stats:
+            inst_timeouts = (
+                instance.stats.get("timeouts_found", 0)
+                + instance.stats.get("jit_hangs_found", 0)
+                + instance.stats.get("regression_timeouts_found", 0)
+            )
+        instance.timeout_rate = (
+            (inst_timeouts / inst_mutations * 100) if inst_mutations > 0 else 0.0
+        )
+
+        if not instance.timeout_summary:
+            return
+
+        ts = instance.timeout_summary
+        self.global_timeout["total_timeouts"] += ts["total_timeouts"]
+        self.global_timeout["total_timeout_seconds"] += ts["total_timeout_seconds"]
+        self.global_timeout["by_type"] += ts["by_type"]
+        self.global_timeout["by_strategy"] += ts["by_strategy"]
+        self.global_timeout["by_transformer"] += ts["by_transformer"]
+
+        for parent_id, count in ts["by_parent"].items():
+            self.global_timeout["by_parent"][f"{instance.name}:{parent_id}"] += count
+
     def _aggregate_crash_attribution(self) -> None:
         """Aggregate crash attribution data across all instances."""
         merged_total = 0
@@ -737,8 +777,14 @@ class CampaignAggregator:
         return self.global_health["waste_events"] / total_mutations
 
     def get_fleet_health_grade(self) -> tuple[str, str]:
-        """Get the fleet-wide health grade based on waste rate."""
-        return self.health_grade(self.get_fleet_waste_rate())
+        """Get the fleet-wide health grade based on waste rate and timeout rate."""
+        short, long = self.health_grade(self.get_fleet_waste_rate())
+        timeout_rate = self.get_fleet_timeout_rate()
+        if timeout_rate > 30.0 and short != "BAD":
+            return ("BAD", "Unhealthy")
+        if timeout_rate > 20.0 and short == "OK":
+            return ("WARN", "Degraded")
+        return (short, long)
 
     def get_top_offenders(self, n: int = 5) -> list[tuple[str, int]]:
         """Get parent files causing the most waste events fleet-wide."""
@@ -747,6 +793,17 @@ class CampaignAggregator:
     def get_crash_profile(self, n: int = 5) -> list[tuple[str, int]]:
         """Get most common ignored crash reasons fleet-wide."""
         return self.global_health["crash_profile"].most_common(n)
+
+    def get_fleet_timeout_rate(self) -> float:
+        """Get fleet-wide timeout rate as a percentage."""
+        total_execs = self.totals.get("total_executions", 0)
+        if total_execs == 0:
+            return 0.0
+        return (self.global_timeout.get("total_timeouts", 0) / total_execs) * 100
+
+    def get_fleet_timeout_time_wasted(self) -> float:
+        """Get total time wasted on timeouts in hours."""
+        return self.global_timeout.get("total_timeout_seconds", 0.0) / 3600
 
     @staticmethod
     def health_grade(waste_rate: float) -> tuple[str, str]:
@@ -824,6 +881,24 @@ class CampaignAggregator:
         lines.append(f"Core-Hours:     {self.get_core_hours():,.1f} hours")
         lines.append(f"Executions:     {self.totals['total_executions']:,}")
         lines.append(f"Fleet Speed:    {self.get_fleet_speed():,.2f} exec/s (aggregate)")
+        fleet_to_rate = self.get_fleet_timeout_rate()
+        lines.append(f"Timeout Rate:   {fleet_to_rate:.1f}%")
+        time_wasted_hrs = self.get_fleet_timeout_time_wasted()
+        total_timeout_secs = self.global_timeout.get("total_timeout_seconds", 0.0)
+        if time_wasted_hrs >= 1.0:
+            lines.append(
+                f"Time on Timeouts: {time_wasted_hrs:.1f} hours ({total_timeout_secs:,.0f}s)"
+            )
+        else:
+            time_wasted_mins = total_timeout_secs / 60
+            lines.append(
+                f"Time on Timeouts: {time_wasted_mins:.1f} minutes ({total_timeout_secs:,.0f}s)"
+            )
+        by_type = self.global_timeout.get("by_type", {})
+        jit_hangs = by_type.get("jit_hang", 0)
+        regression = by_type.get("regression_timeout", 0)
+        if jit_hangs > 0 or regression > 0:
+            lines.append(f"  JIT Hangs: {jit_hangs:,}  |  Regression Timeouts: {regression:,}")
         lines.append(f"Report Date:    {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
         lines.append("")
 
@@ -838,9 +913,9 @@ class CampaignAggregator:
         # Table header
         lines.append(
             f"{'Name':<25} | {'Status':<8} | {'Speed':>10} | {'Coverage':>8} | "
-            f"{'Crashes':>7} | {'Corpus':>8} | {'Health':>6} | {'Dir'}"
+            f"{'Crashes':>7} | {'TO%':>5} | {'Corpus':>8} | {'Health':>6} | {'Dir'}"
         )
-        lines.append("-" * 130)
+        lines.append("-" * 138)
 
         for inst in sorted_instances:
             speed_str = f"{inst.speed:.2f}/s" if inst.speed > 0 else "N/A"
@@ -856,10 +931,11 @@ class CampaignAggregator:
             else:
                 health_str = "N/A"
 
+            to_rate_str = f"{inst.timeout_rate:.1f}" if inst.timeout_rate > 0 else "0.0"
             lines.append(
                 f"{inst.name:<25} | {inst.status:<8} | {speed_str:>10} | "
-                f"{inst.coverage:>8,} | {inst.crash_count:>7,} | {inst.corpus_size:>8,} | "
-                f"{health_str:>6} | {inst.relative_dir}"
+                f"{inst.coverage:>8,} | {inst.crash_count:>7,} | {to_rate_str:>5} | "
+                f"{inst.corpus_size:>8,} | {health_str:>6} | {inst.relative_dir}"
             )
 
         lines.append("")
@@ -1093,6 +1169,7 @@ def generate_html_report(aggregator: CampaignAggregator) -> str:
         else:
             health_badge = '<span class="health-badge">N/A</span>'
 
+        to_class = ' class="timeout-high"' if inst.timeout_rate > 15 else ""
         instance_rows.append(f"""        <tr>
           <td>{name_escaped}</td>
           <td><span class="status {status_class}">{inst.status}</span></td>
@@ -1100,6 +1177,7 @@ def generate_html_report(aggregator: CampaignAggregator) -> str:
           <td data-sort="{inst.coverage}"><div class="bar-container"><div class="bar-fill coverage" style="width:{coverage_pct:.1f}%"></div><span class="bar-text">{inst.coverage:,}</span></div></td>
           <td data-sort="{inst.corpus_size}">{inst.corpus_size:,}</td>
           <td data-sort="{inst.crash_count}">{inst.crash_count:,}</td>
+          <td data-sort="{inst.timeout_rate:.1f}"{to_class}>{inst.timeout_rate:.1f}%</td>
           <td>{health_badge}</td>
           <td>{dir_escaped}</td>
         </tr>""")
@@ -1375,6 +1453,7 @@ def generate_html_report(aggregator: CampaignAggregator) -> str:
     .health-ok {{ background: var(--success); color: #000; }}
     .health-warn {{ background: var(--warning); color: #000; }}
     .health-bad {{ background: var(--accent); color: #fff; }}
+    .timeout-high {{ color: #dc3545; font-weight: bold; }}
     a {{ color: #60a5fa; text-decoration: none; }}
     a:hover {{ text-decoration: underline; }}
     footer {{ margin-top: 3rem; text-align: center; color: var(--text-dim); font-size: 0.875rem; }}
@@ -1401,6 +1480,11 @@ def generate_html_report(aggregator: CampaignAggregator) -> str:
       <div class="label">Unique Crashes</div>
       <div class="value">{unique_crashes}</div>
     </div>
+    <div class="kpi-card">
+      <div class="label">Timeout Rate</div>
+      <div class="value">{aggregator.get_fleet_timeout_rate():.1f}%</div>
+      <div class="label">{aggregator.get_fleet_timeout_time_wasted():.1f}h wasted</div>
+    </div>
     <div class="kpi-card" style="border-left-color: {fleet_health_color};">
       <div class="label">Fleet Health</div>
       <div class="value" style="color: {fleet_health_color};">{fleet_long_grade}</div>
@@ -1418,6 +1502,7 @@ def generate_html_report(aggregator: CampaignAggregator) -> str:
         <th>Coverage</th>
         <th>Corpus</th>
         <th>Crashes</th>
+        <th>TO%</th>
         <th>Health</th>
         <th>Directory</th>
       </tr>

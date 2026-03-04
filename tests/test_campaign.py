@@ -1,6 +1,7 @@
 import unittest
 import json
 import tempfile
+from collections import Counter
 from datetime import datetime, timedelta, timezone
 from io import StringIO
 from pathlib import Path
@@ -1352,3 +1353,172 @@ class TestLoadTimeoutSummary(unittest.TestCase):
         result = load_timeout_summary(path)
         self.assertEqual(result["total_timeouts"], 1)
         self.assertEqual(result["by_parent"]["unknown"], 1)
+
+
+class TestFleetTimeoutAggregation(unittest.TestCase):
+    """Tests for fleet timeout aggregation on CampaignAggregator."""
+
+    def _make_timeout_summary(
+        self,
+        total: int = 10,
+        total_seconds: float = 100.0,
+        by_type: dict | None = None,
+        by_parent: dict | None = None,
+        by_strategy: dict | None = None,
+        by_transformer: dict | None = None,
+    ) -> dict:
+        return {
+            "total_timeouts": total,
+            "total_timeout_seconds": total_seconds,
+            "by_type": Counter(by_type or {"timeout": total}),
+            "by_parent": Counter(by_parent or {}),
+            "by_strategy": Counter(by_strategy or {}),
+            "by_transformer": Counter(by_transformer or {}),
+            "by_stage": Counter(),
+            "sum_lineage_depth": 0,
+        }
+
+    def test_aggregate_sums_totals(self):
+        """Total timeouts and seconds are summed across instances."""
+        agg = CampaignAggregator([])
+        agg.instances = [
+            InstanceData(
+                path=Path("/r/run1"),
+                name="run1",
+                timeout_summary=self._make_timeout_summary(total=10, total_seconds=100),
+            ),
+            InstanceData(
+                path=Path("/r/run2"),
+                name="run2",
+                timeout_summary=self._make_timeout_summary(total=20, total_seconds=200),
+            ),
+        ]
+        agg.aggregate()
+        self.assertEqual(agg.global_timeout["total_timeouts"], 30)
+        self.assertAlmostEqual(agg.global_timeout["total_timeout_seconds"], 300.0)
+
+    def test_aggregate_merges_by_type(self):
+        """by_type counters are merged across instances."""
+        agg = CampaignAggregator([])
+        agg.instances = [
+            InstanceData(
+                path=Path("/r/run1"),
+                name="run1",
+                timeout_summary=self._make_timeout_summary(by_type={"timeout": 8, "jit_hang": 2}),
+            ),
+            InstanceData(
+                path=Path("/r/run2"),
+                name="run2",
+                timeout_summary=self._make_timeout_summary(
+                    by_type={"timeout": 5, "regression_timeout": 3}
+                ),
+            ),
+        ]
+        agg.aggregate()
+        self.assertEqual(agg.global_timeout["by_type"]["timeout"], 13)
+        self.assertEqual(agg.global_timeout["by_type"]["jit_hang"], 2)
+        self.assertEqual(agg.global_timeout["by_type"]["regression_timeout"], 3)
+
+    def test_aggregate_prefixes_parents_with_instance_name(self):
+        """Parent IDs are prefixed with instance name in fleet aggregation."""
+        agg = CampaignAggregator([])
+        agg.instances = [
+            InstanceData(
+                path=Path("/r/run1"),
+                name="run1",
+                timeout_summary=self._make_timeout_summary(by_parent={"42.py": 5}),
+            ),
+            InstanceData(
+                path=Path("/r/run2"),
+                name="run2",
+                timeout_summary=self._make_timeout_summary(by_parent={"42.py": 3}),
+            ),
+        ]
+        agg.aggregate()
+        self.assertEqual(agg.global_timeout["by_parent"]["run1:42.py"], 5)
+        self.assertEqual(agg.global_timeout["by_parent"]["run2:42.py"], 3)
+
+    def test_aggregate_merges_transformers(self):
+        """Transformer counters are merged across instances."""
+        agg = CampaignAggregator([])
+        agg.instances = [
+            InstanceData(
+                path=Path("/r/run1"),
+                name="run1",
+                timeout_summary=self._make_timeout_summary(by_transformer={"MutA": 10, "MutB": 5}),
+            ),
+            InstanceData(
+                path=Path("/r/run2"),
+                name="run2",
+                timeout_summary=self._make_timeout_summary(by_transformer={"MutA": 7, "MutC": 3}),
+            ),
+        ]
+        agg.aggregate()
+        self.assertEqual(agg.global_timeout["by_transformer"]["MutA"], 17)
+        self.assertEqual(agg.global_timeout["by_transformer"]["MutB"], 5)
+        self.assertEqual(agg.global_timeout["by_transformer"]["MutC"], 3)
+
+    def test_aggregate_skips_none_summary(self):
+        """Instances without timeout_summary are silently skipped."""
+        agg = CampaignAggregator([])
+        agg.instances = [
+            InstanceData(path=Path("/r/run1"), name="run1", timeout_summary=None),
+            InstanceData(
+                path=Path("/r/run2"),
+                name="run2",
+                timeout_summary=self._make_timeout_summary(total=15),
+            ),
+        ]
+        agg.aggregate()
+        self.assertEqual(agg.global_timeout["total_timeouts"], 15)
+
+    def test_fleet_timeout_rate(self):
+        """Fleet timeout rate is computed correctly."""
+        agg = CampaignAggregator([])
+        agg.global_timeout = {"total_timeouts": 100}
+        agg.totals = {"total_executions": 1000}
+        self.assertAlmostEqual(agg.get_fleet_timeout_rate(), 10.0)
+
+    def test_fleet_timeout_rate_zero_executions(self):
+        """Fleet timeout rate returns 0 with zero executions."""
+        agg = CampaignAggregator([])
+        agg.global_timeout = {"total_timeouts": 100}
+        agg.totals = {"total_executions": 0}
+        self.assertAlmostEqual(agg.get_fleet_timeout_rate(), 0.0)
+
+    def test_fleet_time_wasted(self):
+        """Fleet time wasted is returned in hours."""
+        agg = CampaignAggregator([])
+        agg.global_timeout = {"total_timeout_seconds": 7200.0}
+        self.assertAlmostEqual(agg.get_fleet_timeout_time_wasted(), 2.0)
+
+    def test_per_instance_timeout_rate(self):
+        """Per-instance timeout rate is computed correctly."""
+        agg = CampaignAggregator([])
+        inst = InstanceData(
+            path=Path("/r/run1"),
+            name="run1",
+            timeout_summary=self._make_timeout_summary(total=50),
+        )
+        inst.stats = {"total_mutations": 500}
+        agg.instances = [inst]
+        agg.aggregate()
+        self.assertAlmostEqual(inst.timeout_rate, 10.0)
+
+    def test_health_grade_degraded_on_high_timeout_rate(self):
+        """Fleet health degrades to Degraded when timeout rate > 20%."""
+        agg = CampaignAggregator([])
+        agg.global_timeout = {"total_timeouts": 250}
+        agg.totals = {"total_executions": 1000}
+        agg.global_health = {"waste_events": 0}
+        short, _ = agg.get_fleet_health_grade()
+        self.assertEqual(short, "WARN")
+
+    def test_health_grade_unhealthy_on_very_high_timeout_rate(self):
+        """Fleet health degrades to Unhealthy when timeout rate > 30%."""
+        agg = CampaignAggregator([])
+        agg.global_timeout = {"total_timeouts": 350}
+        agg.totals = {"total_executions": 1000}
+        agg.global_health = {"waste_events": 0}
+        short, _ = agg.get_fleet_health_grade()
+        self.assertEqual(short, "BAD")

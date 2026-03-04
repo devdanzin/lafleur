@@ -205,6 +205,7 @@ class TestRunEvolutionaryLoop(unittest.TestCase):
         self.orchestrator.artifact_manager = MagicMock()
         self.orchestrator.telemetry_manager = MagicMock()
         self.orchestrator.scoring_manager = MagicMock()
+        self.orchestrator.timeouts_since_last_telemetry = 0
         self.orchestrator.max_sessions = None
         self.orchestrator.max_mutations_per_session = None
 
@@ -1409,6 +1410,7 @@ class TestExecuteSingleMutation(unittest.TestCase):
         self.orchestrator.score_tracker = MagicMock()
         self.orchestrator.timeout_logger = MagicMock()
         self.orchestrator.execution_timeout = 10
+        self.orchestrator.timeouts_since_last_telemetry = 0
 
         mock_harness = MagicMock()
         mock_harness.name = "uop_harness_test"

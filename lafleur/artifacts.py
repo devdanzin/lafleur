@@ -99,6 +99,7 @@ class ArtifactManager:
         max_crash_log_bytes: int,
         session_fuzz: bool = False,
         health_monitor: "HealthMonitor | None" = None,
+        save_timeouts: bool = True,
     ):
         """
         Initialize the ArtifactManager.
@@ -113,6 +114,7 @@ class ArtifactManager:
             max_crash_log_bytes: Maximum size for crash logs before truncation
             session_fuzz: Whether session fuzzing mode is enabled
             health_monitor: Optional HealthMonitor for adverse event tracking
+            save_timeouts: Whether to save normal timeout artifacts to disk
         """
         self.crashes_dir = crashes_dir
         self.timeouts_dir = timeouts_dir
@@ -123,6 +125,7 @@ class ArtifactManager:
         self.max_crash_log_bytes = max_crash_log_bytes
         self.session_fuzz = session_fuzz
         self.health_monitor = health_monitor
+        self.save_timeouts = save_timeouts
         self.last_crash_fingerprint: str = ""
 
         # Ensure directories exist
@@ -321,25 +324,25 @@ class ArtifactManager:
     def handle_timeout(
         self, child_source_path: Path, child_log_path: Path, parent_path: Path
     ) -> None:
-        """
-        Handle a standard timeout by saving the test case and processing the log.
+        """Handle a standard timeout.
 
-        Args:
-            child_source_path: Path to the child script that timed out
-            child_log_path: Path to the log file from the timed out execution
-            parent_path: Path to the parent script
-
-        Returns:
-            None (stat key: "timeouts_found")
+        Always prints detection message. Saves artifacts only if
+        save_timeouts is True. Metadata logging is handled by the
+        orchestrator via TimeoutLogger, not here.
         """
-        print("  [!!!] TIMEOUT DETECTED! Saving test case.", file=sys.stderr)
-        self._save_timeout_artifact(
-            child_source_path,
-            parent_path,
-            self.timeouts_dir,
-            "Timeout",
-            log_path=child_log_path,
-        )
+        print("  [!!!] TIMEOUT DETECTED!", file=sys.stderr)
+
+        if self.save_timeouts:
+            print("  Saving test case.", file=sys.stderr)
+            self._save_timeout_artifact(
+                child_source_path,
+                parent_path,
+                self.timeouts_dir,
+                "Timeout",
+                log_path=child_log_path,
+            )
+        else:
+            print("  [--no-save-timeouts] Skipping artifact save.", file=sys.stderr)
 
     def save_regression_timeout(self, source_path: Path, parent_path: Path) -> None:
         """

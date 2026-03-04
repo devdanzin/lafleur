@@ -1187,5 +1187,83 @@ class TestTimeoutLogger(unittest.TestCase):
         self.assertEqual(event["timeout_seconds"], 10)
 
 
+class TestHandleTimeoutSaveFlag(unittest.TestCase):
+    """Test --no-save-timeouts gating in handle_timeout."""
+
+    def _make_manager(self, save_timeouts: bool) -> ArtifactManager:
+        return ArtifactManager(
+            crashes_dir=Path("/tmp/crashes"),
+            timeouts_dir=Path("/tmp/timeouts"),
+            divergences_dir=Path("/tmp/divergences"),
+            regressions_dir=Path("/tmp/regressions"),
+            fingerprinter=CrashFingerprinter(),
+            max_timeout_log_bytes=1_000_000,
+            max_crash_log_bytes=10_000_000,
+            session_fuzz=False,
+            save_timeouts=save_timeouts,
+        )
+
+    def test_save_timeouts_true_calls_save_artifact(self):
+        """With save_timeouts=True, _save_timeout_artifact is called."""
+        manager = self._make_manager(save_timeouts=True)
+        with patch.object(manager, "_save_timeout_artifact") as mock_save:
+            with patch("sys.stderr", new_callable=io.StringIO):
+                manager.handle_timeout(
+                    Path("/tmp/child.py"), Path("/tmp/child.log"), Path("/tmp/parent.py")
+                )
+            mock_save.assert_called_once()
+
+    def test_save_timeouts_false_skips_save_artifact(self):
+        """With save_timeouts=False, _save_timeout_artifact is NOT called."""
+        manager = self._make_manager(save_timeouts=False)
+        with patch.object(manager, "_save_timeout_artifact") as mock_save:
+            with patch("sys.stderr", new_callable=io.StringIO):
+                manager.handle_timeout(
+                    Path("/tmp/child.py"), Path("/tmp/child.log"), Path("/tmp/parent.py")
+                )
+            mock_save.assert_not_called()
+
+    def test_save_timeouts_false_still_prints_detection(self):
+        """Detection message is always printed regardless of flag."""
+        manager = self._make_manager(save_timeouts=False)
+        with patch("sys.stderr", new_callable=io.StringIO) as mock_stderr:
+            manager.handle_timeout(
+                Path("/tmp/child.py"), Path("/tmp/child.log"), Path("/tmp/parent.py")
+            )
+            output = mock_stderr.getvalue()
+            self.assertIn("TIMEOUT DETECTED", output)
+            self.assertIn("--no-save-timeouts", output)
+
+    def test_save_timeouts_default_is_true(self):
+        """Default save_timeouts is True."""
+        manager = ArtifactManager(
+            crashes_dir=Path("/tmp/crashes"),
+            timeouts_dir=Path("/tmp/timeouts"),
+            divergences_dir=Path("/tmp/divergences"),
+            regressions_dir=Path("/tmp/regressions"),
+            fingerprinter=CrashFingerprinter(),
+            max_timeout_log_bytes=1_000_000,
+            max_crash_log_bytes=10_000_000,
+        )
+        self.assertTrue(manager.save_timeouts)
+
+    def test_jit_hang_always_saved_regardless_of_flag(self):
+        """save_jit_hang is not affected by save_timeouts flag."""
+        manager = self._make_manager(save_timeouts=False)
+        with patch("pathlib.Path.mkdir"):
+            with patch.object(manager, "_safe_copy", return_value=True) as mock_copy:
+                with patch("sys.stderr", new_callable=io.StringIO):
+                    manager.save_jit_hang(Path("/tmp/child.py"), Path("/tmp/parent.py"))
+                mock_copy.assert_called_once()
+
+    def test_regression_timeout_always_saved_regardless_of_flag(self):
+        """save_regression_timeout is not affected by save_timeouts flag."""
+        manager = self._make_manager(save_timeouts=False)
+        with patch.object(manager, "_save_timeout_artifact") as mock_save:
+            with patch("sys.stderr", new_callable=io.StringIO):
+                manager.save_regression_timeout(Path("/tmp/child.py"), Path("/tmp/parent.py"))
+            mock_save.assert_called_once()
+
+
 if __name__ == "__main__":
     unittest.main()

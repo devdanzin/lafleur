@@ -56,6 +56,19 @@ class CrashAttributionSummary(TypedDict):
     combined_strategy_scores: Counter[str]
 
 
+class TimeoutSummary(TypedDict):
+    """Aggregated timeout metadata from timeout_events.jsonl."""
+
+    total_timeouts: int
+    total_timeout_seconds: float
+    by_type: Counter[str]
+    by_parent: Counter[str]
+    by_strategy: Counter[str]
+    by_transformer: Counter[str]
+    by_stage: Counter[str]
+    sum_lineage_depth: int
+
+
 # Constants matching the learning system multipliers
 CRASH_DIRECT_WEIGHT = 5
 CRASH_LINEAGE_WEIGHT = 2
@@ -77,7 +90,7 @@ def load_json_file(path: Path) -> dict[str, Any] | None:
     try:
         with open(path, encoding="utf-8") as f:
             return json.load(f)
-    except (FileNotFoundError, json.JSONDecodeError, OSError):
+    except FileNotFoundError, json.JSONDecodeError, OSError:
         return None
 
 
@@ -140,6 +153,65 @@ def load_health_summary(health_log_path: Path) -> HealthSummary | None:
         "waste_event_count": waste_event_count,
         "crash_profile": crash_profile,
         "parent_offenders": parent_offenders,
+    }
+
+
+def load_timeout_summary(log_path: Path) -> TimeoutSummary | None:
+    """Load and aggregate timeout metadata from a JSONL log.
+
+    Args:
+        log_path: Path to the timeout_events.jsonl file.
+
+    Returns:
+        Aggregated timeout summary, or None if the file doesn't exist or is empty.
+    """
+    if not log_path.exists():
+        return None
+
+    total_timeouts = 0
+    total_timeout_seconds = 0.0
+    by_type: Counter[str] = Counter()
+    by_parent: Counter[str] = Counter()
+    by_strategy: Counter[str] = Counter()
+    by_transformer: Counter[str] = Counter()
+    by_stage: Counter[str] = Counter()
+    sum_lineage_depth = 0
+
+    try:
+        with open(log_path, encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    event = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+
+                total_timeouts += 1
+                total_timeout_seconds += event.get("timeout_seconds", 0)
+                by_type[event.get("type", "unknown")] += 1
+                by_parent[event.get("parent_id", "unknown")] += 1
+                by_strategy[event.get("strategy", "unknown")] += 1
+                for transformer in event.get("transformers", []):
+                    by_transformer[transformer] += 1
+                by_stage[event.get("execution_stage", "unknown")] += 1
+                sum_lineage_depth += event.get("lineage_depth", 0)
+    except OSError:
+        return None
+
+    if total_timeouts == 0:
+        return None
+
+    return {
+        "total_timeouts": total_timeouts,
+        "total_timeout_seconds": total_timeout_seconds,
+        "by_type": by_type,
+        "by_parent": by_parent,
+        "by_strategy": by_strategy,
+        "by_transformer": by_transformer,
+        "by_stage": by_stage,
+        "sum_lineage_depth": sum_lineage_depth,
     }
 
 
@@ -236,7 +308,7 @@ def parse_timestamp(timestamp_str: str | None) -> datetime | None:
         if timestamp_str.endswith("Z"):
             timestamp_str = timestamp_str[:-1] + "+00:00"
         return datetime.fromisoformat(timestamp_str)
-    except (ValueError, TypeError):
+    except ValueError, TypeError:
         return None
 
 
@@ -287,6 +359,7 @@ class InstanceData:
     stats: dict[str, Any] | None = None
     corpus_stats: dict[str, Any] | None = None
     health_summary: HealthSummary | None = None
+    timeout_summary: TimeoutSummary | None = None
     status: str = "Unknown"
     speed: float = 0.0
     coverage: int = 0
@@ -365,6 +438,7 @@ class CampaignAggregator:
         stats = load_json_file(path / "fuzz_run_stats.json")
         corpus_stats = load_json_file(path / "corpus_stats.json")
         health_summary = load_health_summary(path / "logs" / "health_events.jsonl")
+        timeout_summary = load_timeout_summary(path / "logs" / "timeout_events.jsonl")
 
         # Determine instance name
         name = metadata.get("instance_name", path.name) if metadata else path.name
@@ -376,6 +450,7 @@ class CampaignAggregator:
             stats=stats,
             corpus_stats=corpus_stats,
             health_summary=health_summary,
+            timeout_summary=timeout_summary,
             relative_dir=path.name,
         )
 
@@ -428,7 +503,7 @@ class CampaignAggregator:
             if heartbeat_time:
                 age = (now - heartbeat_time).total_seconds()
                 return "Running" if age < threshold_seconds else "Stopped"
-        except (OSError, ValueError):
+        except OSError, ValueError:
             pass  # File doesn't exist or is unreadable — fall through
 
         # Fallback: last_update_time from stats (written once per session)

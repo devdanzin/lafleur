@@ -12,6 +12,7 @@ from lafleur.campaign import (
     generate_html_report,
     load_json_file,
     load_health_summary,
+    load_timeout_summary,
     load_crash_attribution_summary,
     parse_timestamp,
     format_duration,
@@ -1238,3 +1239,116 @@ class TestCampaignCrashAttributionAggregation(unittest.TestCase):
         html_content = generate_html_report(aggregator)
         self.assertIn("Crash-Productive Mutators", html_content)
         self.assertIn("Attributed Crashes", html_content)
+
+
+class TestLoadTimeoutSummary(unittest.TestCase):
+    """Tests for load_timeout_summary reader function."""
+
+    def setUp(self):
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.temp_path = Path(self.temp_dir.name)
+
+    def tearDown(self):
+        self.temp_dir.cleanup()
+
+    def _write_events(self, events: list[dict]) -> Path:
+        path = self.temp_path / "timeout_events.jsonl"
+        with open(path, "w", encoding="utf-8") as f:
+            for event in events:
+                f.write(json.dumps(event) + "\n")
+        return path
+
+    def test_returns_none_for_missing_file(self):
+        result = load_timeout_summary(self.temp_path / "nonexistent.jsonl")
+        self.assertIsNone(result)
+
+    def test_returns_none_for_empty_file(self):
+        path = self.temp_path / "timeout_events.jsonl"
+        path.write_text("")
+        result = load_timeout_summary(path)
+        self.assertIsNone(result)
+
+    def test_counts_total_timeouts(self):
+        path = self._write_events(
+            [
+                {"type": "timeout", "parent_id": "1.py", "timeout_seconds": 10},
+                {"type": "timeout", "parent_id": "2.py", "timeout_seconds": 10},
+                {"type": "jit_hang", "parent_id": "3.py", "timeout_seconds": 10},
+            ]
+        )
+        result = load_timeout_summary(path)
+        self.assertEqual(result["total_timeouts"], 3)
+
+    def test_sums_timeout_seconds(self):
+        path = self._write_events(
+            [
+                {"type": "timeout", "timeout_seconds": 10},
+                {"type": "timeout", "timeout_seconds": 10},
+                {"type": "jit_hang", "timeout_seconds": 15},
+            ]
+        )
+        result = load_timeout_summary(path)
+        self.assertAlmostEqual(result["total_timeout_seconds"], 35.0)
+
+    def test_counts_by_type(self):
+        path = self._write_events(
+            [
+                {"type": "timeout"},
+                {"type": "timeout"},
+                {"type": "jit_hang"},
+            ]
+        )
+        result = load_timeout_summary(path)
+        self.assertEqual(result["by_type"]["timeout"], 2)
+        self.assertEqual(result["by_type"]["jit_hang"], 1)
+
+    def test_counts_by_parent(self):
+        path = self._write_events(
+            [
+                {"type": "timeout", "parent_id": "42.py"},
+                {"type": "timeout", "parent_id": "42.py"},
+                {"type": "timeout", "parent_id": "7.py"},
+            ]
+        )
+        result = load_timeout_summary(path)
+        self.assertEqual(result["by_parent"]["42.py"], 2)
+        self.assertEqual(result["by_parent"]["7.py"], 1)
+
+    def test_counts_by_transformer(self):
+        path = self._write_events(
+            [
+                {"type": "timeout", "transformers": ["MutA", "MutB"]},
+                {"type": "timeout", "transformers": ["MutA"]},
+            ]
+        )
+        result = load_timeout_summary(path)
+        self.assertEqual(result["by_transformer"]["MutA"], 2)
+        self.assertEqual(result["by_transformer"]["MutB"], 1)
+
+    def test_counts_by_strategy(self):
+        path = self._write_events(
+            [
+                {"type": "timeout", "strategy": "havoc"},
+                {"type": "timeout", "strategy": "havoc"},
+                {"type": "timeout", "strategy": "sniper"},
+            ]
+        )
+        result = load_timeout_summary(path)
+        self.assertEqual(result["by_strategy"]["havoc"], 2)
+        self.assertEqual(result["by_strategy"]["sniper"], 1)
+
+    def test_skips_malformed_lines(self):
+        path = self.temp_path / "timeout_events.jsonl"
+        with open(path, "w") as f:
+            f.write(json.dumps({"type": "timeout"}) + "\n")
+            f.write("not valid json\n")
+            f.write(json.dumps({"type": "jit_hang"}) + "\n")
+        result = load_timeout_summary(path)
+        self.assertEqual(result["total_timeouts"], 2)
+
+    def test_handles_missing_fields_gracefully(self):
+        """Events with missing fields use defaults without crashing."""
+        path = self._write_events([{"type": "timeout"}])
+        result = load_timeout_summary(path)
+        self.assertEqual(result["total_timeouts"], 1)
+        self.assertEqual(result["by_parent"]["unknown"], 1)

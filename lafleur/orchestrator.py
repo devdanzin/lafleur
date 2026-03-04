@@ -30,7 +30,7 @@ from lafleur.corpus_manager import CORPUS_DIR, CorpusManager
 from lafleur.health import HealthMonitor
 from lafleur.coverage import CoverageManager, load_coverage_state
 from lafleur.analysis import CrashFingerprinter
-from lafleur.artifacts import ArtifactManager, TelemetryManager
+from lafleur.artifacts import ArtifactManager, TelemetryManager, TimeoutLogger
 from lafleur.execution import ExecutionManager
 from lafleur.scoring import ScoringManager
 from lafleur.types import (
@@ -67,6 +67,13 @@ LOGS_DIR = Path("logs")
 RUN_LOGS_DIR = LOGS_DIR / "run_logs"
 HEARTBEAT_FILE = LOGS_DIR / "heartbeat"
 HEARTBEAT_INTERVAL_SECONDS = 60  # Write heartbeat at most once per minute
+
+# Map timeout stat keys to (type, execution_stage) for structured metadata logging
+TIMEOUT_STAT_KEYS: dict[str, tuple[str, str]] = {
+    "timeouts_found": ("timeout", "coverage"),
+    "jit_hangs_found": ("jit_hang", "differential_jit"),
+    "regression_timeouts_found": ("regression_timeout", "timing_jit"),
+}
 
 # --- Sterility Thresholds ---
 # Maximum sterile mutations in a deepening session before abandoning the lineage.
@@ -218,6 +225,8 @@ class LafleurOrchestrator:
         self.health_monitor = HealthMonitor(log_path=LOGS_DIR / "health_events.jsonl")
         self.mutation_controller.health_monitor = self.health_monitor
         self.corpus_manager.health_monitor = self.health_monitor
+        self.timeout_logger = TimeoutLogger(log_path=LOGS_DIR / "timeout_events.jsonl")
+        self.execution_timeout = timeout
 
         run_timestamp = self.run_stats.get("start_time", datetime.now(timezone.utc).isoformat())
         safe_timestamp = run_timestamp.replace(":", "-").replace("+", "Z")
@@ -762,10 +771,35 @@ class LafleurOrchestrator:
                 )
                 if stat_key:
                     self.run_stats[stat_key] = self.run_stats.get(stat_key, 0) + 1
-                if stat_key == "timeout_count":
+                if stat_key == "timeouts_found":
                     self.health_monitor.record_timeout(ctx.parent_id)
                 else:
                     self.health_monitor.reset_timeout_streak()
+
+                # Record structured timeout metadata
+                if stat_key in TIMEOUT_STAT_KEYS:
+                    timeout_type, execution_stage = TIMEOUT_STAT_KEYS[stat_key]
+                    self.timeout_logger.record(
+                        {
+                            "type": timeout_type,
+                            "parent_id": ctx.parent_id,
+                            "mutation_seed": mutation_seed,
+                            "strategy": (
+                                mutation_info.get("strategy", "unknown")
+                                if mutation_info
+                                else "unknown"
+                            ),
+                            "transformers": (
+                                mutation_info.get("transformers", []) if mutation_info else []
+                            ),
+                            "session_id": session_id,
+                            "mutation_index": mutation_index,
+                            "lineage_depth": ctx.parent_metadata.get("lineage_depth", 0),
+                            "execution_stage": execution_stage,
+                            "timeout_seconds": self.execution_timeout,
+                        }
+                    )
+
                 if not exec_result:
                     continue
 

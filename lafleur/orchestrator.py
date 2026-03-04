@@ -228,6 +228,7 @@ class LafleurOrchestrator:
         self.corpus_manager.health_monitor = self.health_monitor
         self.timeout_logger = TimeoutLogger(log_path=LOGS_DIR / "timeout_events.jsonl")
         self.execution_timeout = timeout
+        self.timeouts_since_last_telemetry = 0
 
         run_timestamp = self.run_stats.get("start_time", datetime.now(timezone.utc).isoformat())
         safe_timestamp = run_timestamp.replace(":", "-").replace("+", "Z")
@@ -410,13 +411,19 @@ class LafleurOrchestrator:
                 self.telemetry_manager.update_and_save_run_stats(self.global_seed_counter)
                 if session_num % 10 == 0:
                     print(f"[*] Logging time-series data point at session {session_num}...")
+                    self.run_stats["timeouts_since_last_telemetry"] = (
+                        self.timeouts_since_last_telemetry
+                    )
                     self.telemetry_manager.log_timeseries_datapoint()
+                    self.timeouts_since_last_telemetry = 0
         finally:
             # Crash-safety: save stats even if interrupted mid-session.
             # The per-session save above handles the normal case.
             print("\n[+] Fuzzing loop terminating. Saving final stats...")
             self.telemetry_manager.update_and_save_run_stats(self.global_seed_counter)
+            self.run_stats["timeouts_since_last_telemetry"] = self.timeouts_since_last_telemetry
             self.telemetry_manager.log_timeseries_datapoint()
+            self.timeouts_since_last_telemetry = 0
 
             self.score_tracker.save_state()
 
@@ -780,6 +787,7 @@ class LafleurOrchestrator:
 
                 # Record structured timeout metadata
                 if stat_key in TIMEOUT_STAT_KEYS:
+                    self.timeouts_since_last_telemetry += 1
                     timeout_type, execution_stage = TIMEOUT_STAT_KEYS[stat_key]
                     self.timeout_logger.record(
                         {

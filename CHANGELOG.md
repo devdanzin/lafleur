@@ -70,6 +70,10 @@ All notable changes to this project should be documented in this file.
 - A **TimeoutLogger** structured metadata system that logs every timeout event to `timeout_events.jsonl` with type, parent ID, mutation strategy, transformers, lineage depth, execution stage, and timeout duration, by @devdanzin.
 - A `load_timeout_summary()` reader function in campaign.py that aggregates timeout metadata into counters by type, parent, strategy, transformer, and execution stage, by @devdanzin.
 - A `--no-save-timeouts` CLI flag to skip saving normal timeout artifacts (.py source + .log files) to disk while preserving all structured metadata logging to `timeout_events.jsonl`. JIT hangs and regression timeouts are always saved regardless, by @devdanzin.
+- A **TIMEOUT ANALYSIS section** in the instance report (`lafleur-report`) showing timeout rate, total time wasted, disk usage, `--no-save-timeouts` status, timeout-prone parents, correlated mutators, and correlated strategies, by @devdanzin.
+- **Fleet-wide timeout aggregation** in the campaign report (`lafleur-campaign`) with timeout rate KPI card, time wasted metrics, per-instance `TO%` column in both text and HTML leaderboards, and >15% timeout rate highlighting in HTML, by @devdanzin.
+- **Timeout rate as a health signal**: fleet timeout rate >20% downgrades health to Degraded, >30% to Unhealthy, integrated into `get_fleet_health_grade()`, by @devdanzin.
+- A `timeouts_since_last_telemetry` counter in timeseries datapoints for timeout rate trends over time, by @devdanzin.
 
 ### Fixed
 

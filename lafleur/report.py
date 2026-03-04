@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from lafleur.campaign import (
+    TimeoutSummary,
     load_crash_attribution_summary,
     load_health_summary,
     load_timeout_summary,
@@ -110,6 +111,131 @@ def format_number(value: int | float | None, suffix: str = "") -> str:
     if isinstance(value, float):
         return f"{value:,.2f}{suffix}"
     return f"{value:,}{suffix}"
+
+
+def _get_dir_size_mb(dir_path: Path) -> float | None:
+    """Get total size of a directory in MB, or None if it doesn't exist."""
+    if not dir_path.exists():
+        return None
+    try:
+        total_bytes = sum(f.stat().st_size for f in dir_path.rglob("*") if f.is_file())
+        return total_bytes / (1024 * 1024)
+    except OSError:
+        return None
+
+
+def _format_timeout_section(
+    timeout_summary: TimeoutSummary | None,
+    run_stats: dict[str, Any] | None,
+    instance_dir: Path,
+) -> list[str]:
+    """Format the TIMEOUT ANALYSIS section for the instance report."""
+    lines: list[str] = []
+    lines.append("-" * 80)
+    lines.append("TIMEOUT ANALYSIS")
+    lines.append("-" * 80)
+
+    if timeout_summary is None:
+        if run_stats:
+            timeouts = run_stats.get("timeouts_found", 0)
+            jit_hangs = run_stats.get("jit_hangs_found", 0)
+            regression = run_stats.get("regression_timeouts_found", 0)
+            total = timeouts + jit_hangs + regression
+            lines.append(f"Total Timeouts:      {format_number(total)}")
+            if total > 0:
+                lines.append(
+                    f"  (timeouts: {format_number(timeouts)} "
+                    f"| jit_hangs: {format_number(jit_hangs)} "
+                    f"| regression: {format_number(regression)})"
+                )
+            lines.append("")
+            lines.append("No timeout metadata log found (timeout_events.jsonl).")
+            lines.append("Detailed analysis requires the structured timeout log.")
+        else:
+            lines.append("No timeout data available.")
+        lines.append("")
+        return lines
+
+    # === Summary line ===
+    total = timeout_summary["total_timeouts"]
+    by_type = timeout_summary["by_type"]
+    lines.append(
+        f"Total Timeouts:      {format_number(total)} "
+        f"(timeouts: {format_number(by_type.get('timeout', 0))} "
+        f"| jit_hangs: {format_number(by_type.get('jit_hang', 0))} "
+        f"| regression: {format_number(by_type.get('regression_timeout', 0))})"
+    )
+
+    # === Timeout rate ===
+    total_mutations = run_stats.get("total_mutations", 0) if run_stats else 0
+    if total_mutations > 0:
+        rate = (total / total_mutations) * 100
+        lines.append(f"Timeout Rate:        {rate:.1f}% of all executions")
+    else:
+        lines.append("Timeout Rate:        N/A (no executions recorded)")
+
+    # === Total time wasted ===
+    total_seconds = timeout_summary["total_timeout_seconds"]
+    if total_seconds > 0:
+        hours = total_seconds / 3600
+        if hours >= 1.0:
+            lines.append(f"Time Wasted:         {hours:.1f} hours ({total_seconds:,.0f}s)")
+        else:
+            minutes = total_seconds / 60
+            lines.append(f"Time Wasted:         {minutes:.1f} minutes ({total_seconds:,.0f}s)")
+    else:
+        lines.append("Time Wasted:         0s")
+
+    # === Timeouts directory size ===
+    timeouts_dir = instance_dir / "timeouts"
+    dir_size = _get_dir_size_mb(timeouts_dir)
+
+    metadata = load_json_file(instance_dir / "logs" / "run_metadata.json")
+    no_save = False
+    if metadata:
+        config = metadata.get("configuration", {})
+        args = config.get("args", {})
+        no_save = args.get("no_save_timeouts", False)
+
+    if no_save:
+        lines.append("Timeouts Dir Size:   N/A (--no-save-timeouts active)")
+    elif dir_size is not None:
+        lines.append(f"Timeouts Dir Size:   {dir_size:.1f} MB")
+    else:
+        lines.append("Timeouts Dir Size:   0 MB (no timeouts/ directory)")
+
+    lines.append("")
+
+    # === Timeout-prone parents (top 5) ===
+    by_parent = timeout_summary["by_parent"]
+    if by_parent:
+        lines.append("Timeout-Prone Parents (top 5):")
+        top_parents = by_parent.most_common(5)
+        for parent_id, count in top_parents:
+            pct = (count / total) * 100
+            lines.append(f"    {parent_id:<20} {count:>5} timeouts ({pct:>5.1f}%)")
+        lines.append("")
+
+    # === Timeout-correlated mutators (top 5) ===
+    by_transformer = timeout_summary["by_transformer"]
+    if by_transformer:
+        lines.append("Timeout-Correlated Mutators (top 5):")
+        top_mutators = by_transformer.most_common(5)
+        for mutator, count in top_mutators:
+            pct = (count / total) * 100
+            lines.append(f"    {mutator:<30} {count:>5} ({pct:>5.1f}%)")
+        lines.append("")
+
+    # === Timeout-correlated strategies ===
+    by_strategy = timeout_summary["by_strategy"]
+    if by_strategy:
+        lines.append("Timeout-Correlated Strategies:")
+        for strategy, count in by_strategy.most_common():
+            pct = (count / total) * 100
+            lines.append(f"    {strategy:<20} {count:>5} ({pct:>5.1f}%)")
+        lines.append("")
+
+    return lines
 
 
 def get_jit_asan_status(config_args: str | None) -> tuple[str, str]:
@@ -244,7 +370,7 @@ def generate_report(instance_dir: Path) -> str:
     total_mutations = stats.get("total_mutations", 0) if stats else 0
     speed = total_mutations / duration_seconds if duration_seconds > 0 else 0.0
     health_summary = load_health_summary(instance_dir / "logs" / "health_events.jsonl")
-    timeout_summary = load_timeout_summary(instance_dir / "logs" / "timeout_events.jsonl")  # noqa: F841 — rendering added in timeout analytics feature
+    timeout_summary = load_timeout_summary(instance_dir / "logs" / "timeout_events.jsonl")
 
     # ========== HEADER ==========
     lines.append("=" * 80)
@@ -499,6 +625,9 @@ def generate_report(instance_dir: Path) -> str:
         lines.append("No health events recorded.")
 
     lines.append("")
+
+    # ========== TIMEOUT ANALYSIS ==========
+    lines.extend(_format_timeout_section(timeout_summary, stats, instance_dir))
 
     # ========== CRASH ATTRIBUTION ==========
     crash_attribution = load_crash_attribution_summary(

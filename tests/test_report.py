@@ -9,7 +9,10 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from collections import Counter
+
 from lafleur.report import (
+    _format_timeout_section,
     generate_report,
     load_json_file,
     load_latest_timeseries_entry,
@@ -575,6 +578,115 @@ class TestLoadLatestTimeseries(unittest.TestCase):
 
         entry = load_latest_timeseries_entry(self.root)
         self.assertEqual(entry, {"ts": 1, "rss_mb": 100})
+
+
+class TestTimeoutSection(unittest.TestCase):
+    """Test TIMEOUT ANALYSIS section formatting."""
+
+    def setUp(self):
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.instance_dir = Path(self.temp_dir.name)
+        (self.instance_dir / "logs").mkdir(parents=True)
+
+    def tearDown(self):
+        self.temp_dir.cleanup()
+
+    def test_no_summary_shows_basic_stats(self):
+        """Without timeout_events.jsonl, shows basic stats from run_stats."""
+        run_stats = {
+            "timeouts_found": 10,
+            "jit_hangs_found": 2,
+            "regression_timeouts_found": 1,
+        }
+        lines = _format_timeout_section(None, run_stats, self.instance_dir)
+        text = "\n".join(lines)
+        self.assertIn("TIMEOUT ANALYSIS", text)
+        self.assertIn("13", text)
+        self.assertIn("No timeout metadata log", text)
+
+    def test_full_summary_shows_all_metrics(self):
+        """Full summary renders all sections."""
+        summary = {
+            "total_timeouts": 100,
+            "total_timeout_seconds": 1000.0,
+            "by_type": Counter({"timeout": 90, "jit_hang": 8, "regression_timeout": 2}),
+            "by_parent": Counter({"42.py": 50, "7.py": 30, "3.py": 20}),
+            "by_strategy": Counter({"havoc": 70, "sniper": 30}),
+            "by_transformer": Counter({"MutA": 60, "MutB": 40}),
+            "by_stage": Counter({"coverage": 90, "differential_jit": 10}),
+            "sum_lineage_depth": 300,
+        }
+        run_stats = {"total_mutations": 1000}
+        lines = _format_timeout_section(summary, run_stats, self.instance_dir)
+        text = "\n".join(lines)
+
+        self.assertIn("TIMEOUT ANALYSIS", text)
+        self.assertIn("100", text)
+        self.assertIn("10.0%", text)
+        self.assertIn("16.7 minutes", text)
+        self.assertIn("42.py", text)
+        self.assertIn("MutA", text)
+        self.assertIn("havoc", text)
+
+    def test_time_wasted_in_hours(self):
+        """Large time wasted is shown in hours."""
+        summary = {
+            "total_timeouts": 500,
+            "total_timeout_seconds": 5000.0,
+            "by_type": Counter({"timeout": 500}),
+            "by_parent": Counter({"42.py": 500}),
+            "by_strategy": Counter({"havoc": 500}),
+            "by_transformer": Counter(),
+            "by_stage": Counter(),
+            "sum_lineage_depth": 0,
+        }
+        run_stats = {"total_mutations": 5000}
+        lines = _format_timeout_section(summary, run_stats, self.instance_dir)
+        text = "\n".join(lines)
+        self.assertIn("1.4 hours", text)
+
+    def test_no_save_timeouts_active(self):
+        """Shows N/A for dir size when --no-save-timeouts is active."""
+        metadata = {"configuration": {"args": {"no_save_timeouts": True}}}
+        (self.instance_dir / "logs" / "run_metadata.json").write_text(json.dumps(metadata))
+        summary = {
+            "total_timeouts": 10,
+            "total_timeout_seconds": 100.0,
+            "by_type": Counter({"timeout": 10}),
+            "by_parent": Counter(),
+            "by_strategy": Counter(),
+            "by_transformer": Counter(),
+            "by_stage": Counter(),
+            "sum_lineage_depth": 0,
+        }
+        lines = _format_timeout_section(summary, {"total_mutations": 100}, self.instance_dir)
+        text = "\n".join(lines)
+        self.assertIn("--no-save-timeouts", text)
+
+    def test_dir_size_displayed(self):
+        """Timeouts dir size is shown when artifacts exist."""
+        timeouts_dir = self.instance_dir / "timeouts"
+        timeouts_dir.mkdir()
+        (timeouts_dir / "timeout_child_42.py").write_text("x = 1" * 1000)
+        summary = {
+            "total_timeouts": 1,
+            "total_timeout_seconds": 10.0,
+            "by_type": Counter({"timeout": 1}),
+            "by_parent": Counter(),
+            "by_strategy": Counter(),
+            "by_transformer": Counter(),
+            "by_stage": Counter(),
+            "sum_lineage_depth": 0,
+        }
+        lines = _format_timeout_section(summary, {"total_mutations": 10}, self.instance_dir)
+        text = "\n".join(lines)
+        self.assertIn("MB", text)
+
+    def test_no_data_available(self):
+        """No timeout data shows appropriate message."""
+        lines = _format_timeout_section(None, None, self.instance_dir)
+        text = "\n".join(lines)
+        self.assertIn("No timeout data available", text)
 
 
 if __name__ == "__main__":

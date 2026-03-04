@@ -17,7 +17,7 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from textwrap import dedent
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import psutil
 from compression import zstd
@@ -53,6 +53,31 @@ CRASH_KEYWORDS = [
     "panic",
     "AddressSanitizer",
 ]
+
+
+class TimeoutLogger:
+    """Append-only JSONL logger for structured timeout metadata."""
+
+    def __init__(self, log_path: Path) -> None:
+        self.log_path = log_path
+
+    def record(self, metadata: dict[str, Any]) -> None:
+        """Append a single timeout event to the JSONL log.
+
+        Args:
+            metadata: Dictionary with timeout event fields. A timestamp is
+                added automatically if not already present.
+        """
+        if "timestamp" not in metadata:
+            metadata["timestamp"] = datetime.now(timezone.utc).isoformat()
+        try:
+            with open(self.log_path, "a", encoding="utf-8") as f:
+                f.write(json.dumps(metadata) + "\n")
+        except OSError as e:
+            print(
+                f"  [!] Warning: Could not write timeout metadata: {e}",
+                file=sys.stderr,
+            )
 
 
 class ArtifactManager:
@@ -775,7 +800,7 @@ class TelemetryManager:
         # Add system resource metrics
         try:
             datapoint["system_load_1min"] = psutil.getloadavg()[0]
-        except (OSError, AttributeError):
+        except OSError, AttributeError:
             datapoint["system_load_1min"] = None
 
         datapoint["process_rss_mb"] = round(psutil.Process().memory_info().rss / (1024 * 1024), 2)

@@ -13,7 +13,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from lafleur.campaign import load_crash_attribution_summary, load_health_summary
+from lafleur.campaign import (
+    load_crash_attribution_summary,
+    load_health_summary,
+    load_timeout_summary,
+)
 
 
 def load_json_file(path: Path) -> dict[str, Any] | None:
@@ -21,7 +25,7 @@ def load_json_file(path: Path) -> dict[str, Any] | None:
     try:
         with open(path, encoding="utf-8") as f:
             return json.load(f)
-    except (FileNotFoundError, json.JSONDecodeError, OSError):
+    except FileNotFoundError, json.JSONDecodeError, OSError:
         return None
 
 
@@ -58,7 +62,7 @@ def load_latest_timeseries_entry(instance_dir: Path) -> dict[str, Any] | None:
                 last_line = tail[0].strip()
                 if last_line:
                     return json.loads(last_line)
-        except (OSError, json.JSONDecodeError):
+        except OSError, json.JSONDecodeError:
             continue
 
     return None
@@ -73,7 +77,7 @@ def parse_timestamp(timestamp_str: str | None) -> datetime | None:
         if timestamp_str.endswith("Z"):
             timestamp_str = timestamp_str[:-1] + "+00:00"
         return datetime.fromisoformat(timestamp_str)
-    except (ValueError, TypeError):
+    except ValueError, TypeError:
         return None
 
 
@@ -240,6 +244,7 @@ def generate_report(instance_dir: Path) -> str:
     total_mutations = stats.get("total_mutations", 0) if stats else 0
     speed = total_mutations / duration_seconds if duration_seconds > 0 else 0.0
     health_summary = load_health_summary(instance_dir / "logs" / "health_events.jsonl")
+    timeout_summary = load_timeout_summary(instance_dir / "logs" / "timeout_events.jsonl")  # noqa: F841 — rendering added in timeout analytics feature
 
     # ========== HEADER ==========
     lines.append("=" * 80)

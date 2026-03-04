@@ -14,7 +14,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch, mock_open
-from lafleur.artifacts import ArtifactManager
+from lafleur.artifacts import ArtifactManager, TimeoutLogger
 from lafleur.analysis import CrashFingerprinter, CrashSignature, CrashType
 from lafleur.execution import ExecutionManager
 
@@ -1135,6 +1135,56 @@ class TestSessionCrashCorpusFilenames(unittest.TestCase):
         # session_corpus_files should still be present with warmup: None
         corpus_files = metadata["session_corpus_files"]
         self.assertIsNone(corpus_files["warmup"])
+
+
+class TestTimeoutLogger(unittest.TestCase):
+    """Test TimeoutLogger append-only JSONL logging."""
+
+    def setUp(self):
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.log_path = Path(self.temp_dir.name) / "timeout_events.jsonl"
+        self.logger = TimeoutLogger(log_path=self.log_path)
+
+    def tearDown(self):
+        self.temp_dir.cleanup()
+
+    def test_record_creates_file(self):
+        """First record call creates the JSONL file."""
+        self.logger.record({"type": "timeout", "parent_id": "42.py"})
+        self.assertTrue(self.log_path.exists())
+
+    def test_record_appends_json_lines(self):
+        """Each record appends one JSON line."""
+        self.logger.record({"type": "timeout", "parent_id": "1.py"})
+        self.logger.record({"type": "jit_hang", "parent_id": "2.py"})
+        lines = self.log_path.read_text().strip().split("\n")
+        self.assertEqual(len(lines), 2)
+        self.assertEqual(json.loads(lines[0])["parent_id"], "1.py")
+        self.assertEqual(json.loads(lines[1])["type"], "jit_hang")
+
+    def test_record_adds_timestamp_if_missing(self):
+        """Timestamp is auto-added when not provided."""
+        self.logger.record({"type": "timeout"})
+        event = json.loads(self.log_path.read_text().strip())
+        self.assertIn("timestamp", event)
+
+    def test_record_preserves_existing_timestamp(self):
+        """Existing timestamp is not overwritten."""
+        self.logger.record({"type": "timeout", "timestamp": "2026-01-01T00:00:00"})
+        event = json.loads(self.log_path.read_text().strip())
+        self.assertEqual(event["timestamp"], "2026-01-01T00:00:00")
+
+    def test_record_handles_io_error(self):
+        """IOError is caught and printed, not raised."""
+        self.logger.log_path = Path("/nonexistent/dir/log.jsonl")
+        with patch("sys.stderr", new_callable=io.StringIO):
+            self.logger.record({"type": "timeout"})  # Should not raise
+
+    def test_record_includes_timeout_seconds(self):
+        """timeout_seconds field is preserved in the output."""
+        self.logger.record({"type": "timeout", "timeout_seconds": 10})
+        event = json.loads(self.log_path.read_text().strip())
+        self.assertEqual(event["timeout_seconds"], 10)
 
 
 if __name__ == "__main__":

@@ -1407,6 +1407,8 @@ class TestExecuteSingleMutation(unittest.TestCase):
         self.orchestrator.scoring_manager = MagicMock()
         self.orchestrator.artifact_manager = MagicMock()
         self.orchestrator.score_tracker = MagicMock()
+        self.orchestrator.timeout_logger = MagicMock()
+        self.orchestrator.execution_timeout = 10
 
         mock_harness = MagicMock()
         mock_harness.name = "uop_harness_test"
@@ -1614,6 +1616,62 @@ class TestExecuteSingleMutation(unittest.TestCase):
                 )
 
         self.assertEqual(outcome.new_child_filename, "new_child.py")
+
+    def _setup_timeout_test(self, stat_key: str) -> None:
+        """Helper to set up a timeout metadata recording test."""
+        mock_harness = MagicMock()
+        self.orchestrator.mutation_controller.get_mutated_harness.return_value = (
+            mock_harness,
+            {"strategy": "havoc", "transformers": ["MutA", "MutB"]},
+        )
+        self.orchestrator.mutation_controller.prepare_child_script.return_value = "code"
+        self.orchestrator.execution_manager.execute_child.return_value = (None, stat_key)
+
+    def test_records_timeout_metadata_on_timeout(self):
+        """Timeout metadata is logged when execute_child returns timeouts_found."""
+        self._setup_timeout_test("timeouts_found")
+
+        self.orchestrator._execute_single_mutation(
+            self.ctx, mutation_seed=42, mutation_index=3, session_id=5, mutation_id=7
+        )
+
+        self.orchestrator.timeout_logger.record.assert_called_once()
+        metadata = self.orchestrator.timeout_logger.record.call_args[0][0]
+        self.assertEqual(metadata["type"], "timeout")
+        self.assertEqual(metadata["parent_id"], "parent_test.py")
+        self.assertEqual(metadata["mutation_seed"], 42)
+        self.assertEqual(metadata["strategy"], "havoc")
+        self.assertEqual(metadata["transformers"], ["MutA", "MutB"])
+        self.assertEqual(metadata["session_id"], 5)
+        self.assertEqual(metadata["mutation_index"], 3)
+        self.assertEqual(metadata["execution_stage"], "coverage")
+        self.assertEqual(metadata["timeout_seconds"], 10)
+
+    def test_records_timeout_metadata_on_jit_hang(self):
+        """Timeout metadata is logged for JIT hangs."""
+        self._setup_timeout_test("jit_hangs_found")
+
+        self.orchestrator._execute_single_mutation(
+            self.ctx, mutation_seed=42, mutation_index=1, session_id=1, mutation_id=1
+        )
+
+        self.orchestrator.timeout_logger.record.assert_called_once()
+        metadata = self.orchestrator.timeout_logger.record.call_args[0][0]
+        self.assertEqual(metadata["type"], "jit_hang")
+        self.assertEqual(metadata["execution_stage"], "differential_jit")
+
+    def test_records_timeout_metadata_on_regression_timeout(self):
+        """Timeout metadata is logged for regression timeouts."""
+        self._setup_timeout_test("regression_timeouts_found")
+
+        self.orchestrator._execute_single_mutation(
+            self.ctx, mutation_seed=42, mutation_index=1, session_id=1, mutation_id=1
+        )
+
+        self.orchestrator.timeout_logger.record.assert_called_once()
+        metadata = self.orchestrator.timeout_logger.record.call_args[0][0]
+        self.assertEqual(metadata["type"], "regression_timeout")
+        self.assertEqual(metadata["execution_stage"], "timing_jit")
 
 
 class TestCleanupLogFile(unittest.TestCase):

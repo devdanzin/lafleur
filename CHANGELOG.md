@@ -77,6 +77,8 @@ All notable changes to this project should be documented in this file.
 
 ### Fixed
 
+- Added missing `-> None` return type annotations on `main()` in `minimize.py` and `orchestrator.py`, by @devdanzin.
+- Added module docstrings to `analysis.py` and `mutators/sniper.py`, by @devdanzin.
 - Fixed stat_key inconsistency: orchestrator checked `"timeout_count"` but execution.py returns `"timeouts_found"`, causing `HealthMonitor.record_timeout()` to never trigger, by @devdanzin.
 
 ### Enhanced

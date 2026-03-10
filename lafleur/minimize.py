@@ -447,7 +447,7 @@ def minimize_session(crash_dir: Path, target_python: str, force_overwrite: bool)
         print(f"    Result: {target_file} (requires predecessors)")
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(description="Minimize a lafleur crash bundle.")
     parser.add_argument("crash_dir", type=Path, help="Path to the session crash directory")
     parser.add_argument(

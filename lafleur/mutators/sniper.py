@@ -1,3 +1,10 @@
+"""SniperMutator for surgical Bloom filter invalidation.
+
+Targets helper functions detected in the JIT's Bloom filter, invalidating
+them mid-execution to trigger deoptimization, type confusion, and state
+corruption in optimized traces.
+"""
+
 import ast
 import random
 from textwrap import dedent

@@ -1018,7 +1018,7 @@ def _format_run_summary(
     return header + body
 
 
-def main():
+def main() -> None:
     """Parse command-line arguments and run the Lafleur Fuzzer Orchestrator."""
     parser = argparse.ArgumentParser(
         description="lafleur: A feedback-driven JIT fuzzer for CPython."

@@ -1,3 +1,10 @@
+"""Crash analysis and classification for lafleur findings.
+
+Provides CrashSignature extraction from stderr output, classifying crashes
+into types (ASAN, assertion, panic, segfault) and generating fingerprints
+for deduplication and minimization matching.
+"""
+
 from dataclasses import dataclass, asdict
 from enum import Enum
 import re

@@ -14,13 +14,13 @@ from pathlib import Path
 from unittest.mock import patch, MagicMock
 
 from lafleur.registry import CrashRegistry
+from lafleur.utils import load_json_file
 from lafleur.triage import (
     do_export_issues,
     do_import_issues,
     get_triage_candidates,
     handle_triage_action,
     discover_instances,
-    load_json_file,
     get_revision_date,
     parse_iso_timestamp,
     import_campaign,

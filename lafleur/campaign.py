@@ -18,6 +18,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, TypedDict
 
+from lafleur.utils import load_json_file, parse_timestamp
+
 
 class GlobalCorpusData(TypedDict):
     """Type definition for global corpus aggregation data."""
@@ -83,15 +85,6 @@ WASTE_EVENT_TYPES: frozenset[str] = frozenset(
         "core_code_syntax_error",
     }
 )
-
-
-def load_json_file(path: Path) -> dict[str, Any] | None:
-    """Load a JSON file, returning None if it doesn't exist or is invalid."""
-    try:
-        with open(path, encoding="utf-8") as f:
-            return json.load(f)
-    except FileNotFoundError, json.JSONDecodeError, OSError:
-        return None
 
 
 def load_health_summary(health_log_path: Path) -> HealthSummary | None:
@@ -298,40 +291,6 @@ def load_crash_attribution_summary(log_path: Path) -> CrashAttributionSummary | 
         combined_transformer_scores=combined_transformer,
         combined_strategy_scores=combined_strategy,
     )
-
-
-def parse_timestamp(timestamp_str: str | None) -> datetime | None:
-    """Parse an ISO format timestamp string into a datetime object."""
-    if not timestamp_str:
-        return None
-    try:
-        if timestamp_str.endswith("Z"):
-            timestamp_str = timestamp_str[:-1] + "+00:00"
-        return datetime.fromisoformat(timestamp_str)
-    except ValueError, TypeError:
-        return None
-
-
-def format_duration(seconds: float) -> str:
-    """Format a duration in seconds to a human-readable string."""
-    if seconds < 0:
-        return "N/A"
-
-    days, remainder = divmod(int(seconds), 86400)
-    hours, remainder = divmod(remainder, 3600)
-    minutes, secs = divmod(remainder, 60)
-
-    parts = []
-    if days > 0:
-        parts.append(f"{days}d")
-    if hours > 0:
-        parts.append(f"{hours}h")
-    if minutes > 0:
-        parts.append(f"{minutes}m")
-    if secs > 0 or not parts:
-        parts.append(f"{secs}s")
-
-    return " ".join(parts)
 
 
 @dataclass

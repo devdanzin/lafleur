@@ -19,15 +19,7 @@ from lafleur.campaign import (
     load_health_summary,
     load_timeout_summary,
 )
-
-
-def load_json_file(path: Path) -> dict[str, Any] | None:
-    """Load a JSON file, returning None if it doesn't exist or is invalid."""
-    try:
-        with open(path, encoding="utf-8") as f:
-            return json.load(f)
-    except FileNotFoundError, json.JSONDecodeError, OSError:
-        return None
+from lafleur.utils import format_duration, load_json_file, parse_timestamp
 
 
 def load_latest_timeseries_entry(instance_dir: Path) -> dict[str, Any] | None:
@@ -67,41 +59,6 @@ def load_latest_timeseries_entry(instance_dir: Path) -> dict[str, Any] | None:
             continue
 
     return None
-
-
-def parse_timestamp(timestamp_str: str | None) -> datetime | None:
-    """Parse an ISO format timestamp string into a datetime object."""
-    if not timestamp_str:
-        return None
-    try:
-        # Handle various ISO formats
-        if timestamp_str.endswith("Z"):
-            timestamp_str = timestamp_str[:-1] + "+00:00"
-        return datetime.fromisoformat(timestamp_str)
-    except ValueError, TypeError:
-        return None
-
-
-def format_duration(seconds: float) -> str:
-    """Format a duration in seconds to a human-readable string."""
-    if seconds < 0:
-        return "N/A"
-
-    days, remainder = divmod(int(seconds), 86400)
-    hours, remainder = divmod(remainder, 3600)
-    minutes, secs = divmod(remainder, 60)
-
-    parts = []
-    if days > 0:
-        parts.append(f"{days}d")
-    if hours > 0:
-        parts.append(f"{hours}h")
-    if minutes > 0:
-        parts.append(f"{minutes}m")
-    if secs > 0 or not parts:
-        parts.append(f"{secs}s")
-
-    return " ".join(parts)
 
 
 def format_number(value: int | float | None, suffix: str = "") -> str:

@@ -14,14 +14,13 @@ from collections import Counter
 from lafleur.report import (
     _format_timeout_section,
     generate_report,
-    load_json_file,
     load_latest_timeseries_entry,
-    format_duration,
     format_number,
     get_jit_asan_status,
     truncate_string,
     load_crash_data,
 )
+from lafleur.utils import format_duration, load_json_file
 
 
 class TestReportHelpers(unittest.TestCase):

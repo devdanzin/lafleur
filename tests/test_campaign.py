@@ -11,17 +11,15 @@ from lafleur.campaign import (
     CampaignAggregator,
     InstanceData,
     generate_html_report,
-    load_json_file,
     load_health_summary,
     load_timeout_summary,
     load_crash_attribution_summary,
-    parse_timestamp,
-    format_duration,
     discover_instances,
     main,
     CrashInfo,
     HealthSummary,
 )
+from lafleur.utils import format_duration, load_json_file, parse_timestamp
 
 
 class TestLoadJsonFile(unittest.TestCase):

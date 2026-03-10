@@ -11,7 +11,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-
 # Threshold for consecutive timeout warnings
 CONSECUTIVE_TIMEOUT_THRESHOLD = 5
 

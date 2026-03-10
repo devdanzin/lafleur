@@ -14,13 +14,13 @@ import random
 import re
 import shutil
 import sys
+from compression import zstd
 from datetime import datetime, timezone
 from pathlib import Path
 from textwrap import dedent
 from typing import TYPE_CHECKING, Any
 
 import psutil
-from compression import zstd
 
 from lafleur.analysis import CrashFingerprinter, CrashSignature, CrashType
 from lafleur.corpus_analysis import generate_corpus_stats

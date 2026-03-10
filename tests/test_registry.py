@@ -1,7 +1,8 @@
-import unittest
 import sqlite3
 import tempfile
+import unittest
 from pathlib import Path
+
 from lafleur.registry import CrashRegistry
 
 

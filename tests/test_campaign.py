@@ -1,26 +1,26 @@
-import unittest
 import json
 import tempfile
+import unittest
 from collections import Counter
 from datetime import datetime, timedelta, timezone
 from io import StringIO
 from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
 from lafleur.campaign import (
     CampaignAggregator,
-    InstanceData,
-    generate_html_report,
-    load_json_file,
-    load_health_summary,
-    load_timeout_summary,
-    load_crash_attribution_summary,
-    parse_timestamp,
-    format_duration,
-    discover_instances,
-    main,
     CrashInfo,
     HealthSummary,
+    InstanceData,
+    discover_instances,
+    format_duration,
+    generate_html_report,
+    load_crash_attribution_summary,
+    load_health_summary,
+    load_json_file,
+    load_timeout_summary,
+    main,
+    parse_timestamp,
 )
 
 

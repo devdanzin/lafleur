@@ -11,25 +11,25 @@ import tempfile
 import unittest
 from io import StringIO
 from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
 from lafleur.registry import CrashRegistry
 from lafleur.triage import (
+    discover_instances,
     do_export_issues,
     do_import_issues,
+    export_issues,
+    get_revision_date,
     get_triage_candidates,
     handle_triage_action,
-    discover_instances,
-    load_json_file,
-    get_revision_date,
-    parse_iso_timestamp,
     import_campaign,
-    show_status,
-    list_crashes,
-    show_crash,
-    export_issues,
     import_issues,
+    list_crashes,
+    load_json_file,
     main,
+    parse_iso_timestamp,
+    show_crash,
+    show_status,
 )
 
 

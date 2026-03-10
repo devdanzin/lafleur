@@ -7,20 +7,19 @@ This module tests the single-instance text report generator.
 import json
 import tempfile
 import unittest
-from pathlib import Path
-
 from collections import Counter
+from pathlib import Path
 
 from lafleur.report import (
     _format_timeout_section,
-    generate_report,
-    load_json_file,
-    load_latest_timeseries_entry,
     format_duration,
     format_number,
+    generate_report,
     get_jit_asan_status,
-    truncate_string,
     load_crash_data,
+    load_json_file,
+    load_latest_timeseries_entry,
+    truncate_string,
 )
 
 

@@ -2,7 +2,7 @@
 
 import unittest
 
-from lafleur.driver import _PyBloomFilter, check_bloom, BLOOM_WORDS
+from lafleur.driver import BLOOM_WORDS, _PyBloomFilter, check_bloom
 
 
 class TestCheckBloom(unittest.TestCase):

@@ -1,6 +1,7 @@
+import sys
 import unittest
 from unittest.mock import MagicMock, patch
-import sys
+
 from lafleur.driver import get_jit_stats
 
 # Mock _opcode if not present

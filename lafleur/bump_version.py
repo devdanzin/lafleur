@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 import re
-from pathlib import Path
 import sys
+from pathlib import Path
 
 
 def bump_version(new_version):

@@ -14,14 +14,14 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from lafleur.metadata import (
+    ADJECTIVES,
+    NOUNS,
     generate_docker_style_name,
+    generate_run_metadata,
     get_git_info,
     get_installed_packages,
     get_target_python_info,
     load_existing_metadata,
-    generate_run_metadata,
-    ADJECTIVES,
-    NOUNS,
 )
 
 

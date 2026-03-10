@@ -309,9 +309,11 @@ class TestBuiltinNamespaceCorruptor(unittest.TestCase):
         with patch("random.random", side_effect=[0.1, 0.1]):  # trigger, use enhanced
             with patch(
                 "random.choice",
-                side_effect=lambda x: "direct_dict_modification"
-                if x == BuiltinNamespaceCorruptor.ENHANCED_ATTACKS
-                else x[0],
+                side_effect=lambda x: (
+                    "direct_dict_modification"
+                    if x == BuiltinNamespaceCorruptor.ENHANCED_ATTACKS
+                    else x[0]
+                ),
             ):
                 with patch("random.randint", return_value=5000):
                     mutator = BuiltinNamespaceCorruptor()
@@ -341,9 +343,11 @@ class TestBuiltinNamespaceCorruptor(unittest.TestCase):
         with patch("random.random", side_effect=[0.1, 0.1]):  # trigger, use enhanced
             with patch(
                 "random.choice",
-                side_effect=lambda x: "builtins_type_toggle"
-                if x == BuiltinNamespaceCorruptor.ENHANCED_ATTACKS
-                else x[0],
+                side_effect=lambda x: (
+                    "builtins_type_toggle"
+                    if x == BuiltinNamespaceCorruptor.ENHANCED_ATTACKS
+                    else x[0]
+                ),
             ):
                 with patch("random.randint", return_value=6000):
                     mutator = BuiltinNamespaceCorruptor()
@@ -372,9 +376,11 @@ class TestBuiltinNamespaceCorruptor(unittest.TestCase):
         with patch("random.random", side_effect=[0.1, 0.1]):  # trigger, use enhanced
             with patch(
                 "random.choice",
-                side_effect=lambda x: "highfreq_builtin_corruption"
-                if x == BuiltinNamespaceCorruptor.ENHANCED_ATTACKS
-                else x[0],
+                side_effect=lambda x: (
+                    "highfreq_builtin_corruption"
+                    if x == BuiltinNamespaceCorruptor.ENHANCED_ATTACKS
+                    else x[0]
+                ),
             ):
                 with patch("random.randint", return_value=7000):
                     mutator = BuiltinNamespaceCorruptor()
@@ -405,9 +411,11 @@ class TestBuiltinNamespaceCorruptor(unittest.TestCase):
         with patch("random.random", side_effect=[0.1, 0.1]):
             with patch(
                 "random.choice",
-                side_effect=lambda x: "highfreq_builtin_corruption"
-                if x == BuiltinNamespaceCorruptor.ENHANCED_ATTACKS
-                else x[0],
+                side_effect=lambda x: (
+                    "highfreq_builtin_corruption"
+                    if x == BuiltinNamespaceCorruptor.ENHANCED_ATTACKS
+                    else x[0]
+                ),
             ):
                 with patch("random.randint", return_value=8000):
                     mutator = BuiltinNamespaceCorruptor()
@@ -434,9 +442,9 @@ class TestBuiltinNamespaceCorruptor(unittest.TestCase):
             with patch("random.random", side_effect=[0.1, 0.1]):
                 with patch(
                     "random.choice",
-                    side_effect=lambda x, at=attack_type: at
-                    if x == BuiltinNamespaceCorruptor.ENHANCED_ATTACKS
-                    else x[0],
+                    side_effect=lambda x, at=attack_type: (
+                        at if x == BuiltinNamespaceCorruptor.ENHANCED_ATTACKS else x[0]
+                    ),
                 ):
                     with patch("random.randint", return_value=9000):
                         mutator = BuiltinNamespaceCorruptor()
@@ -1458,9 +1466,9 @@ class TestBloomFilterSaturator(unittest.TestCase):
         with patch("random.random", side_effect=[0.1, 0.1, 0.1]):
             with patch(
                 "random.choice",
-                side_effect=lambda x: "saturation_probe"
-                if x == BloomFilterSaturator.ENHANCED_ATTACKS
-                else x[0],
+                side_effect=lambda x: (
+                    "saturation_probe" if x == BloomFilterSaturator.ENHANCED_ATTACKS else x[0]
+                ),
             ):
                 with patch("random.randint", return_value=5000):
                     mutator = BloomFilterSaturator()
@@ -1490,9 +1498,9 @@ class TestBloomFilterSaturator(unittest.TestCase):
         with patch("random.random", side_effect=[0.1, 0.1, 0.1]):
             with patch(
                 "random.choice",
-                side_effect=lambda x: "strategic_global_mod"
-                if x == BloomFilterSaturator.ENHANCED_ATTACKS
-                else x[0],
+                side_effect=lambda x: (
+                    "strategic_global_mod" if x == BloomFilterSaturator.ENHANCED_ATTACKS else x[0]
+                ),
             ):
                 with patch("random.randint", return_value=6000):
                     mutator = BloomFilterSaturator()
@@ -1522,9 +1530,9 @@ class TestBloomFilterSaturator(unittest.TestCase):
         with patch("random.random", side_effect=[0.1, 0.1, 0.1]):
             with patch(
                 "random.choice",
-                side_effect=lambda x: "multi_phase_attack"
-                if x == BloomFilterSaturator.ENHANCED_ATTACKS
-                else x[0],
+                side_effect=lambda x: (
+                    "multi_phase_attack" if x == BloomFilterSaturator.ENHANCED_ATTACKS else x[0]
+                ),
             ):
                 with patch("random.randint", return_value=7000):
                     mutator = BloomFilterSaturator()
@@ -1557,9 +1565,9 @@ class TestBloomFilterSaturator(unittest.TestCase):
             with patch("random.random", side_effect=[0.1, 0.1, 0.1]):
                 with patch(
                     "random.choice",
-                    side_effect=lambda x, at=attack_type: at
-                    if x == BloomFilterSaturator.ENHANCED_ATTACKS
-                    else x[0],
+                    side_effect=lambda x, at=attack_type: (
+                        at if x == BloomFilterSaturator.ENHANCED_ATTACKS else x[0]
+                    ),
                 ):
                     with patch("random.randint", return_value=9000):
                         mutator = BloomFilterSaturator()

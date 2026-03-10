@@ -709,7 +709,7 @@ def scan_crashes(crashes_dir: Path) -> list[dict]:
         try:
             with open(metadata_path) as f:
                 meta = json.load(f)
-        except (json.JSONDecodeError, OSError):
+        except json.JSONDecodeError, OSError:
             continue
 
         crash_info: dict = {
@@ -1661,7 +1661,7 @@ def render_ancestry_svg(
             timeout=60,
         )
         return result.stdout if result.returncode == 0 else None
-    except (subprocess.TimeoutExpired, OSError):
+    except subprocess.TimeoutExpired, OSError:
         return None
 
 

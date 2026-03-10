@@ -31,8 +31,8 @@ class TestApplyMutationStrategy(unittest.TestCase):
         # Mock score_tracker with record_attempt wired to real attempts dict
         self.controller.score_tracker = MagicMock()
         self.controller.score_tracker.attempts = defaultdict(int)
-        self.controller.score_tracker.record_attempt.side_effect = (
-            lambda name: self.controller.score_tracker.attempts.__setitem__(
+        self.controller.score_tracker.record_attempt.side_effect = lambda name: (
+            self.controller.score_tracker.attempts.__setitem__(
                 name, self.controller.score_tracker.attempts[name] + 1
             )
         )
@@ -304,8 +304,8 @@ class TestRunHavocStage(unittest.TestCase):
         # Mock score_tracker with record_attempt wired to real attempts dict
         self.controller.score_tracker = MagicMock()
         self.controller.score_tracker.attempts = defaultdict(int)
-        self.controller.score_tracker.record_attempt.side_effect = (
-            lambda name: self.controller.score_tracker.attempts.__setitem__(
+        self.controller.score_tracker.record_attempt.side_effect = lambda name: (
+            self.controller.score_tracker.attempts.__setitem__(
                 name, self.controller.score_tracker.attempts[name] + 1
             )
         )
@@ -516,8 +516,8 @@ class TestRunSniperStage(unittest.TestCase):
         # Mock score_tracker with record_attempt wired to real attempts dict
         self.controller.score_tracker = MagicMock()
         self.controller.score_tracker.attempts = defaultdict(int)
-        self.controller.score_tracker.record_attempt.side_effect = (
-            lambda name: self.controller.score_tracker.attempts.__setitem__(
+        self.controller.score_tracker.record_attempt.side_effect = lambda name: (
+            self.controller.score_tracker.attempts.__setitem__(
                 name, self.controller.score_tracker.attempts[name] + 1
             )
         )
@@ -585,8 +585,8 @@ class TestRunHelperSniperStage(unittest.TestCase):
         # Mock score_tracker with record_attempt wired to real attempts dict
         self.controller.score_tracker = MagicMock()
         self.controller.score_tracker.attempts = defaultdict(int)
-        self.controller.score_tracker.record_attempt.side_effect = (
-            lambda name: self.controller.score_tracker.attempts.__setitem__(
+        self.controller.score_tracker.record_attempt.side_effect = lambda name: (
+            self.controller.score_tracker.attempts.__setitem__(
                 name, self.controller.score_tracker.attempts[name] + 1
             )
         )
@@ -900,8 +900,8 @@ class TestHygienePass(unittest.TestCase):
         self.controller.ast_mutator.transformers = [MagicMock, MagicMock]
         self.controller.score_tracker = MagicMock()
         self.controller.score_tracker.attempts = defaultdict(int)
-        self.controller.score_tracker.record_attempt.side_effect = (
-            lambda name: self.controller.score_tracker.attempts.__setitem__(
+        self.controller.score_tracker.record_attempt.side_effect = lambda name: (
+            self.controller.score_tracker.attempts.__setitem__(
                 name, self.controller.score_tracker.attempts[name] + 1
             )
         )

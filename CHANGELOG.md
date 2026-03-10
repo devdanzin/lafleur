@@ -77,6 +77,7 @@ All notable changes to this project should be documented in this file.
 
 ### Fixed
 
+- Enabled ruff isort (`"I"` rule) for consistent import ordering across the codebase, by @devdanzin.
 - Fixed stat_key inconsistency: orchestrator checked `"timeout_count"` but execution.py returns `"timeouts_found"`, causing `HealthMonitor.record_timeout()` to never trigger, by @devdanzin.
 
 ### Enhanced

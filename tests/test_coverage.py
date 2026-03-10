@@ -5,9 +5,8 @@ Unit tests for lafleur/coverage.py
 
 import tempfile
 import unittest
-from pathlib import Path
-
 from collections import Counter
+from pathlib import Path
 
 from lafleur.coverage import (
     HARNESS_MARKER_REGEX,

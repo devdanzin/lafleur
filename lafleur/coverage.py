@@ -13,7 +13,7 @@ import pickle
 import re
 import secrets
 import sys
-from collections import defaultdict, Counter
+from collections import Counter, defaultdict
 from enum import Enum, auto
 from pathlib import Path
 from typing import Any, Callable, TypedDict

@@ -8,8 +8,8 @@ This is useful for creating a dedicated CPython build for fuzzing, increasing
 the chances of triggering JIT-specific behavior and bugs.
 """
 
-import re
 import argparse
+import re
 from pathlib import Path
 from typing import Sequence
 

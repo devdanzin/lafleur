@@ -1,16 +1,17 @@
-import subprocess
-import unittest
-import shutil
-import tempfile
 import json
+import shutil
+import subprocess
+import tempfile
+import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
+
 from lafleur.minimize import (
     _make_repro_env,
-    measure_execution_time,
-    rename_harnesses,
     extract_grep_pattern,
+    measure_execution_time,
     minimize_session,
+    rename_harnesses,
 )
 
 

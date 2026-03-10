@@ -430,13 +430,13 @@ class TestReturncodeValidation(unittest.TestCase):
 
         from io import StringIO
 
-        captured_stdout = StringIO()
-        with patch("sys.stdout", captured_stdout):
+        captured_stderr = StringIO()
+        with patch("sys.stderr", captured_stderr):
             with self.assertRaises(SystemExit) as ctx:
                 minimize_session(self.crash_dir, "python3", force_overwrite=True)
 
         self.assertEqual(ctx.exception.code, 1)
-        self.assertIn("returncode", captured_stdout.getvalue().lower())
+        self.assertIn("returncode", captured_stderr.getvalue().lower())
 
     def test_zero_returncode_exits(self):
         """Test that returncode 0 in metadata causes exit."""
@@ -447,13 +447,13 @@ class TestReturncodeValidation(unittest.TestCase):
 
         from io import StringIO
 
-        captured_stdout = StringIO()
-        with patch("sys.stdout", captured_stdout):
+        captured_stderr = StringIO()
+        with patch("sys.stderr", captured_stderr):
             with self.assertRaises(SystemExit) as ctx:
                 minimize_session(self.crash_dir, "python3", force_overwrite=True)
 
         self.assertEqual(ctx.exception.code, 1)
-        self.assertIn("returncode", captured_stdout.getvalue().lower())
+        self.assertIn("returncode", captured_stderr.getvalue().lower())
 
     @patch("lafleur.minimize.run_session")
     @patch("lafleur.minimize.shutil.which")

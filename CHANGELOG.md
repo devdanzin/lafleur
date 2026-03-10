@@ -77,6 +77,8 @@ All notable changes to this project should be documented in this file.
 
 ### Fixed
 
+- Fixed error messages in `minimize.py` printing to stdout instead of stderr, by @devdanzin.
+- Fixed timezone-naive `datetime.now()` calls in `triage.py` to use `datetime.now(timezone.utc)` for consistency with the rest of the codebase, by @devdanzin.
 - Fixed stat_key inconsistency: orchestrator checked `"timeout_count"` but execution.py returns `"timeouts_found"`, causing `HealthMonitor.record_timeout()` to never trigger, by @devdanzin.
 
 ### Enhanced

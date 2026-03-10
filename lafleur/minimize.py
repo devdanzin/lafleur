@@ -142,20 +142,26 @@ def _load_and_validate_metadata(crash_dir: Path) -> tuple[dict, str, list[Path]]
     """
     metadata_path = crash_dir / "metadata.json"
     if not metadata_path.exists():
-        print("[!] Error: metadata.json not found. Cannot minimize.")
+        print("[!] Error: metadata.json not found. Cannot minimize.", file=sys.stderr)
         sys.exit(1)
 
     try:
         metadata = json.loads(metadata_path.read_text())
     except json.JSONDecodeError:
-        print("[!] Error: Invalid metadata.json.")
+        print("[!] Error: Invalid metadata.json.", file=sys.stderr)
         sys.exit(1)
 
     # Validate that we have a non-zero crash return code
     target_returncode = metadata.get("returncode")
     if target_returncode is None or target_returncode == 0:
-        print("[!] Error: metadata.json has no crash return code (returncode is missing or 0).")
-        print("    Cannot determine crash reproduction without a non-zero exit code.")
+        print(
+            "[!] Error: metadata.json has no crash return code (returncode is missing or 0).",
+            file=sys.stderr,
+        )
+        print(
+            "    Cannot determine crash reproduction without a non-zero exit code.",
+            file=sys.stderr,
+        )
         sys.exit(1)
 
     grep_pattern = extract_grep_pattern(metadata)
@@ -164,7 +170,7 @@ def _load_and_validate_metadata(crash_dir: Path) -> tuple[dict, str, list[Path]]
 
     script_files = sorted([f for f in crash_dir.glob("*.py") if f.name != "combined_repro.py"])
     if not script_files:
-        print("[!] No script files found in bundle.")
+        print("[!] No script files found in bundle.", file=sys.stderr)
         sys.exit(1)
 
     return metadata, grep_pattern, script_files
@@ -396,8 +402,14 @@ def minimize_session(crash_dir: Path, target_python: str, force_overwrite: bool)
     # Initial Reproduction Check
     print("[*] Verifying initial crash reproduction...")
     if not check_reproduction(script_files, metadata, grep_pattern, target_python):
-        print(f"[!] Error: Crash does NOT reproduce with the provided python ({target_python}).")
-        print("    Check that you are using the correct JIT-enabled build.")
+        print(
+            f"[!] Error: Crash does NOT reproduce with the provided python ({target_python}).",
+            file=sys.stderr,
+        )
+        print(
+            "    Check that you are using the correct JIT-enabled build.",
+            file=sys.stderr,
+        )
         sys.exit(1)
 
     # Stage 1: Script Minimization
@@ -465,7 +477,7 @@ def main():
     args = parser.parse_args()
 
     if not args.crash_dir.exists():
-        print(f"Error: Directory {args.crash_dir} does not exist.")
+        print(f"Error: Directory {args.crash_dir} does not exist.", file=sys.stderr)
         sys.exit(1)
 
     minimize_session(args.crash_dir, args.target_python, args.force_overwrite)

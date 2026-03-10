@@ -106,7 +106,7 @@ def main() -> None:
     try:
         with open(args.input_file, "rb") as f:
             state = pickle.load(f)
-    except (pickle.UnpicklingError, IOError) as e:
+    except (pickle.UnpicklingError, OSError) as e:
         print(f"Error: Could not read pickle file: {e}", file=sys.stderr)
         sys.exit(1)
 

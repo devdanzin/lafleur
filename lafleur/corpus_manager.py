@@ -201,7 +201,7 @@ class CorpusManager:
                 file_id = int(Path(filename).stem)
                 if file_id > current_max_id:
                     current_max_id = file_id
-            except (ValueError, IndexError):
+            except ValueError, IndexError:
                 continue  # Ignore non-integer filenames
 
         if current_max_id > self.corpus_file_counter:
@@ -304,7 +304,7 @@ class CorpusManager:
                         print(f"[~] File content has changed for {filename}. Re-analyzing.")
                         del self.coverage_state.state["per_file_coverage"][filename]
                         files_to_analyze.add(filename)
-                except (IOError, KeyError) as e:
+                except (OSError, KeyError) as e:
                     print(f"[!] Error processing existing file {filename}: {e}. Re-analyzing.")
                     if filename in self.coverage_state.state["per_file_coverage"]:
                         del self.coverage_state.state["per_file_coverage"][filename]

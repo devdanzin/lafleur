@@ -233,7 +233,7 @@ class MutatorScoreTracker:
         try:
             with open(CRASH_ATTRIBUTION_LOG, "a", encoding="utf-8") as f:
                 f.write(json.dumps(entry) + "\n")
-        except IOError as e:
+        except OSError as e:
             print(
                 f"[!] Warning: Could not write crash attribution log: {e}",
                 file=sys.stderr,

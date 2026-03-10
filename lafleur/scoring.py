@@ -609,7 +609,7 @@ class ScoringManager:
         log_content = ""
         try:
             log_content = exec_result.log_path.read_text()
-        except IOError as e:
+        except OSError as e:
             print(f"  [!] Warning: Could not read log file for analysis: {e}", file=sys.stderr)
 
         if self.artifact_manager.check_for_crash(

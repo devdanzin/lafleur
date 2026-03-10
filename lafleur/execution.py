@@ -504,7 +504,7 @@ class ExecutionManager:
                                 selection = self.corpus_manager.select_parent()
                                 if selection:
                                     polluters.append(selection[0])
-                        except (AttributeError, IndexError):
+                        except AttributeError, IndexError:
                             # Corpus empty or select_parent not available
                             pass
 

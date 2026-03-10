@@ -77,6 +77,7 @@ All notable changes to this project should be documented in this file.
 
 ### Fixed
 
+- Removed redundant `from __future__ import annotations` from 17 files (16 source + 1 test) since the project targets Python 3.14+ where PEP 649 deferred evaluation is the default, by @devdanzin.
 - Fixed stat_key inconsistency: orchestrator checked `"timeout_count"` but execution.py returns `"timeouts_found"`, causing `HealthMonitor.record_timeout()` to never trigger, by @devdanzin.
 
 ### Enhanced

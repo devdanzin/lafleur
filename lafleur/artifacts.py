@@ -6,8 +6,6 @@ This module provides:
 - TelemetryManager: run statistics persistence and time-series logging
 """
 
-from __future__ import annotations
-
 import difflib
 import json
 import random

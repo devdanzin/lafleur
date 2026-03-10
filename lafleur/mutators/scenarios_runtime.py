@@ -8,8 +8,6 @@ versioning caches, using frame introspection to corrupt local variables
 from outside their scope, and triggering side effects via object finalizers.
 """
 
-from __future__ import annotations
-
 import ast
 import random
 import sys

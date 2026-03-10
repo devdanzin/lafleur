@@ -5,8 +5,6 @@ This module provides a SQLite-based registry for storing crash fingerprints,
 sightings across fuzzing runs, and links to reported GitHub issues.
 """
 
-from __future__ import annotations
-
 import sqlite3
 from contextlib import contextmanager
 from pathlib import Path

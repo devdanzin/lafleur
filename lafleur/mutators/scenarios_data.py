@@ -8,8 +8,6 @@ lying equality), corrupting built-in namespaces, and creating scenarios that
 misuse collection primitives like iterators and slices.
 """
 
-from __future__ import annotations
-
 import ast
 import random
 import sys

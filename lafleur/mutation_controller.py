@@ -8,8 +8,6 @@ This module provides the MutationController class ("The Alchemist") which handle
 - Extracting boilerplate and core code from source files
 """
 
-from __future__ import annotations
-
 import ast
 import copy
 import math

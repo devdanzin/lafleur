@@ -7,8 +7,6 @@ perturbing constants, changing container types, and injecting basic control
 flow structures like loops and guards.
 """
 
-from __future__ import annotations
-
 import ast
 import builtins
 import copy
@@ -173,7 +171,7 @@ class LiteralTypeSwapMutator(ast.NodeTransformer):
             # Try converting to int (may fail for inf/nan)
             try:
                 replacements.append(int(val))
-            except (ValueError, OverflowError):
+            except ValueError, OverflowError:
                 pass
             replacements.append(str(val))
 
@@ -334,7 +332,7 @@ class BoundaryValuesMutator(ast.NodeTransformer):
             try:
                 new_node = ast.parse(new_value_str, mode="eval").body
                 return new_node
-            except (SyntaxError, ValueError):
+            except SyntaxError, ValueError:
                 return node
         return node
 

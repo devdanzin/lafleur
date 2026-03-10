@@ -7,8 +7,6 @@ file back to its seed) and descendants (show what a file produced) modes.
 Output formats: Graphviz DOT (default), JSON, or rendered images (PNG/SVG/PDF).
 """
 
-from __future__ import annotations
-
 import argparse
 import hashlib
 import json
@@ -709,7 +707,7 @@ def scan_crashes(crashes_dir: Path) -> list[dict]:
         try:
             with open(metadata_path) as f:
                 meta = json.load(f)
-        except (json.JSONDecodeError, OSError):
+        except json.JSONDecodeError, OSError:
             continue
 
         crash_info: dict = {
@@ -1661,7 +1659,7 @@ def render_ancestry_svg(
             timeout=60,
         )
         return result.stdout if result.returncode == 0 else None
-    except (subprocess.TimeoutExpired, OSError):
+    except subprocess.TimeoutExpired, OSError:
         return None
 
 

@@ -8,8 +8,6 @@ to break traces, and generating loops with many side-exits to stress the JIT's
 guard emission and bailout mechanisms.
 """
 
-from __future__ import annotations
-
 import ast
 import random
 import sys
@@ -1264,7 +1262,7 @@ class PatternMatchingChaosMutator(ast.NodeTransformer):
             ast.fix_missing_locations(match_node)
             return match_node
 
-        except (AttributeError, IndexError):
+        except AttributeError, IndexError:
             return None
 
     def visit_For(self, node: ast.For) -> ast.stmt:
@@ -1327,7 +1325,7 @@ class PatternMatchingChaosMutator(ast.NodeTransformer):
             ast.fix_missing_locations(new_for)
             return new_for
 
-        except (AttributeError, IndexError):
+        except AttributeError, IndexError:
             return None
 
     def visit_FunctionDef(self, node: ast.FunctionDef) -> ast.FunctionDef:

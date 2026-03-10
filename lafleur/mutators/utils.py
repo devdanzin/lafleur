@@ -8,8 +8,6 @@ testing, and a library of generator functions for creating "evil" objects
 with stateful or contract-violating behaviors used by various scenarios.
 """
 
-from __future__ import annotations
-
 import ast
 import random
 import sys

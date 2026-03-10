@@ -973,7 +973,7 @@ LAFLEUR FUZZER RUN
 - Script Timeout:    {timeout} seconds
 --------------------------------------------------------------------------------
 Initial Stats:
-{json.dumps(start_stats, indent=4)}
+{json.dumps(start_stats, indent=2)}
 ================================================================================
 
 """)
@@ -1012,7 +1012,7 @@ def _format_run_summary(
 - Execs per Second: {exec_per_sec:.2f}
 
 --- Final Campaign Stats ---
-{json.dumps(end_stats, indent=4)}
+{json.dumps(end_stats, indent=2)}
 ================================================================================
 """)
     return header + body

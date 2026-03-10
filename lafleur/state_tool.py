@@ -126,7 +126,7 @@ def main() -> None:
         print(json.dumps(migrated_state, indent=2, default=set_to_list))
 
     elif args.output_file.suffix == ".json":
-        with open(args.output_file, "w") as json_f:
+        with open(args.output_file, "w", encoding="utf-8") as json_f:
             json.dump(migrated_state, json_f, indent=2, default=set_to_list)
         print(f"State saved as JSON to {args.output_file}")
 

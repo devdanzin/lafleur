@@ -74,7 +74,7 @@ class MutatorScoreTracker:
         """Load the last known scores and attempts from a file."""
         if MUTATOR_SCORES_FILE.is_file():
             try:
-                with open(MUTATOR_SCORES_FILE, "r") as f:
+                with open(MUTATOR_SCORES_FILE, "r", encoding="utf-8") as f:
                     data = json.load(f)
                 self.scores = defaultdict(float, data.get("scores", {}))
                 self.attempts = defaultdict(int, data.get("attempts", {}))
@@ -96,7 +96,7 @@ class MutatorScoreTracker:
             "attempts": dict(self.attempts),
             "attempt_counter": self._attempt_counter,
         }
-        with open(MUTATOR_SCORES_FILE, "w") as f:
+        with open(MUTATOR_SCORES_FILE, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2)
 
     def record_attempt(self, name: str) -> None:
@@ -252,5 +252,5 @@ class MutatorScoreTracker:
             "attempts": dict(self.attempts),
             "success_rates": success_rates,
         }
-        with open(MUTATOR_TELEMETRY_LOG, "a") as f:
+        with open(MUTATOR_TELEMETRY_LOG, "a", encoding="utf-8") as f:
             f.write(json.dumps(datapoint) + "\n")

@@ -77,6 +77,7 @@ All notable changes to this project should be documented in this file.
 
 ### Fixed
 
+- Added explicit `encoding="utf-8"` to 10 text-mode `open()` calls across `learning.py`, `corpus_manager.py`, `execution.py`, `lineage.py`, and `state_tool.py`, and standardized JSON indent to `indent=2` in `triage.py` and `orchestrator.py`, by @devdanzin.
 - Fixed stat_key inconsistency: orchestrator checked `"timeout_count"` but execution.py returns `"timeouts_found"`, causing `HealthMonitor.record_timeout()` to never trigger, by @devdanzin.
 
 ### Enhanced

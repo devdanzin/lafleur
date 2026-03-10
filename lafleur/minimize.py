@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 Advanced Session Minimizer for Lafleur crash bundles.
 

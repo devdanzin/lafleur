@@ -234,7 +234,7 @@ def get_git_info() -> dict[str, str | bool]:
         is_dirty = bool(result.stdout.strip()) if result.returncode == 0 else False
 
         return {"commit": commit_hash, "dirty": is_dirty}
-    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+    except subprocess.TimeoutExpired, FileNotFoundError, OSError:
         return {"commit": "unknown", "dirty": False}
 
 

@@ -197,7 +197,7 @@ def _emit_stats(stats: dict) -> None:
             try:
                 json.dumps(v)
                 safe[k] = v
-            except (TypeError, ValueError, OverflowError):
+            except TypeError, ValueError, OverflowError:
                 safe[k] = repr(v)
         safe["_serialization_fallback"] = True
         print(f"[DRIVER:STATS] {json.dumps(safe)}", flush=True)
@@ -274,7 +274,7 @@ def snapshot_executor_state(namespace: dict) -> dict[tuple[int, int], int]:
                                 id(executor), ctypes.POINTER(PyExecutorObject)
                             )
                             snapshot[(id(code), offset)] = executor_ptr.contents.exit_count
-                    except (ValueError, TypeError):
+                    except ValueError, TypeError:
                         pass
 
     return snapshot
@@ -429,7 +429,7 @@ def get_jit_stats(namespace: dict, baseline: dict[tuple[int, int], int] | None =
                         if executor:
                             executor_count += 1
                             inspect_executor(executor, id(code), offset)
-                    except (ValueError, TypeError):
+                    except ValueError, TypeError:
                         pass
 
     result = {

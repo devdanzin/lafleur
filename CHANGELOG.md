@@ -77,6 +77,7 @@ All notable changes to this project should be documented in this file.
 
 ### Fixed
 
+- Removed unnecessary `#!/usr/bin/env python3` shebangs from 5 source files and 18 test files since all entry points are managed by `pyproject.toml` console_scripts, by @devdanzin.
 - Fixed stat_key inconsistency: orchestrator checked `"timeout_count"` but execution.py returns `"timeouts_found"`, causing `HealthMonitor.record_timeout()` to never trigger, by @devdanzin.
 
 ### Enhanced

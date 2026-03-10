@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 A utility script to apply aggressive JIT settings to the CPython source code.
 

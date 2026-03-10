@@ -23,7 +23,7 @@ def load_json_file(path: Path) -> dict[str, Any] | None:
     try:
         with open(path, encoding="utf-8") as f:
             return json.load(f)
-    except (FileNotFoundError, json.JSONDecodeError, OSError):
+    except FileNotFoundError, json.JSONDecodeError, OSError:
         return None
 
 
@@ -46,7 +46,7 @@ def get_revision_date(revision: str) -> int | None:
         )
         if result.returncode == 0:
             return int(result.stdout.strip())
-    except (subprocess.TimeoutExpired, ValueError, OSError):
+    except subprocess.TimeoutExpired, ValueError, OSError:
         pass
     return None
 
@@ -60,7 +60,7 @@ def parse_iso_timestamp(timestamp_str: str) -> int | None:
             timestamp_str = timestamp_str[:-1] + "+00:00"
         dt = datetime.fromisoformat(timestamp_str)
         return int(dt.timestamp())
-    except (ValueError, TypeError):
+    except ValueError, TypeError:
         return None
 
 
@@ -278,7 +278,7 @@ def import_campaign(args: argparse.Namespace) -> None:
                 if len(rev_part) >= 8:
                     cpython_revision = rev_part
                     revision_date = get_revision_date(cpython_revision)
-            except (IndexError, ValueError):
+            except IndexError, ValueError:
                 pass
 
         # Fall back to start_time for revision_date proxy

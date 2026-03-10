@@ -201,7 +201,7 @@ class CorpusManager:
                 file_id = int(Path(filename).stem)
                 if file_id > current_max_id:
                     current_max_id = file_id
-            except (ValueError, IndexError):
+            except ValueError, IndexError:
                 continue  # Ignore non-integer filenames
 
         if current_max_id > self.corpus_file_counter:

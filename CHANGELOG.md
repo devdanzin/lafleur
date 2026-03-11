@@ -93,6 +93,7 @@ All notable changes to this project should be documented in this file.
 
 ### Enhanced
 
+- Standardized CLI path arguments to `type=Path` in `orchestrator.py`, `jit_tuner.py`, `triage.py`, and `report.py`, removing redundant `Path()` wrapping at call sites, by @devdanzin.
 - Sent all error/warning output in `minimize.py` to stderr instead of stdout, by @devdanzin.
 - Narrowed `_compose_session` except clause from `AttributeError, IndexError` to just `IndexError` in `execution.py`, by @devdanzin.
 - Fixed misleading docstring on `genStatefulGetitemObject` in `mutators/utils.py` (said `__iter__`, actually `__getitem__`), by @devdanzin.

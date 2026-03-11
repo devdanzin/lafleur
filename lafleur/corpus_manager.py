@@ -132,7 +132,7 @@ class CorpusManager:
         self,
         coverage_state: CoverageManager,
         run_stats: dict[str, Any],
-        fusil_path: str,
+        fusil_path: str | Path | None,
         get_boilerplate_func: Callable[..., str],
         execution_timeout: int = 10,
         target_python: str = sys.executable,

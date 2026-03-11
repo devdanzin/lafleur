@@ -122,7 +122,7 @@ class LafleurOrchestrator:
 
     def __init__(
         self,
-        fusil_path: str,
+        fusil_path: str | Path | None,
         min_corpus_files: int = 1,
         differential_testing: bool = False,
         timeout: int = 10,
@@ -1026,7 +1026,7 @@ def main() -> None:
     )
     parser.add_argument(
         "--fusil-path",
-        type=str,
+        type=Path,
         default=None,
         help="The absolute path to the classic fusil executable (fusil-python-threaded).",
     )

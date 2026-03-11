@@ -120,7 +120,7 @@ def main() -> None:
     )
     parser.add_argument(
         "cpython_dir",
-        type=str,
+        type=Path,
         help="Path to the root of the CPython source repository.",
     )
     parser.add_argument(
@@ -142,8 +142,7 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    cpython_src_path = Path(args.cpython_dir)
-    apply_jit_tweaks(cpython_src_path, args.dry_run, args.disabled_files, args.disabled_tweaks)
+    apply_jit_tweaks(args.cpython_dir, args.dry_run, args.disabled_files, args.disabled_tweaks)
     print("[*] Done.")
 
 

@@ -732,13 +732,14 @@ Examples:
     parser.add_argument(
         "instance_dir",
         nargs="?",
+        type=Path,
         default=".",
         help="Path to the fuzzing instance directory (default: current directory)",
     )
 
     args = parser.parse_args()
 
-    instance_dir = Path(args.instance_dir).resolve()
+    instance_dir = args.instance_dir.resolve()
 
     if not instance_dir.exists():
         print(f"Error: Instance directory does not exist: {instance_dir}", file=sys.stderr)

@@ -15,13 +15,11 @@ from lafleur.campaign import (
     load_health_summary,
     load_timeout_summary,
     load_crash_attribution_summary,
-    parse_timestamp,
-    format_duration,
-    discover_instances,
     main,
     CrashInfo,
     HealthSummary,
 )
+from lafleur.utils import discover_instances, format_duration, parse_timestamp
 
 
 class TestLoadJsonFile(unittest.TestCase):

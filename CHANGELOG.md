@@ -91,6 +91,7 @@ All notable changes to this project should be documented in this file.
 
 ### Enhanced
 
+- Consolidated duplicated `parse_timestamp`, `format_duration`, and `discover_instances` utilities into `lafleur/utils.py`, removing copies from `report.py`, `campaign.py`, and `triage.py`, by @devdanzin.
 - Removed obsolete `@unittest.skipIf(sys.version_info < (3, 14))` guards from t-string tests in `test_generic.py`, since Python 3.14+ is the minimum supported version, by @devdanzin.
 - Extracted `_decorate_special_node` and `_prune_by_strahler` helpers in `lineage.py`, reducing nesting in `decorate` and `extract_forest`, by @devdanzin.
 - Decomposed `InterestingnessScorer.calculate_score` into `_score_timing`, `_score_jit_vitals`, and `_score_coverage` private methods in `scoring.py`, by @devdanzin.

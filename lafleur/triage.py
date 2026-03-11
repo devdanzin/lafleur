@@ -589,6 +589,38 @@ def import_issues(args: argparse.Namespace) -> None:
         sys.exit(1)
 
 
+class _EOFReceived(Exception):
+    """Sentinel raised when EOF is received during interactive prompts."""
+
+
+def _prompt_issue_number() -> int:
+    """Prompt for and validate an issue number. Raises _EOFReceived on EOF."""
+    while True:
+        try:
+            issue_input = input("Issue Number: ").strip()
+            if not issue_input:
+                print("Issue number is required.")
+                continue
+            return int(issue_input)
+        except ValueError:
+            print("Please enter a valid integer.")
+        except EOFError:
+            raise _EOFReceived
+
+
+def _prompt_note(registry: CrashRegistry, fingerprint: str) -> None:
+    """Prompt for a note and save it. Raises _EOFReceived on EOF."""
+    try:
+        note_text = input("Note: ").strip()
+        if note_text:
+            registry.add_note(fingerprint, note_text)
+            print("[+] Note saved")
+        else:
+            print("[~] No note added")
+    except EOFError:
+        raise _EOFReceived
+
+
 def run_interactive_triage(args: argparse.Namespace) -> None:
     """Run interactive triage loop for NEW crashes."""
     registry = CrashRegistry(args.db)
@@ -617,34 +649,16 @@ def run_interactive_triage(args: argparse.Namespace) -> None:
 
             # Get user action
             while True:
-                try:
-                    action = (
-                        input(
-                            "\nAction? [R]eport / [I]gnore / [M]ark Fixed / [N]ote / [S]kip / [Q]uit > "
-                        )
-                        .strip()
-                        .lower()
+                action = (
+                    input(
+                        "\nAction? [R]eport / [I]gnore / [M]ark Fixed / [N]ote / [S]kip / [Q]uit > "
                     )
-                except EOFError:
-                    print("\n[!] EOF received, exiting.")
-                    return
+                    .strip()
+                    .lower()
+                )
 
                 if action in ("r", "report"):
-                    # Link to issue
-                    while True:
-                        try:
-                            issue_input = input("Issue Number: ").strip()
-                            if not issue_input:
-                                print("Issue number is required.")
-                                continue
-                            issue_num = int(issue_input)
-                            break
-                        except ValueError:
-                            print("Please enter a valid integer.")
-                        except EOFError:
-                            print("\n[!] EOF received, exiting.")
-                            return
-
+                    issue_num = _prompt_issue_number()
                     registry.link_crash_to_issue(fingerprint, issue_num)
                     registry.set_triage_status(fingerprint, "REPORTED")
                     print(f"[+] Linked to Issue #{issue_num}")
@@ -661,17 +675,7 @@ def run_interactive_triage(args: argparse.Namespace) -> None:
                     break
 
                 elif action in ("n", "note"):
-                    try:
-                        note_text = input("Note: ").strip()
-                        if note_text:
-                            registry.add_note(fingerprint, note_text)
-                            print("[+] Note saved")
-                        else:
-                            print("[~] No note added")
-                    except EOFError:
-                        print("\n[!] EOF received, exiting.")
-                        return
-                    # Continue prompting for action (don't break)
+                    _prompt_note(registry, fingerprint)
 
                 elif action in ("s", "skip"):
                     print("[~] Skipped")
@@ -686,7 +690,7 @@ def run_interactive_triage(args: argparse.Namespace) -> None:
 
             print()  # Blank line between crashes
 
-    except KeyboardInterrupt:
+    except KeyboardInterrupt, _EOFReceived, EOFError:
         print("\n\n[!] Interrupted. Exiting triage loop.")
         return
 
@@ -736,34 +740,16 @@ def run_review_triage(args: argparse.Namespace) -> None:
 
             # Get user action
             while True:
-                try:
-                    action = (
-                        input(
-                            "\nAction? [L]ink issue / [U]nlink / [S]tatus / [N]ote / [K]eep / [Q]uit > "
-                        )
-                        .strip()
-                        .lower()
+                action = (
+                    input(
+                        "\nAction? [L]ink issue / [U]nlink / [S]tatus / [N]ote / [K]eep / [Q]uit > "
                     )
-                except EOFError:
-                    print("\n[!] EOF received, exiting.")
-                    return
+                    .strip()
+                    .lower()
+                )
 
                 if action in ("l", "link"):
-                    # Link to a (different) issue
-                    while True:
-                        try:
-                            issue_input = input("Issue Number: ").strip()
-                            if not issue_input:
-                                print("Issue number is required.")
-                                continue
-                            new_issue_num = int(issue_input)
-                            break
-                        except ValueError:
-                            print("Please enter a valid integer.")
-                        except EOFError:
-                            print("\n[!] EOF received, exiting.")
-                            return
-
+                    new_issue_num = _prompt_issue_number()
                     registry.link_crash_to_issue(fingerprint, new_issue_num)
                     print(f"[+] Linked to Issue #{new_issue_num}")
                     break
@@ -778,32 +764,19 @@ def run_review_triage(args: argparse.Namespace) -> None:
 
                 elif action in ("s", "status"):
                     print("\nAvailable statuses: NEW, TRIAGED, REPORTED, IGNORED, FIXED")
-                    try:
-                        new_status = input("New status: ").strip().upper()
-                        if new_status in ("NEW", "TRIAGED", "REPORTED", "IGNORED", "FIXED"):
-                            registry.set_triage_status(fingerprint, new_status)
-                            print(f"[+] Status changed to {new_status}")
-                            break
-                        else:
-                            print(
-                                "[!] Invalid status. Choose from: NEW, TRIAGED, REPORTED, IGNORED, FIXED"
-                            )
-                    except EOFError:
-                        print("\n[!] EOF received, exiting.")
-                        return
+                    new_status = input("New status: ").strip().upper()
+                    if new_status in ("NEW", "TRIAGED", "REPORTED", "IGNORED", "FIXED"):
+                        registry.set_triage_status(fingerprint, new_status)
+                        print(f"[+] Status changed to {new_status}")
+                        break
+                    else:
+                        print(
+                            "[!] Invalid status. Choose from:"
+                            " NEW, TRIAGED, REPORTED, IGNORED, FIXED"
+                        )
 
                 elif action in ("n", "note"):
-                    try:
-                        note_text = input("Note: ").strip()
-                        if note_text:
-                            registry.add_note(fingerprint, note_text)
-                            print("[+] Note saved")
-                        else:
-                            print("[~] No note added")
-                    except EOFError:
-                        print("\n[!] EOF received, exiting.")
-                        return
-                    # Continue prompting for action (don't break)
+                    _prompt_note(registry, fingerprint)
 
                 elif action in ("k", "keep"):
                     print("[~] No changes made")
@@ -818,7 +791,7 @@ def run_review_triage(args: argparse.Namespace) -> None:
 
             print()  # Blank line between crashes
 
-    except KeyboardInterrupt:
+    except KeyboardInterrupt, _EOFReceived, EOFError:
         print("\n\n[!] Interrupted. Exiting review loop.")
         return
 

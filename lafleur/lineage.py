@@ -22,6 +22,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from statistics import mean
 
+from lafleur.types import CorpusFileMetadata
 from lafleur.utils import load_json_file
 
 # ---------------------------------------------------------------------------
@@ -163,7 +164,7 @@ def load_coverage_state(state_path: Path) -> dict:
         sys.exit(1)
 
 
-def build_adjacency_graph(per_file_coverage: dict[str, dict]) -> LineageGraph:
+def build_adjacency_graph(per_file_coverage: dict[str, CorpusFileMetadata]) -> LineageGraph:
     """Build the full adjacency graph from per_file_coverage metadata."""
     children: dict[str, list[str]] = defaultdict(list)
     parent: dict[str, str | None] = {}
@@ -427,7 +428,7 @@ def extract_mrca(graph: LineageGraph, targets: list[str]) -> Subgraph:
 
 def resolve_session_scripts(
     crash_dir: Path,
-    per_file_coverage: dict[str, dict],
+    per_file_coverage: dict[str, CorpusFileMetadata],
 ) -> dict[str, str | None]:
     """Map session scripts in a crash directory to their corpus filenames.
 
@@ -496,7 +497,7 @@ def resolve_session_scripts(
 def extract_session_ancestry(
     graph: LineageGraph,
     crash_dir: Path,
-    per_file_coverage: dict[str, dict],
+    per_file_coverage: dict[str, CorpusFileMetadata],
     attack_only: bool = False,
 ) -> Subgraph:
     """Extract the merged ancestry of all session scripts, converging on a crash node.
@@ -2011,7 +2012,9 @@ def print_forest_stats(
 # ---------------------------------------------------------------------------
 
 
-def resolve_target(target_str: str, per_file_coverage: dict[str, dict]) -> tuple[str | Path, str]:
+def resolve_target(
+    target_str: str, per_file_coverage: dict[str, CorpusFileMetadata]
+) -> tuple[str | Path, str]:
     """Resolve a CLI target argument to a corpus filename or crash dir Path.
 
     Handles:

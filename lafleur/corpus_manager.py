@@ -17,7 +17,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable
 
-from lafleur.coverage import save_coverage_state, CoverageManager
+from lafleur.coverage import HarnessCoverage, save_coverage_state, CoverageManager
 from lafleur.health import FILE_SIZE_WARNING_THRESHOLD
 from lafleur.types import CorpusFileMetadata, MutationInfo, NewCoverageResult
 from lafleur.utils import ExecutionResult, FUZZING_ENV
@@ -356,7 +356,7 @@ class CorpusManager:
     def add_new_file(
         self,
         core_code: str,
-        baseline_coverage: dict[str, Any],
+        baseline_coverage: dict[str, HarnessCoverage],
         execution_time_ms: int,
         parent_id: str | None,
         mutation_info: MutationInfo,

@@ -16,9 +16,12 @@ from collections import Counter
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, TypedDict
+from typing import TYPE_CHECKING, Any, TypedDict
 
 from lafleur.utils import load_json_file
+
+if TYPE_CHECKING:
+    from lafleur.registry import CrashRegistry
 
 
 class GlobalCorpusData(TypedDict):
@@ -812,7 +815,7 @@ class CampaignAggregator:
         else:
             return ("BAD", "Unhealthy")
 
-    def enrich_crashes_from_registry(self, registry: Any) -> None:
+    def enrich_crashes_from_registry(self, registry: CrashRegistry) -> None:
         """
         Enrich crash data with registry context.
 

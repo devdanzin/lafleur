@@ -153,7 +153,7 @@ class NewCoverageResult(AnalysisResult):
     """Returned when the child produced new coverage worth keeping."""
 
     core_code: str
-    baseline_coverage: dict
+    baseline_coverage: dict[str, HarnessCoverage]
     content_hash: str
     coverage_hash: str
     execution_time_ms: int

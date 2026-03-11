@@ -1265,5 +1265,286 @@ class TestHandleTimeoutSaveFlag(unittest.TestCase):
             mock_save.assert_called_once()
 
 
+class TestTruncateHugeLog(unittest.TestCase):
+    """Test ArtifactManager.truncate_huge_log method."""
+
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp()
+        self.fingerprinter = CrashFingerprinter()
+        self.manager = ArtifactManager(
+            crashes_dir=Path(self.tmpdir) / "crashes",
+            timeouts_dir=Path(self.tmpdir) / "timeouts",
+            divergences_dir=Path(self.tmpdir) / "divergences",
+            regressions_dir=Path(self.tmpdir) / "regressions",
+            fingerprinter=self.fingerprinter,
+            max_timeout_log_bytes=10_000_000,
+            max_crash_log_bytes=10_000_000,
+        )
+
+    def test_creates_truncated_file(self):
+        """Truncated file should exist with _truncated suffix."""
+        log_path = Path(self.tmpdir) / "big.log"
+        content = b"H" * 100_000 + b"M" * 200_000 + b"T" * 100_000
+        log_path.write_bytes(content)
+
+        result = self.manager.truncate_huge_log(log_path, len(content))
+
+        self.assertTrue(result.name.endswith("_truncated.log"))
+        self.assertTrue(result.exists())
+        self.assertFalse(log_path.exists())  # Original deleted
+
+    def test_truncated_file_contains_head_and_tail(self):
+        """Truncated file should contain head bytes, marker, and tail bytes."""
+        log_path = Path(self.tmpdir) / "big.log"
+        head_data = b"HEAD" * 20_000  # > TRUNCATE_HEAD_SIZE
+        tail_data = b"TAIL" * 100_000  # > TRUNCATE_TAIL_SIZE
+        content = head_data + tail_data
+        log_path.write_bytes(content)
+
+        result = self.manager.truncate_huge_log(log_path, len(content))
+        result_content = result.read_bytes()
+
+        self.assertIn(b"HEAD", result_content[:1000])
+        self.assertIn(b"TAIL", result_content[-1000:])
+        self.assertIn(b"Log Truncated by Lafleur", result_content)
+
+    def test_returns_original_on_error(self):
+        """Should return original path if truncation fails."""
+        log_path = Path(self.tmpdir) / "big.log"
+        log_path.write_bytes(b"data")
+
+        with patch("builtins.open", side_effect=PermissionError("denied")):
+            result = self.manager.truncate_huge_log(log_path, 4)
+
+        self.assertEqual(result, log_path)
+
+
+class TestCompressLogStream(unittest.TestCase):
+    """Test ArtifactManager.compress_log_stream method."""
+
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp()
+        self.fingerprinter = CrashFingerprinter()
+        self.manager = ArtifactManager(
+            crashes_dir=Path(self.tmpdir) / "crashes",
+            timeouts_dir=Path(self.tmpdir) / "timeouts",
+            divergences_dir=Path(self.tmpdir) / "divergences",
+            regressions_dir=Path(self.tmpdir) / "regressions",
+            fingerprinter=self.fingerprinter,
+            max_timeout_log_bytes=10_000_000,
+            max_crash_log_bytes=10_000_000,
+        )
+
+    def test_creates_compressed_file(self):
+        """Compressed file should exist with .log.zst suffix."""
+        log_path = Path(self.tmpdir) / "test.log"
+        log_path.write_text("x" * 10_000, encoding="utf-8")
+
+        result = self.manager.compress_log_stream(log_path)
+
+        self.assertEqual(result.suffix, ".zst")
+        self.assertTrue(result.exists())
+        self.assertFalse(log_path.exists())  # Original deleted
+
+    def test_compressed_is_smaller(self):
+        """Compressed file should be smaller than original for repetitive data."""
+        log_path = Path(self.tmpdir) / "test.log"
+        original_content = "repetitive data\n" * 10_000
+        log_path.write_text(original_content, encoding="utf-8")
+        original_size = log_path.stat().st_size
+
+        result = self.manager.compress_log_stream(log_path)
+
+        self.assertLess(result.stat().st_size, original_size)
+
+    def test_returns_original_on_error(self):
+        """Should return original path if compression fails."""
+        log_path = Path(self.tmpdir) / "test.log"
+        log_path.write_text("data", encoding="utf-8")
+
+        with patch("lafleur.artifacts.zstd.open", side_effect=OSError("disk full")):
+            result = self.manager.compress_log_stream(log_path)
+
+        self.assertEqual(result, log_path)
+        self.assertTrue(log_path.exists())
+
+
+class TestProcessLogFile(unittest.TestCase):
+    """Test ArtifactManager.process_log_file method."""
+
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp()
+        self.fingerprinter = CrashFingerprinter()
+        self.manager = ArtifactManager(
+            crashes_dir=Path(self.tmpdir) / "crashes",
+            timeouts_dir=Path(self.tmpdir) / "timeouts",
+            divergences_dir=Path(self.tmpdir) / "divergences",
+            regressions_dir=Path(self.tmpdir) / "regressions",
+            fingerprinter=self.fingerprinter,
+            max_timeout_log_bytes=10_000_000,
+            max_crash_log_bytes=10_000_000,
+        )
+
+    def test_small_file_kept_as_is(self):
+        """Files below compression threshold should be returned unchanged."""
+        log_path = Path(self.tmpdir) / "small.log"
+        log_path.write_text("small log", encoding="utf-8")
+
+        result = self.manager.process_log_file(log_path, 10_000_000)
+
+        self.assertEqual(result, log_path)
+
+    def test_missing_file_returns_path(self):
+        """Non-existent file should return the path unchanged."""
+        log_path = Path(self.tmpdir) / "nonexistent.log"
+
+        result = self.manager.process_log_file(log_path, 10_000_000)
+
+        self.assertEqual(result, log_path)
+
+    def test_large_file_compressed(self):
+        """Files above compression threshold but below max should be compressed."""
+        log_path = Path(self.tmpdir) / "large.log"
+        # Write > 1MB (TIMEOUT_LOG_COMPRESSION_THRESHOLD) but < max_size_bytes
+        log_path.write_text("x" * 2_000_000, encoding="utf-8")
+
+        with patch("sys.stderr", new_callable=io.StringIO):
+            result = self.manager.process_log_file(log_path, 10_000_000)
+
+        self.assertTrue(result.name.endswith(".zst"))
+
+    def test_huge_file_truncated(self):
+        """Files above max_size_bytes should be truncated."""
+        log_path = Path(self.tmpdir) / "huge.log"
+        # Write > max_size_bytes (500KB threshold for this test)
+        log_path.write_bytes(b"x" * 600_000)
+
+        with patch("sys.stderr", new_callable=io.StringIO):
+            result = self.manager.process_log_file(log_path, 500_000)
+
+        self.assertIn("_truncated", result.name)
+
+    def test_returns_original_on_stat_error(self):
+        """Should return original path on unexpected errors."""
+        log_path = Path(self.tmpdir) / "error.log"
+        log_path.write_text("data", encoding="utf-8")
+
+        with (
+            patch.object(Path, "stat", side_effect=OSError("disk error")),
+            patch("sys.stderr", new_callable=io.StringIO),
+        ):
+            result = self.manager.process_log_file(log_path, 10_000_000)
+
+        self.assertEqual(result, log_path)
+
+
+class TestClassifyCrash(unittest.TestCase):
+    """Test ArtifactManager._classify_crash method."""
+
+    def setUp(self):
+        self.fingerprinter = CrashFingerprinter()
+        self.health_monitor = unittest.mock.MagicMock()
+        self.manager = ArtifactManager(
+            crashes_dir=Path("/tmp/crashes"),
+            timeouts_dir=Path("/tmp/timeouts"),
+            divergences_dir=Path("/tmp/divergences"),
+            regressions_dir=Path("/tmp/regressions"),
+            fingerprinter=self.fingerprinter,
+            max_timeout_log_bytes=10_000_000,
+            max_crash_log_bytes=10_000_000,
+            health_monitor=self.health_monitor,
+        )
+
+    def test_sigkill_returns_none(self):
+        """SIGKILL (-9) should be ignored."""
+        with patch("sys.stderr", new_callable=io.StringIO):
+            result = self.manager._classify_crash(-9, "some log")
+        self.assertIsNone(result)
+        self.health_monitor.record_ignored_crash.assert_called_once()
+
+    def test_sigterm_returns_none(self):
+        """SIGTERM (-15) should be ignored."""
+        with patch("sys.stderr", new_callable=io.StringIO):
+            result = self.manager._classify_crash(-15, "some log")
+        self.assertIsNone(result)
+
+    def test_ignore_type_returns_none(self):
+        """CrashType.IGNORE from fingerprinter should return None."""
+        ignore_sig = CrashSignature(
+            category="IGNORE",
+            crash_type=CrashType.IGNORE,
+            returncode=-6,
+            signal_name="SIGABRT",
+            fingerprint="oom_killer",
+        )
+        with (
+            patch.object(self.fingerprinter, "analyze", return_value=ignore_sig),
+            patch("sys.stderr", new_callable=io.StringIO),
+        ):
+            result = self.manager._classify_crash(-6, "some log")
+        self.assertIsNone(result)
+
+    def test_python_uncaught_syntax_error_returns_none(self):
+        """SyntaxError in PYTHON_UNCAUGHT fingerprint should be ignored."""
+        sig = CrashSignature(
+            category="PYTHON",
+            crash_type=CrashType.PYTHON_UNCAUGHT,
+            returncode=1,
+            signal_name=None,
+            fingerprint="SyntaxError:invalid_syntax",
+        )
+        with (
+            patch.object(self.fingerprinter, "analyze", return_value=sig),
+            patch("sys.stderr", new_callable=io.StringIO),
+        ):
+            result = self.manager._classify_crash(1, "some log")
+        self.assertIsNone(result)
+
+    def test_real_crash_returns_signature(self):
+        """A real ASAN crash should return a CrashSignature."""
+        sig = CrashSignature(
+            category="ASAN",
+            crash_type=CrashType.ASAN_VIOLATION,
+            returncode=-11,
+            signal_name="SIGSEGV",
+            fingerprint="heap-use-after-free::some_func",
+        )
+        with (
+            patch.object(self.fingerprinter, "analyze", return_value=sig),
+            patch("sys.stderr", new_callable=io.StringIO),
+        ):
+            result = self.manager._classify_crash(-11, "some log")
+        self.assertIsNotNone(result)
+        self.assertEqual(result.fingerprint, "heap-use-after-free::some_func")
+
+    def test_keyword_detection_with_zero_returncode(self):
+        """Crash keywords in log with returncode 0 should trigger keyword signature."""
+        with patch("sys.stderr", new_callable=io.StringIO):
+            result = self.manager._classify_crash(0, "Fatal Python error: aborted")
+        self.assertIsNotNone(result)
+        self.assertEqual(result.category, "KEYWORD")
+        self.assertIn("fatal_python_error", result.fingerprint)
+
+    def test_clean_exit_no_keywords_returns_none(self):
+        """Clean exit with no crash keywords should return None."""
+        result = self.manager._classify_crash(0, "Normal output, all good")
+        self.assertIsNone(result)
+
+    def test_sigkill_without_health_monitor(self):
+        """SIGKILL ignored even without health monitor."""
+        self.manager.health_monitor = None
+        with patch("sys.stderr", new_callable=io.StringIO):
+            result = self.manager._classify_crash(-9, "some log")
+        self.assertIsNone(result)
+
+    def test_classify_forwards_parent_id_and_strategy(self):
+        """parent_id and strategy should be forwarded to health_monitor."""
+        with patch("sys.stderr", new_callable=io.StringIO):
+            self.manager._classify_crash(-9, "log", parent_id="parent_42", strategy="havoc")
+        call_kwargs = self.health_monitor.record_ignored_crash.call_args.kwargs
+        self.assertEqual(call_kwargs["parent_id"], "parent_42")
+        self.assertEqual(call_kwargs["strategy"], "havoc")
+
+
 if __name__ == "__main__":
     unittest.main()

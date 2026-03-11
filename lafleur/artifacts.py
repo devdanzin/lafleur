@@ -9,7 +9,6 @@ This module provides:
 from __future__ import annotations
 
 import difflib
-import json
 import random
 import re
 import shutil
@@ -26,7 +25,7 @@ from lafleur.analysis import CrashFingerprinter, CrashSignature, CrashType
 from lafleur.corpus_analysis import generate_corpus_stats
 from lafleur.corpus_manager import CORPUS_DIR
 from lafleur.health import extract_error_excerpt
-from lafleur.utils import save_run_stats
+from lafleur.utils import append_jsonl, save_json_file, save_run_stats
 
 if TYPE_CHECKING:
     from lafleur.corpus_manager import CorpusManager
@@ -70,14 +69,7 @@ class TimeoutLogger:
         """
         if "timestamp" not in metadata:
             metadata["timestamp"] = datetime.now(timezone.utc).isoformat()
-        try:
-            with open(self.log_path, "a", encoding="utf-8") as f:
-                f.write(json.dumps(metadata) + "\n")
-        except OSError as e:
-            print(
-                f"  [!] Warning: Could not write timeout metadata: {e}",
-                file=sys.stderr,
-            )
+        append_jsonl(self.log_path, metadata)
 
 
 class ArtifactManager:
@@ -412,7 +404,7 @@ class ArtifactManager:
             metadata_path = crash_dir / "metadata.json"
             metadata = crash_signature.to_dict()
             metadata["timestamp"] = timestamp
-            metadata_path.write_text(json.dumps(metadata, indent=2))
+            save_json_file(metadata_path, metadata, sort_keys=False)
 
         dest_name = "crash_script.py"
         self._safe_copy(
@@ -474,7 +466,7 @@ class ArtifactManager:
             if polluter_ids:
                 session_corpus_files["polluters"] = polluter_ids
             metadata["session_corpus_files"] = session_corpus_files
-            metadata_path.write_text(json.dumps(metadata, indent=2))
+            save_json_file(metadata_path, metadata, sort_keys=False)
 
         script_names = []
         for i, script_path in enumerate(scripts):
@@ -789,9 +781,7 @@ class TelemetryManager:
         # Generate and save corpus statistics
         try:
             corpus_stats = generate_corpus_stats(self.corpus_manager)
-            corpus_stats_path = Path("corpus_stats.json")
-            with open(corpus_stats_path, "w", encoding="utf-8") as f:
-                json.dump(corpus_stats, f, indent=2)
+            save_json_file(Path("corpus_stats.json"), corpus_stats)
         except Exception as e:
             print(f"[!] Warning: Could not save corpus stats: {e}", file=sys.stderr)
 
@@ -817,14 +807,7 @@ class TelemetryManager:
         except OSError:
             datapoint["disk_usage_percent"] = None
 
-        try:
-            with open(self.timeseries_log_path, "a", encoding="utf-8") as f:
-                f.write(json.dumps(datapoint) + "\n")
-        except OSError as e:
-            print(
-                f"[!] Warning: Could not write to time-series log file: {e}",
-                file=sys.stderr,
-            )
+        append_jsonl(self.timeseries_log_path, datapoint)
 
         self.score_tracker.save_telemetry()
 

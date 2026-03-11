@@ -21,6 +21,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from lafleur.utils import append_jsonl, save_json_file
+
 MUTATOR_SCORES_FILE = Path("coverage/mutator_scores.json")
 MUTATOR_TELEMETRY_LOG = Path("logs/mutator_effectiveness.jsonl")
 CRASH_ATTRIBUTION_LOG = Path("logs/crash_attribution.jsonl")
@@ -90,20 +92,12 @@ class MutatorScoreTracker:
 
     def save_state(self) -> None:
         """Save the current scores and attempts to a file."""
-        try:
-            MUTATOR_SCORES_FILE.parent.mkdir(parents=True, exist_ok=True)
-            data = {
-                "scores": dict(self.scores),
-                "attempts": dict(self.attempts),
-                "attempt_counter": self._attempt_counter,
-            }
-            with open(MUTATOR_SCORES_FILE, "w", encoding="utf-8") as f:
-                json.dump(data, f, indent=2)
-        except OSError as e:
-            print(
-                f"[!] Warning: Could not save mutator scores: {e}",
-                file=sys.stderr,
-            )
+        data = {
+            "scores": dict(self.scores),
+            "attempts": dict(self.attempts),
+            "attempt_counter": self._attempt_counter,
+        }
+        save_json_file(MUTATOR_SCORES_FILE, data)
 
     def record_attempt(self, name: str) -> None:
         """Record an attempt for a strategy or transformer, applying periodic decay."""
@@ -223,7 +217,6 @@ class MutatorScoreTracker:
         lineage_depth: int,
     ) -> None:
         """Append a crash attribution event to the JSONL log."""
-        CRASH_ATTRIBUTION_LOG.parent.mkdir(parents=True, exist_ok=True)
         entry = {
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "fingerprint": fingerprint,
@@ -236,33 +229,18 @@ class MutatorScoreTracker:
             "lineage_strategies": lineage_strategies,
             "lineage_transformers": lineage_transformers,
         }
-        try:
-            with open(CRASH_ATTRIBUTION_LOG, "a", encoding="utf-8") as f:
-                f.write(json.dumps(entry) + "\n")
-        except OSError as e:
-            print(
-                f"[!] Warning: Could not write crash attribution log: {e}",
-                file=sys.stderr,
-            )
+        append_jsonl(CRASH_ATTRIBUTION_LOG, entry)
 
     def save_telemetry(self) -> None:
         """Save a snapshot of the current effectiveness metrics to a log."""
-        try:
-            MUTATOR_TELEMETRY_LOG.parent.mkdir(parents=True, exist_ok=True)
-            success_rates = {
-                name: self.scores[name] / max(1, self.attempts.get(name, 1))
-                for name in self.strategies + self.all_transformers
-            }
-            datapoint = {
-                "timestamp": datetime.now(timezone.utc).isoformat(),
-                "scores": dict(self.scores),
-                "attempts": dict(self.attempts),
-                "success_rates": success_rates,
-            }
-            with open(MUTATOR_TELEMETRY_LOG, "a", encoding="utf-8") as f:
-                f.write(json.dumps(datapoint) + "\n")
-        except OSError as e:
-            print(
-                f"[!] Warning: Could not save mutator telemetry: {e}",
-                file=sys.stderr,
-            )
+        success_rates = {
+            name: self.scores[name] / max(1, self.attempts.get(name, 1))
+            for name in self.strategies + self.all_transformers
+        }
+        datapoint = {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "scores": dict(self.scores),
+            "attempts": dict(self.attempts),
+            "success_rates": success_rates,
+        }
+        append_jsonl(MUTATOR_TELEMETRY_LOG, datapoint)

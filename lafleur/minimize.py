@@ -11,7 +11,6 @@ process:
 """
 
 import argparse
-import json
 import os
 import re
 import shlex
@@ -21,7 +20,7 @@ import sys
 import time
 from pathlib import Path
 
-from lafleur.utils import FUZZING_ENV
+from lafleur.utils import FUZZING_ENV, load_json_file
 
 
 def _make_repro_env() -> dict[str, str]:
@@ -140,15 +139,9 @@ def _load_and_validate_metadata(crash_dir: Path) -> tuple[dict, str, list[Path]]
     Returns (metadata, grep_pattern, script_files).
     Exits with code 1 on validation errors.
     """
-    metadata_path = crash_dir / "metadata.json"
-    if not metadata_path.exists():
-        print("[!] Error: metadata.json not found. Cannot minimize.")
-        sys.exit(1)
-
-    try:
-        metadata = json.loads(metadata_path.read_text())
-    except json.JSONDecodeError:
-        print("[!] Error: Invalid metadata.json.")
+    metadata = load_json_file(crash_dir / "metadata.json")
+    if metadata is None:
+        print("[!] Error: metadata.json not found or invalid. Cannot minimize.")
         sys.exit(1)
 
     # Validate that we have a non-zero crash return code

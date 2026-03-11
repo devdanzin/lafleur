@@ -19,15 +19,7 @@ from lafleur.campaign import (
     load_health_summary,
     load_timeout_summary,
 )
-
-
-def load_json_file(path: Path) -> dict[str, Any] | None:
-    """Load a JSON file, returning None if it doesn't exist or is invalid."""
-    try:
-        with open(path, encoding="utf-8") as f:
-            return json.load(f)
-    except FileNotFoundError, json.JSONDecodeError, OSError:
-        return None
+from lafleur.utils import load_json_file
 
 
 def load_latest_timeseries_entry(instance_dir: Path) -> dict[str, Any] | None:

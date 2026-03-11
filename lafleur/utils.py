@@ -27,6 +27,15 @@ FUZZING_ENV.update(
 )
 
 
+def load_json_file(path: Path) -> dict[str, Any] | None:
+    """Load a JSON file, returning None if it doesn't exist or is invalid."""
+    try:
+        with open(path, encoding="utf-8") as f:
+            return json.load(f)
+    except FileNotFoundError, json.JSONDecodeError, OSError:
+        return None
+
+
 def _default_run_stats() -> dict[str, Any]:
     """Return the canonical default run statistics structure."""
     return {

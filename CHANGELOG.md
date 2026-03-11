@@ -91,6 +91,7 @@ All notable changes to this project should be documented in this file.
 
 ### Enhanced
 
+- Removed obsolete `@unittest.skipIf(sys.version_info < (3, 14))` guards from t-string tests in `test_generic.py`, since Python 3.14+ is the minimum supported version, by @devdanzin.
 - Extracted `_decorate_special_node` and `_prune_by_strahler` helpers in `lineage.py`, reducing nesting in `decorate` and `extract_forest`, by @devdanzin.
 - Decomposed `InterestingnessScorer.calculate_score` into `_score_timing`, `_score_jit_vitals`, and `_score_coverage` private methods in `scoring.py`, by @devdanzin.
 - Introduced `ScoringContext` frozen dataclass to bundle 9 parameters of `score_and_decide_interestingness` in `scoring.py`, reducing the method signature from 11 to 3 parameters, by @devdanzin.

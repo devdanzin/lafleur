@@ -91,6 +91,7 @@ All notable changes to this project should be documented in this file.
 
 ### Enhanced
 
+- Extracted `_decorate_special_node` and `_prune_by_strahler` helpers in `lineage.py`, reducing nesting in `decorate` and `extract_forest`, by @devdanzin.
 - Decomposed `InterestingnessScorer.calculate_score` into `_score_timing`, `_score_jit_vitals`, and `_score_coverage` private methods in `scoring.py`, by @devdanzin.
 - Introduced `ScoringContext` frozen dataclass to bundle 9 parameters of `score_and_decide_interestingness` in `scoring.py`, reducing the method signature from 11 to 3 parameters, by @devdanzin.
 - Replaced fragile `__name__.replace()` strategy name extraction in `mutation_controller.py` with an explicit `strategy_map` dict mapping methods to canonical names, by @devdanzin.

@@ -343,28 +343,9 @@ def truncate_string(s: str, max_len: int, suffix: str = "...") -> str:
     return s[: max_len - len(suffix)] + suffix
 
 
-def generate_report(instance_dir: Path) -> str:
-    """Generate a text report for the given instance directory."""
+def _format_header_section(metadata: dict[str, Any] | None) -> list[str]:
+    """Format the report header with instance identity."""
     lines: list[str] = []
-
-    # Load data files
-    metadata_path = instance_dir / "logs" / "run_metadata.json"
-    stats_path = instance_dir / "fuzz_run_stats.json"
-
-    metadata = load_json_file(metadata_path)
-    stats = load_json_file(stats_path)
-    corpus_stats = load_json_file(instance_dir / "corpus_stats.json")
-    timeseries = load_latest_timeseries_entry(instance_dir)
-    crash_groups = load_crash_data(instance_dir)
-
-    # Calculate derived metrics
-    duration_seconds, duration_source = calculate_duration(metadata, stats, instance_dir)
-    total_mutations = stats.get("total_mutations", 0) if stats else 0
-    speed = total_mutations / duration_seconds if duration_seconds > 0 else 0.0
-    health_summary = load_health_summary(instance_dir / "logs" / "health_events.jsonl")
-    timeout_summary = load_timeout_summary(instance_dir / "logs" / "timeout_events.jsonl")
-
-    # ========== HEADER ==========
     lines.append("=" * 80)
     lines.append("LAFLEUR FUZZING INSTANCE REPORT")
     lines.append("=" * 80)
@@ -387,8 +368,12 @@ def generate_report(instance_dir: Path) -> str:
     lines.append(f"Platform:       {truncate_string(platform_info, 60)}")
     lines.append(f"Report Date:    {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')} UTC")
     lines.append("")
+    return lines
 
-    # ========== SYSTEM ==========
+
+def _format_system_section(metadata: dict[str, Any] | None) -> list[str]:
+    """Format the SYSTEM section with hardware and Python info."""
+    lines: list[str] = []
     lines.append("-" * 80)
     lines.append("SYSTEM")
     lines.append("-" * 80)
@@ -425,15 +410,24 @@ def generate_report(instance_dir: Path) -> str:
     lines.append(f"JIT:            {jit_status}")
     lines.append(f"ASan:           {asan_status}")
     lines.append("")
+    return lines
 
-    # ========== PERFORMANCE ==========
+
+def _format_performance_section(
+    duration_seconds: float,
+    total_mutations: int,
+    speed: float,
+    timeseries: dict[str, Any] | None,
+    stats: dict[str, Any] | None,
+) -> list[str]:
+    """Format the PERFORMANCE section with runtime metrics."""
+    lines: list[str] = []
     lines.append("-" * 80)
     lines.append("PERFORMANCE")
     lines.append("-" * 80)
 
     uptime_str = format_duration(duration_seconds) if duration_seconds >= 0 else "N/A"
 
-    # These metrics come from the timeseries log, not fuzz_run_stats.json
     process_rss = None
     corpus_size_mb = None
     disk_usage = None
@@ -445,7 +439,6 @@ def generate_report(instance_dir: Path) -> str:
         disk_usage = timeseries.get("disk_usage_percent")
         system_load = timeseries.get("system_load_1min")
 
-    # Fall back to stats if timeseries doesn't have these
     if stats:
         if process_rss is None:
             process_rss = stats.get("process_rss_mb")
@@ -464,8 +457,12 @@ def generate_report(instance_dir: Path) -> str:
     )
     lines.append(f"Disk Usage:     {format_number(disk_usage, '%') if disk_usage else 'N/A'}")
     lines.append("")
+    return lines
 
-    # ========== COVERAGE ==========
+
+def _format_coverage_section(stats: dict[str, Any] | None) -> list[str]:
+    """Format the COVERAGE section with edge/uop counts."""
+    lines: list[str] = []
     lines.append("-" * 80)
     lines.append("COVERAGE")
     lines.append("-" * 80)
@@ -483,14 +480,17 @@ def generate_report(instance_dir: Path) -> str:
     lines.append(f"Global Uops:    {format_number(global_uops)}")
     lines.append(f"Corpus Files:   {format_number(corpus_files)}")
     lines.append("")
+    return lines
 
-    # ========== CORPUS EVOLUTION ==========
+
+def _format_corpus_section(corpus_stats: dict[str, Any] | None) -> list[str]:
+    """Format the CORPUS EVOLUTION section with tree topology and mutation stats."""
+    lines: list[str] = []
     lines.append("-" * 80)
     lines.append("CORPUS EVOLUTION")
     lines.append("-" * 80)
 
     if corpus_stats:
-        # Tree topology
         root_count = corpus_stats.get("root_count", 0)
         leaf_count = corpus_stats.get("leaf_count", 0)
         max_depth = corpus_stats.get("max_depth", 0)
@@ -498,7 +498,6 @@ def generate_report(instance_dir: Path) -> str:
             f"Tree Topology:  Roots: {root_count}, Leaves: {leaf_count}, Max Depth: {max_depth}"
         )
 
-        # Sterile rate
         sterile_count = corpus_stats.get("sterile_count", 0)
         sterile_rate = corpus_stats.get("sterile_rate", 0) * 100
         viable_count = corpus_stats.get("viable_count", 0)
@@ -506,7 +505,6 @@ def generate_report(instance_dir: Path) -> str:
             f"Sterile Files:  {sterile_count} ({sterile_rate:.1f}%), Viable: {viable_count}"
         )
 
-        # Average metrics from distributions
         size_dist = corpus_stats.get("file_size_distribution", {})
         exec_dist = corpus_stats.get("execution_time_distribution", {})
         avg_size = size_dist.get("mean")
@@ -514,7 +512,6 @@ def generate_report(instance_dir: Path) -> str:
         lines.append(f"Avg File Size:  {format_number(avg_size, ' bytes') if avg_size else 'N/A'}")
         lines.append(f"Avg Exec Time:  {format_number(avg_exec, ' ms') if avg_exec else 'N/A'}")
 
-        # Top strategies (with backwards compatibility)
         successful_strategies = corpus_stats.get("successful_strategies", {})
         if not successful_strategies:
             successful_strategies = corpus_stats.get("successful_mutations", {})
@@ -525,7 +522,6 @@ def generate_report(instance_dir: Path) -> str:
         else:
             lines.append("Top Strategies: N/A")
 
-        # Top mutators
         successful_mutators = corpus_stats.get("successful_mutators", {})
         if successful_mutators:
             top_mutators = list(successful_mutators.items())[:3]
@@ -537,8 +533,14 @@ def generate_report(instance_dir: Path) -> str:
         lines.append("No corpus statistics available.")
 
     lines.append("")
+    return lines
 
-    # ========== HEALTH ==========
+
+def _format_health_section(
+    health_summary: dict[str, Any] | None, total_mutations: int
+) -> list[str]:
+    """Format the HEALTH section with waste rate, event breakdown, and offenders."""
+    lines: list[str] = []
     lines.append("-" * 80)
     lines.append("HEALTH")
     lines.append("-" * 80)
@@ -556,10 +558,8 @@ def generate_report(instance_dir: Path) -> str:
         lines.append(f"Grade:          {grade} ({wr:.2%} waste rate)")
         lines.append(f"Total Events:   {health_summary['total_events']:,} ({waste_count:,} waste)")
 
-        # Event breakdown by category — only non-zero
         by_evt = health_summary["by_event"]
 
-        # Pipeline failures
         pipeline_parts = []
         for evt in [
             "parent_parse_failure",
@@ -575,7 +575,6 @@ def generate_report(instance_dir: Path) -> str:
         if pipeline_parts:
             lines.append(f"Pipeline:       {', '.join(pipeline_parts)}")
 
-        # Execution anomalies
         exec_parts = []
         for evt, label in [
             ("consecutive_timeouts", "timeout streaks"),
@@ -588,7 +587,6 @@ def generate_report(instance_dir: Path) -> str:
         if exec_parts:
             lines.append(f"Execution:      {', '.join(exec_parts)}")
 
-        # Corpus health
         corpus_parts = []
         for evt, label in [
             ("file_size_warning", "size warnings"),
@@ -601,13 +599,11 @@ def generate_report(instance_dir: Path) -> str:
         if corpus_parts:
             lines.append(f"Corpus:         {', '.join(corpus_parts)}")
 
-        # Top offenders
         offenders = health_summary["parent_offenders"].most_common(5)
         if offenders:
             offender_strs = [f"{pid} ({count:,})" for pid, count in offenders]
             lines.append(f"Top Offenders:  {', '.join(offender_strs)}")
 
-        # Ignored crash profile
         crash_prof = health_summary["crash_profile"]
         if crash_prof:
             profile_items = crash_prof.most_common(5)
@@ -617,11 +613,12 @@ def generate_report(instance_dir: Path) -> str:
         lines.append("No health events recorded.")
 
     lines.append("")
+    return lines
 
-    # ========== TIMEOUT ANALYSIS ==========
-    lines.extend(_format_timeout_section(timeout_summary, stats, instance_dir))
 
-    # ========== CRASH ATTRIBUTION ==========
+def _format_crash_attribution_section(instance_dir: Path) -> list[str]:
+    """Format the CRASH ATTRIBUTION section with strategy and mutator scores."""
+    lines: list[str] = []
     crash_attribution = load_crash_attribution_summary(
         instance_dir / "logs" / "crash_attribution.jsonl"
     )
@@ -639,14 +636,12 @@ def generate_report(instance_dir: Path) -> str:
         lines.append(f"Avg Lineage Depth:  {ca['avg_lineage_depth']:.1f}")
         lines.append("")
 
-        # Top strategies
         top_strategies = ca["combined_strategy_scores"].most_common(5)
         if top_strategies:
             strat_strs = [f"{name} (score: {score:,})" for name, score in top_strategies]
             lines.append(f"Top Strategies:  {', '.join(strat_strs)}")
             lines.append("")
 
-        # Top mutators — single column, top 5 (instance view is more compact)
         top_mutators = ca["combined_transformer_scores"].most_common(5)
         if top_mutators:
             lines.append("Top Mutators:")
@@ -658,8 +653,14 @@ def generate_report(instance_dir: Path) -> str:
         lines.append("No crash attribution data recorded.")
 
     lines.append("")
+    return lines
 
-    # ========== CRASH DIGEST ==========
+
+def _format_crash_digest_section(
+    crash_groups: dict[str, list[dict[str, Any]]],
+) -> list[str]:
+    """Format the CRASH DIGEST section with fingerprint table."""
+    lines: list[str] = []
     lines.append("-" * 80)
     lines.append("CRASH DIGEST")
     lines.append("-" * 80)
@@ -672,25 +673,20 @@ def generate_report(instance_dir: Path) -> str:
     lines.append("")
 
     if crash_groups:
-        # Sort fingerprints by count (descending)
         sorted_fingerprints = sorted(crash_groups.items(), key=lambda x: len(x[1]), reverse=True)
 
-        # Table header
         lines.append(f"{'Count':>6} | {'First Seen':<19} | {'Fingerprint':<30} | Sample Repro")
         lines.append("-" * 80)
 
-        # Show top 10 fingerprints
         for fingerprint, crashes in sorted_fingerprints[:10]:
             count = len(crashes)
 
-            # Find earliest timestamp
             earliest_time = None
             sample_crash_dir = None
             for crash in crashes:
                 timestamp_str = crash.get("timestamp")
                 if timestamp_str:
                     try:
-                        # Timestamp format: "20260109_231723"
                         crash_time = datetime.strptime(timestamp_str, "%Y%m%d_%H%M%S")
                         if earliest_time is None or crash_time < earliest_time:
                             earliest_time = crash_time
@@ -698,7 +694,6 @@ def generate_report(instance_dir: Path) -> str:
                     except ValueError:
                         pass
 
-                # Keep track of a sample crash dir regardless
                 if sample_crash_dir is None:
                     sample_crash_dir = crash.get("_crash_dir")
 
@@ -720,6 +715,38 @@ def generate_report(instance_dir: Path) -> str:
         lines.append("No crashes recorded.")
 
     lines.append("")
+    return lines
+
+
+def generate_report(instance_dir: Path) -> str:
+    """Generate a text report for the given instance directory."""
+    # Load data files
+    metadata = load_json_file(instance_dir / "logs" / "run_metadata.json")
+    stats = load_json_file(instance_dir / "fuzz_run_stats.json")
+    corpus_stats = load_json_file(instance_dir / "corpus_stats.json")
+    timeseries = load_latest_timeseries_entry(instance_dir)
+    crash_groups = load_crash_data(instance_dir)
+
+    # Calculate derived metrics
+    duration_seconds, _ = calculate_duration(metadata, stats, instance_dir)
+    total_mutations = stats.get("total_mutations", 0) if stats else 0
+    speed = total_mutations / duration_seconds if duration_seconds > 0 else 0.0
+    health_summary = load_health_summary(instance_dir / "logs" / "health_events.jsonl")
+    timeout_summary = load_timeout_summary(instance_dir / "logs" / "timeout_events.jsonl")
+
+    # Assemble report from independent sections
+    lines: list[str] = []
+    lines.extend(_format_header_section(metadata))
+    lines.extend(_format_system_section(metadata))
+    lines.extend(
+        _format_performance_section(duration_seconds, total_mutations, speed, timeseries, stats)
+    )
+    lines.extend(_format_coverage_section(stats))
+    lines.extend(_format_corpus_section(corpus_stats))
+    lines.extend(_format_health_section(health_summary, total_mutations))
+    lines.extend(_format_timeout_section(timeout_summary, stats, instance_dir))
+    lines.extend(_format_crash_attribution_section(instance_dir))
+    lines.extend(_format_crash_digest_section(crash_groups))
     lines.append("=" * 80)
 
     return "\n".join(lines)

@@ -1,3 +1,10 @@
+"""Crash fingerprinting and classification for lafleur findings.
+
+Provides types and logic for categorising crash logs into reproducible
+fingerprints (ASAN violations, C assertions, Python panics, signals)
+and extracting structured signatures for deduplication.
+"""
+
 from dataclasses import dataclass, asdict
 from enum import Enum
 import re

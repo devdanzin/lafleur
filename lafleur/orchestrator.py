@@ -26,7 +26,7 @@ from enum import Enum, auto
 from pathlib import Path
 from textwrap import dedent
 
-from lafleur.corpus_manager import CORPUS_DIR, CorpusManager
+from lafleur.corpus_manager import CORPUS_DIR, TMP_DIR, CorpusManager
 from lafleur.health import HealthMonitor
 from lafleur.coverage import CoverageManager, load_coverage_state
 from lafleur.analysis import CrashFingerprinter
@@ -58,7 +58,6 @@ class FlowControl(Enum):
 
 # --- Paths for Fuzzer Outputs (relative to current working directory) ---
 # This allows running multiple fuzzer instances from different directories.
-TMP_DIR = Path("tmp_fuzz_run")
 CRASHES_DIR = Path("crashes")
 REGRESSIONS_DIR = Path("regressions")
 TIMEOUTS_DIR = Path("timeouts")

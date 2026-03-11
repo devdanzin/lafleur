@@ -70,7 +70,7 @@ class MutatorScoreTracker:
         self._attempt_counter = 0
         self.load_state()
 
-    def load_state(self):
+    def load_state(self) -> None:
         """Load the last known scores and attempts from a file."""
         if MUTATOR_SCORES_FILE.is_file():
             try:
@@ -88,7 +88,7 @@ class MutatorScoreTracker:
                 self.scores = defaultdict(float)
                 self.attempts = defaultdict(int)
 
-    def save_state(self):
+    def save_state(self) -> None:
         """Save the current scores and attempts to a file."""
         try:
             MUTATOR_SCORES_FILE.parent.mkdir(parents=True, exist_ok=True)
@@ -114,7 +114,7 @@ class MutatorScoreTracker:
             for key in list(self.scores.keys()):
                 self.scores[key] *= self.decay_factor
 
-    def record_success(self, strategy_name: str, transformer_names: list[str]):
+    def record_success(self, strategy_name: str, transformer_names: list[str]) -> None:
         """Update scores for a successful mutation."""
         print(
             f"    -> Rewarding successful strategy '{strategy_name}' and transformers: {transformer_names}",
@@ -245,7 +245,7 @@ class MutatorScoreTracker:
                 file=sys.stderr,
             )
 
-    def save_telemetry(self):
+    def save_telemetry(self) -> None:
         """Save a snapshot of the current effectiveness metrics to a log."""
         try:
             MUTATOR_TELEMETRY_LOG.parent.mkdir(parents=True, exist_ok=True)

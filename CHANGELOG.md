@@ -91,6 +91,7 @@ All notable changes to this project should be documented in this file.
 
 ### Enhanced
 
+- Split `artifacts.py:check_for_crash` into `_classify_crash` (detection/filtering) and `check_for_crash` (artifact saving), separating crash classification from persistence, by @devdanzin.
 - Extracted `_JitMetrics` accumulator class in `driver.py` to replace 15 `nonlocal` variables in `get_jit_stats`, making executor metrics state explicit and eliminating closure mutation, by @devdanzin.
 - Decomposed `campaign.py:generate_report` (256 lines) into 6 per-section methods and `generate_html_report` (460 lines) by extracting CSS/JS as module constants, row-building into helpers, and a shared `_html_badge_list` utility, by @devdanzin.
 - Decomposed `report.py:generate_report` (379 lines) into 8 per-section functions, reducing the main function to a short pipeline, by @devdanzin.

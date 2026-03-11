@@ -498,45 +498,26 @@ class ArtifactManager:
 
         return crash_dir
 
-    def check_for_crash(
+    def _classify_crash(
         self,
         return_code: int,
         log_content: str,
-        source_path: Path,
-        log_path: Path,
-        parent_path: Path | None = None,
-        session_files: list[Path] | None = None,
         *,
         parent_id: str | None = None,
-        mutation_info: MutationInfo | None = None,
-        polluter_ids: list[str] | None = None,
-    ) -> bool:
+        strategy: str | None = None,
+    ) -> CrashSignature | None:
+        """Classify whether a return code + log content indicates a real crash.
+
+        Returns a CrashSignature if a crash was detected, or None if the
+        execution was clean or the crash should be ignored (signals, OOM,
+        syntax errors from invalid mutations).
+
+        Side effects: logs ignored crashes to health monitor and prints
+        diagnostic messages to stderr.
         """
-        Check for crashes, determine the cause (Signal/Retcode/Keyword), and save artifacts.
-
-        Args:
-            return_code: Exit code from the child process
-            log_content: Content of the log file
-            source_path: Path to the script that was executed
-            log_path: Path to the log file
-            parent_path: Path to the parent script (for session mode)
-            session_files: List of all scripts in the session (for session mode)
-            parent_id: Parent corpus file being mutated (for health monitoring).
-            mutation_info: Mutation context dict (for health monitoring).
-            polluter_ids: Corpus filenames of polluter scripts (for session mode).
-
-        Returns:
-            True if a crash was detected and saved (stat key: "crashes_found" handled by caller)
-        """
-        crash_signature = None
-        crash_reason = None
-
-        strategy = mutation_info.get("strategy") if mutation_info else None
-
-        # 1. Analyze with Fingerprinter
+        # 1. Analyze with Fingerprinter (non-zero exit codes)
         if return_code != 0:
             # Ignore standard termination signals (SIGKILL=-9, SIGTERM=-15)
-            # These are usually caused by timeouts or OOM killers, not JIT bugs.
             if return_code in (-9, -15):
                 print(f"  [~] Ignoring signal {return_code} (SIGKILL/SIGTERM).", file=sys.stderr)
                 if self.health_monitor:
@@ -546,11 +527,10 @@ class ArtifactManager:
                         parent_id=parent_id,
                         strategy=strategy,
                     )
-                return False
+                return None
 
             crash_signature = self.fingerprinter.analyze(return_code, log_content)
 
-            # Filter out crashes marked as IGNORE (OOM, allocation failures, etc.)
             if crash_signature.crash_type == CrashType.IGNORE:
                 print(
                     f"  [~] Ignoring uninteresting crash: {crash_signature.fingerprint}",
@@ -563,14 +543,11 @@ class ArtifactManager:
                         parent_id=parent_id,
                         strategy=strategy,
                     )
-                return False
+                return None
 
-            # Filter out mundane Python errors (Exit Code 1).
-            # This correctly handles SyntaxError and IndentationError from invalid
-            # mutations — the fingerprinter classifies them as PYTHON_UNCAUGHT.
+            # Filter out mundane Python errors (SyntaxError, IndentationError).
             # We must NOT use a substring check on log_content because LLTRACE
-            # output and caught exceptions routinely contain "SyntaxError:" even
-            # when the actual crash is a signal (SIGSEGV, SIGABRT, etc.).
+            # output routinely contains "SyntaxError:" even for signal crashes.
             if crash_signature.crash_type == CrashType.PYTHON_UNCAUGHT:
                 fp = crash_signature.fingerprint
                 if "SyntaxError" in fp or "IndentationError" in fp:
@@ -586,78 +563,90 @@ class ArtifactManager:
                         strategy=strategy,
                         error_excerpt=extract_error_excerpt(log_content),
                     )
-                return False
+                return None
 
-            crash_reason = crash_signature.fingerprint
+            return crash_signature
 
         # 2. Check Keywords (Fallback if return code was 0 but log indicates panic)
-        if not crash_reason:
-            for keyword in CRASH_KEYWORDS:
-                if keyword.lower() in log_content.lower():
-                    # Sanitize keyword: lowercase, spaces to underscores, remove non-alphanumeric
-                    safe_kw = re.sub(r"[^a-z0-9_]", "", keyword.lower().replace(" ", "_"))
-                    crash_reason = f"keyword_{safe_kw}"
-                    # Retroactively create a signature
-                    crash_signature = CrashSignature(
-                        category="KEYWORD",
-                        crash_type=CrashType.UNKNOWN,
-                        returncode=return_code,
-                        signal_name=None,
-                        fingerprint=crash_reason,
-                    )
-                    break
-
-        # 3. Save Artifacts if Crash Detected
-        if crash_reason:
-            self.last_crash_fingerprint = crash_reason
-            print(f"  [!!!] CRASH DETECTED! ({crash_reason}). Saving...", file=sys.stderr)
-
-            # Process the log (truncate/compress) using the crash-specific limit
-            log_to_save = self.process_log_file(log_path, self.max_crash_log_bytes, "Crash log")
-
-            # Branch based on session fuzzing mode
-            if self.session_fuzz and parent_path is not None:
-                # Session mode: save crash bundle with all scripts
-                # Use session_files if available (includes polluters), otherwise use parent+child
-                scripts_to_save = session_files if session_files else [parent_path, source_path]
-                num_scripts = len(scripts_to_save)
-                print(
-                    f"  [SESSION] Saving crash bundle with {num_scripts} script(s).",
-                    file=sys.stderr,
-                )
-                crash_dir = self.save_session_crash(
-                    scripts_to_save,
-                    return_code,
-                    crash_signature,
-                    parent_id=parent_id,
-                    polluter_ids=polluter_ids,
+        for keyword in CRASH_KEYWORDS:
+            if keyword.lower() in log_content.lower():
+                safe_kw = re.sub(r"[^a-z0-9_]", "", keyword.lower().replace(" ", "_"))
+                return CrashSignature(
+                    category="KEYWORD",
+                    crash_type=CrashType.UNKNOWN,
+                    returncode=return_code,
+                    signal_name=None,
+                    fingerprint=f"keyword_{safe_kw}",
                 )
 
-                # Determine log destination name
-                log_suffix = self._get_log_suffix(log_to_save)
-                crash_log_path = crash_dir / f"session_crash{log_suffix}"
+        return None
 
-                if self._safe_copy(log_to_save, crash_log_path, "session crash log"):
-                    if log_to_save != log_path:
-                        log_to_save.unlink()
-                    print(f"  [!!!] Session crash bundle saved to: {crash_dir}", file=sys.stderr)
+    def check_for_crash(
+        self,
+        return_code: int,
+        log_content: str,
+        source_path: Path,
+        log_path: Path,
+        parent_path: Path | None = None,
+        session_files: list[Path] | None = None,
+        *,
+        parent_id: str | None = None,
+        mutation_info: MutationInfo | None = None,
+        polluter_ids: list[str] | None = None,
+    ) -> bool:
+        """Check for crashes, determine the cause, and save artifacts.
 
-            else:
-                # Standard mode: save single child in structured directory
-                crash_dir = self.save_standalone_crash(source_path, return_code, crash_signature)
+        Returns True if a crash was detected and saved.
+        """
+        strategy = mutation_info.get("strategy") if mutation_info else None
 
-                # Copy log into the crash directory
-                log_suffix = self._get_log_suffix(log_to_save)
-                crash_log_path = crash_dir / f"crash{log_suffix}"
+        crash_signature = self._classify_crash(
+            return_code, log_content, parent_id=parent_id, strategy=strategy
+        )
+        if crash_signature is None:
+            return False
 
-                if self._safe_copy(log_to_save, crash_log_path, "crash log file"):
-                    if log_to_save != log_path:
-                        log_to_save.unlink()
-                    print(f"  [!!!] Crash saved to: {crash_dir}", file=sys.stderr)
+        crash_reason = crash_signature.fingerprint
+        self.last_crash_fingerprint = crash_reason
+        print(f"  [!!!] CRASH DETECTED! ({crash_reason}). Saving...", file=sys.stderr)
 
-            return True
+        log_to_save = self.process_log_file(log_path, self.max_crash_log_bytes, "Crash log")
 
-        return False
+        if self.session_fuzz and parent_path is not None:
+            scripts_to_save = session_files if session_files else [parent_path, source_path]
+            num_scripts = len(scripts_to_save)
+            print(
+                f"  [SESSION] Saving crash bundle with {num_scripts} script(s).",
+                file=sys.stderr,
+            )
+            crash_dir = self.save_session_crash(
+                scripts_to_save,
+                return_code,
+                crash_signature,
+                parent_id=parent_id,
+                polluter_ids=polluter_ids,
+            )
+
+            log_suffix = self._get_log_suffix(log_to_save)
+            crash_log_path = crash_dir / f"session_crash{log_suffix}"
+
+            if self._safe_copy(log_to_save, crash_log_path, "session crash log"):
+                if log_to_save != log_path:
+                    log_to_save.unlink()
+                print(f"  [!!!] Session crash bundle saved to: {crash_dir}", file=sys.stderr)
+
+        else:
+            crash_dir = self.save_standalone_crash(source_path, return_code, crash_signature)
+
+            log_suffix = self._get_log_suffix(log_to_save)
+            crash_log_path = crash_dir / f"crash{log_suffix}"
+
+            if self._safe_copy(log_to_save, crash_log_path, "crash log file"):
+                if log_to_save != log_path:
+                    log_to_save.unlink()
+                print(f"  [!!!] Crash saved to: {crash_dir}", file=sys.stderr)
+
+        return True
 
     def save_divergence(
         self, source_path: Path, jit_output: str, nojit_output: str, reason: str

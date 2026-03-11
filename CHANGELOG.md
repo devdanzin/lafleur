@@ -91,6 +91,7 @@ All notable changes to this project should be documented in this file.
 
 ### Enhanced
 
+- Decomposed `campaign.py:generate_report` (256 lines) into 6 per-section methods and `generate_html_report` (460 lines) by extracting CSS/JS as module constants, row-building into helpers, and a shared `_html_badge_list` utility, by @devdanzin.
 - Decomposed `report.py:generate_report` (379 lines) into 8 per-section functions, reducing the main function to a short pipeline, by @devdanzin.
 - Extracted `_clamp_and_decay()` helper in `scoring.py` to deduplicate 3× copy-pasted clamping+decay arithmetic in `_prepare_new_coverage_result`, by @devdanzin.
 - Replaced `dict[str, Any]` with existing TypedDicts (`HarnessCoverage`, `CorpusFileMetadata`, `CrashRegistry`) in function signatures across `types.py`, `campaign.py`, `corpus_manager.py`, and `lineage.py` for stronger static typing, by @devdanzin.

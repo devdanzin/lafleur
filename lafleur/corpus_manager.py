@@ -237,7 +237,7 @@ class CorpusManager:
             log_path = TMP_DIR / f"sync_{source_path.stem}.log"
             print(f"  -> Analyzing {filename} (timeout: {self.execution_timeout}s)...")
             try:
-                with open(log_path, "w") as log_file:
+                with open(log_path, "w", encoding="utf-8") as log_file:
                     start_time = time.monotonic()
                     result = subprocess.run(
                         [self.target_python, str(source_path)],
@@ -471,7 +471,7 @@ class CorpusManager:
 
         # Execute it to get a log (also using the configurable timeout)
         try:
-            with open(tmp_log, "w") as log_file:
+            with open(tmp_log, "w", encoding="utf-8") as log_file:
                 t0 = time.monotonic()
                 result = subprocess.run(
                     [self.target_python, tmp_source],

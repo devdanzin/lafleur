@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from lafleur.registry import CrashRegistry
-from lafleur.utils import load_json_file, save_json_file
+from lafleur.utils import discover_instances, load_json_file, save_json_file
 
 
 def get_revision_date(revision: str) -> int | None:
@@ -54,26 +54,6 @@ def parse_iso_timestamp(timestamp_str: str) -> int | None:
         return int(dt.timestamp())
     except ValueError, TypeError:
         return None
-
-
-def discover_instances(root_dir: Path) -> list[Path]:
-    """Discover lafleur instance directories under a root directory."""
-    instances: list[Path] = []
-
-    if not root_dir.exists():
-        return instances
-
-    # Check if root_dir itself is an instance
-    if (root_dir / "logs" / "run_metadata.json").exists():
-        instances.append(root_dir)
-        return instances
-
-    # Search subdirectories
-    for subdir in sorted(root_dir.iterdir()):
-        if subdir.is_dir() and (subdir / "logs" / "run_metadata.json").exists():
-            instances.append(subdir)
-
-    return instances
 
 
 # ============================================================================

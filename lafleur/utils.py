@@ -70,6 +70,71 @@ def append_jsonl(path: Path, record: dict[str, Any]) -> None:
         print(f"[!] Warning: Could not append to {path}: {e}", file=sys.stderr)
 
 
+def parse_timestamp(timestamp_str: str | None) -> datetime | None:
+    """Parse an ISO format timestamp string into a datetime object."""
+    if not timestamp_str:
+        return None
+    try:
+        # Handle various ISO formats
+        if timestamp_str.endswith("Z"):
+            timestamp_str = timestamp_str[:-1] + "+00:00"
+        return datetime.fromisoformat(timestamp_str)
+    except ValueError, TypeError:
+        return None
+
+
+def format_duration(seconds: float) -> str:
+    """Format a duration in seconds to a human-readable string."""
+    if seconds < 0:
+        return "N/A"
+
+    days, remainder = divmod(int(seconds), 86400)
+    hours, remainder = divmod(remainder, 3600)
+    minutes, secs = divmod(remainder, 60)
+
+    parts = []
+    if days > 0:
+        parts.append(f"{days}d")
+    if hours > 0:
+        parts.append(f"{hours}h")
+    if minutes > 0:
+        parts.append(f"{minutes}m")
+    if secs > 0 or not parts:
+        parts.append(f"{secs}s")
+
+    return " ".join(parts)
+
+
+def discover_instances(root_dir: Path) -> list[Path]:
+    """Discover lafleur instance directories under a root directory.
+
+    An instance directory is identified by having a ``logs/run_metadata.json`` file.
+    If *root_dir* itself is an instance, it is returned as the sole element.
+
+    Args:
+        root_dir: Root directory to search.
+
+    Returns:
+        List of paths to valid instance directories.
+    """
+    instances: list[Path] = []
+
+    if not root_dir.exists():
+        return instances
+
+    # Check if root_dir itself is an instance
+    if (root_dir / "logs" / "run_metadata.json").exists():
+        instances.append(root_dir)
+        return instances
+
+    # Search subdirectories
+    for subdir in sorted(root_dir.iterdir()):
+        if subdir.is_dir() and (subdir / "logs" / "run_metadata.json").exists():
+            instances.append(subdir)
+
+    return instances
+
+
 def _default_run_stats() -> dict[str, Any]:
     """Return the canonical default run statistics structure."""
     return {

@@ -16,12 +16,12 @@ from lafleur.report import (
     generate_report,
     load_json_file,
     load_latest_timeseries_entry,
-    format_duration,
     format_number,
     get_jit_asan_status,
     truncate_string,
     load_crash_data,
 )
+from lafleur.utils import format_duration
 
 
 class TestReportHelpers(unittest.TestCase):

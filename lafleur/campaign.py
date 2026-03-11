@@ -18,7 +18,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypedDict
 
-from lafleur.utils import load_json_file
+from lafleur.utils import (
+    discover_instances,
+    load_json_file,
+    parse_timestamp,
+)
 
 if TYPE_CHECKING:
     from lafleur.registry import CrashRegistry
@@ -294,40 +298,6 @@ def load_crash_attribution_summary(log_path: Path) -> CrashAttributionSummary | 
         combined_transformer_scores=combined_transformer,
         combined_strategy_scores=combined_strategy,
     )
-
-
-def parse_timestamp(timestamp_str: str | None) -> datetime | None:
-    """Parse an ISO format timestamp string into a datetime object."""
-    if not timestamp_str:
-        return None
-    try:
-        if timestamp_str.endswith("Z"):
-            timestamp_str = timestamp_str[:-1] + "+00:00"
-        return datetime.fromisoformat(timestamp_str)
-    except ValueError, TypeError:
-        return None
-
-
-def format_duration(seconds: float) -> str:
-    """Format a duration in seconds to a human-readable string."""
-    if seconds < 0:
-        return "N/A"
-
-    days, remainder = divmod(int(seconds), 86400)
-    hours, remainder = divmod(remainder, 3600)
-    minutes, secs = divmod(remainder, 60)
-
-    parts = []
-    if days > 0:
-        parts.append(f"{days}d")
-    if hours > 0:
-        parts.append(f"{hours}h")
-    if minutes > 0:
-        parts.append(f"{minutes}m")
-    if secs > 0 or not parts:
-        parts.append(f"{secs}s")
-
-    return " ".join(parts)
 
 
 @dataclass
@@ -1566,34 +1536,6 @@ def generate_html_report(aggregator: CampaignAggregator) -> str:
 {_HTML_SORT_JS}  </script>
 </body>
 </html>"""
-
-
-def discover_instances(root_dir: Path) -> list[Path]:
-    """
-    Discover lafleur instance directories under a root directory.
-
-    Args:
-        root_dir: Root directory to search.
-
-    Returns:
-        List of paths to valid instance directories.
-    """
-    instances: list[Path] = []
-
-    if not root_dir.exists():
-        return instances
-
-    # Check if root_dir itself is an instance
-    if (root_dir / "logs" / "run_metadata.json").exists():
-        instances.append(root_dir)
-        return instances
-
-    # Search subdirectories
-    for subdir in sorted(root_dir.iterdir()):
-        if subdir.is_dir() and (subdir / "logs" / "run_metadata.json").exists():
-            instances.append(subdir)
-
-    return instances
 
 
 def main() -> None:

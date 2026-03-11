@@ -207,7 +207,7 @@ def handle_triage_action(
 def import_campaign(args: argparse.Namespace) -> None:
     """Import crashes from a campaign directory into the registry."""
     registry = CrashRegistry(args.db)
-    campaign_dir = Path(args.campaign_dir).resolve()
+    campaign_dir = args.campaign_dir.resolve()
 
     if not campaign_dir.exists():
         print(f"Error: Directory not found: {campaign_dir}", file=sys.stderr)
@@ -800,7 +800,7 @@ def main() -> None:
     )
     import_parser.add_argument(
         "campaign_dir",
-        type=str,
+        type=Path,
         help="Campaign directory containing instance subdirectories",
     )
 

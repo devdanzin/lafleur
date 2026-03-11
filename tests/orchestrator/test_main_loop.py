@@ -2312,7 +2312,7 @@ class TestMainCLIPlumbing(unittest.TestCase):
     def test_fusil_path_passed(self):
         """--fusil-path value reaches constructor."""
         _, kwargs = self._run_main(["--fusil-path", "/my/fusil"])
-        self.assertEqual(kwargs["fusil_path"], "/my/fusil")
+        self.assertEqual(kwargs["fusil_path"], Path("/my/fusil"))
 
     def test_fusil_path_default_none(self):
         """--fusil-path defaults to None."""
@@ -2429,7 +2429,7 @@ class TestMainCLIPlumbing(unittest.TestCase):
                 "spam",
             ]
         )
-        self.assertEqual(kwargs["fusil_path"], "/my/fusil")
+        self.assertEqual(kwargs["fusil_path"], Path("/my/fusil"))
         self.assertEqual(kwargs["min_corpus_files"], 10)
         self.assertTrue(kwargs["differential_testing"])
         self.assertEqual(kwargs["timeout"], 25)

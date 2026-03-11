@@ -626,7 +626,7 @@ class TestImportCampaignDisplay(unittest.TestCase):
             ],
         )
 
-        args = argparse.Namespace(db=self.db_path, campaign_dir=str(self.temp_path))
+        args = argparse.Namespace(db=self.db_path, campaign_dir=self.temp_path)
 
         captured_output = StringIO()
         with patch("sys.stdout", captured_output):
@@ -656,7 +656,7 @@ class TestImportCampaignDisplay(unittest.TestCase):
             crashes=[{"fingerprint": "ASSERT:from_inst2", "timestamp": "20250101_110000"}],
         )
 
-        args = argparse.Namespace(db=self.db_path, campaign_dir=str(self.temp_path))
+        args = argparse.Namespace(db=self.db_path, campaign_dir=self.temp_path)
 
         captured_output = StringIO()
         with patch("sys.stdout", captured_output):
@@ -683,7 +683,7 @@ class TestImportCampaignDisplay(unittest.TestCase):
             ],
         )
 
-        args = argparse.Namespace(db=self.db_path, campaign_dir=str(self.temp_path))
+        args = argparse.Namespace(db=self.db_path, campaign_dir=self.temp_path)
 
         captured_output = StringIO()
         with patch("sys.stdout", captured_output):
@@ -707,7 +707,7 @@ class TestImportCampaignDisplay(unittest.TestCase):
             ],
         )
 
-        args = argparse.Namespace(db=self.db_path, campaign_dir=str(self.temp_path))
+        args = argparse.Namespace(db=self.db_path, campaign_dir=self.temp_path)
 
         # Import twice
         captured_output = StringIO()
@@ -733,7 +733,7 @@ class TestImportCampaignDisplay(unittest.TestCase):
             crashes=[{"fingerprint": "ASSERT:valid", "timestamp": "20250101_120000"}],
         )
 
-        args = argparse.Namespace(db=self.db_path, campaign_dir=str(self.temp_path))
+        args = argparse.Namespace(db=self.db_path, campaign_dir=self.temp_path)
 
         captured_output = StringIO()
         with patch("sys.stdout", captured_output):
@@ -752,7 +752,7 @@ class TestImportCampaignDisplay(unittest.TestCase):
         (logs_dir / "run_metadata.json").write_text(json.dumps(metadata))
         # No crashes directory created
 
-        args = argparse.Namespace(db=self.db_path, campaign_dir=str(self.temp_path))
+        args = argparse.Namespace(db=self.db_path, campaign_dir=self.temp_path)
 
         captured_output = StringIO()
         with patch("sys.stdout", captured_output):
@@ -770,7 +770,7 @@ class TestImportCampaignDisplay(unittest.TestCase):
         crash_dir.mkdir(parents=True)
         (crash_dir / "metadata.json").write_text(json.dumps({"timestamp": "20250101_120000"}))
 
-        args = argparse.Namespace(db=self.db_path, campaign_dir=str(self.temp_path))
+        args = argparse.Namespace(db=self.db_path, campaign_dir=self.temp_path)
 
         captured_output = StringIO()
         with patch("sys.stdout", captured_output):
@@ -787,7 +787,7 @@ class TestImportCampaignDisplay(unittest.TestCase):
             crashes=[{"fingerprint": "ASSERT:summary", "timestamp": "20250101_120000"}],
         )
 
-        args = argparse.Namespace(db=self.db_path, campaign_dir=str(self.temp_path))
+        args = argparse.Namespace(db=self.db_path, campaign_dir=self.temp_path)
 
         captured_output = StringIO()
         with patch("sys.stdout", captured_output):
@@ -807,7 +807,7 @@ class TestImportCampaignDisplay(unittest.TestCase):
             crashes=[{"fingerprint": "ASSERT:rev", "timestamp": "20250101_120000"}],
         )
 
-        args = argparse.Namespace(db=self.db_path, campaign_dir=str(self.temp_path))
+        args = argparse.Namespace(db=self.db_path, campaign_dir=self.temp_path)
 
         import_campaign(args)
 

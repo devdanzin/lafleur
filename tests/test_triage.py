@@ -502,7 +502,7 @@ class TestImportCampaign(unittest.TestCase):
 
     def test_exits_on_nonexistent_directory(self):
         """Test exit when campaign directory doesn't exist."""
-        args = argparse.Namespace(db=self.db_path, campaign_dir=str(self.temp_path / "nonexistent"))
+        args = argparse.Namespace(db=self.db_path, campaign_dir=self.temp_path / "nonexistent")
 
         with self.assertRaises(SystemExit) as ctx:
             import_campaign(args)
@@ -510,7 +510,7 @@ class TestImportCampaign(unittest.TestCase):
 
     def test_exits_when_no_instances_found(self):
         """Test exit when no valid instances are found."""
-        args = argparse.Namespace(db=self.db_path, campaign_dir=str(self.temp_path))
+        args = argparse.Namespace(db=self.db_path, campaign_dir=self.temp_path)
 
         with self.assertRaises(SystemExit) as ctx:
             import_campaign(args)
@@ -533,7 +533,7 @@ class TestImportCampaign(unittest.TestCase):
             json.dumps({"fingerprint": "ASSERT:test", "timestamp": "20250101_120000"})
         )
 
-        args = argparse.Namespace(db=self.db_path, campaign_dir=str(self.temp_path))
+        args = argparse.Namespace(db=self.db_path, campaign_dir=self.temp_path)
 
         import_campaign(args)
 

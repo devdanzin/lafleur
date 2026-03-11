@@ -201,7 +201,7 @@ class CorpusManager:
                 file_id = int(Path(filename).stem)
                 if file_id > current_max_id:
                     current_max_id = file_id
-            except (ValueError, IndexError):
+            except ValueError, IndexError:
                 continue  # Ignore non-integer filenames
 
         if current_max_id > self.corpus_file_counter:
@@ -450,7 +450,24 @@ class CorpusManager:
             # "--keep-sessions",
         ]
         print(f"[*] Generating new seed with command: {' '.join(command)}")
-        subprocess.run(command, capture_output=True, env=FUZZING_ENV)
+        try:
+            result = subprocess.run(command, capture_output=True, env=FUZZING_ENV, timeout=120)
+            if result.returncode != 0:
+                print(
+                    f"[!] Seed generation failed (exit {result.returncode})",
+                    file=sys.stderr,
+                )
+                return
+        except subprocess.TimeoutExpired:
+            print("[!] Seed generation timed out after 120s", file=sys.stderr)
+            return
+        except OSError as e:
+            print(f"[!] Seed generation failed: {e}", file=sys.stderr)
+            return
+
+        if not tmp_source.exists():
+            print("[!] Seed generation produced no output file", file=sys.stderr)
+            return
 
         # Execute it to get a log (also using the configurable timeout)
         try:

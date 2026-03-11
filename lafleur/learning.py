@@ -90,14 +90,20 @@ class MutatorScoreTracker:
 
     def save_state(self):
         """Save the current scores and attempts to a file."""
-        MUTATOR_SCORES_FILE.parent.mkdir(parents=True, exist_ok=True)
-        data = {
-            "scores": dict(self.scores),
-            "attempts": dict(self.attempts),
-            "attempt_counter": self._attempt_counter,
-        }
-        with open(MUTATOR_SCORES_FILE, "w") as f:
-            json.dump(data, f, indent=2)
+        try:
+            MUTATOR_SCORES_FILE.parent.mkdir(parents=True, exist_ok=True)
+            data = {
+                "scores": dict(self.scores),
+                "attempts": dict(self.attempts),
+                "attempt_counter": self._attempt_counter,
+            }
+            with open(MUTATOR_SCORES_FILE, "w") as f:
+                json.dump(data, f, indent=2)
+        except OSError as e:
+            print(
+                f"[!] Warning: Could not save mutator scores: {e}",
+                file=sys.stderr,
+            )
 
     def record_attempt(self, name: str) -> None:
         """Record an attempt for a strategy or transformer, applying periodic decay."""
@@ -241,16 +247,22 @@ class MutatorScoreTracker:
 
     def save_telemetry(self):
         """Save a snapshot of the current effectiveness metrics to a log."""
-        MUTATOR_TELEMETRY_LOG.parent.mkdir(parents=True, exist_ok=True)
-        success_rates = {
-            name: self.scores[name] / max(1, self.attempts.get(name, 1))
-            for name in self.strategies + self.all_transformers
-        }
-        datapoint = {
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "scores": dict(self.scores),
-            "attempts": dict(self.attempts),
-            "success_rates": success_rates,
-        }
-        with open(MUTATOR_TELEMETRY_LOG, "a") as f:
-            f.write(json.dumps(datapoint) + "\n")
+        try:
+            MUTATOR_TELEMETRY_LOG.parent.mkdir(parents=True, exist_ok=True)
+            success_rates = {
+                name: self.scores[name] / max(1, self.attempts.get(name, 1))
+                for name in self.strategies + self.all_transformers
+            }
+            datapoint = {
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "scores": dict(self.scores),
+                "attempts": dict(self.attempts),
+                "success_rates": success_rates,
+            }
+            with open(MUTATOR_TELEMETRY_LOG, "a") as f:
+                f.write(json.dumps(datapoint) + "\n")
+        except OSError as e:
+            print(
+                f"[!] Warning: Could not save mutator telemetry: {e}",
+                file=sys.stderr,
+            )

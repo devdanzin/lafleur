@@ -448,7 +448,7 @@ class ExecutionManager:
                     selection = self.corpus_manager.select_parent()
                     if selection:
                         polluters.append(selection[0])
-            except AttributeError, IndexError:
+            except IndexError:
                 pass
 
             if polluters:

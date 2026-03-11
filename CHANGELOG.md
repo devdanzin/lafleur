@@ -91,6 +91,7 @@ All notable changes to this project should be documented in this file.
 
 ### Enhanced
 
+- Narrowed `_compose_session` except clause from `AttributeError, IndexError` to just `IndexError` in `execution.py`, by @devdanzin.
 - Fixed misleading docstring on `genStatefulGetitemObject` in `mutators/utils.py` (said `__iter__`, actually `__getitem__`), by @devdanzin.
 - Removed dead code: unused `_create_guard_side_effect_function` method in `scenarios_control.py` and unused `COLOR_TIMEOUT` constant in `lineage.py`, by @devdanzin.
 - Added missing `-> None` return type annotations to 10 functions across `generic.py`, `helper_injection.py`, `scenarios_data.py`, `minimize.py`, `orchestrator.py`, and `driver.py`, by @devdanzin.

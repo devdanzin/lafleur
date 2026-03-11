@@ -172,3 +172,186 @@ class TestCrashRegistry(unittest.TestCase):
 
         issue_301 = next(i for i in issues if i["issue_number"] == 301)
         self.assertEqual(issue_301["title"], "Brand New")
+
+    def test_duplicate_sighting_returns_false(self):
+        """Test that adding the same sighting twice returns False on the duplicate."""
+        fp = "ASSERT:dup_test"
+        self.registry.add_sighting(fp, "run_1", "inst_1", "2025-01-01T00:00:00")
+        result = self.registry.add_sighting(fp, "run_1", "inst_1", "2025-01-01T00:00:00")
+        self.assertFalse(result)
+        self.assertEqual(self.registry.get_sighting_count(fp), 1)
+
+    def test_multiple_sightings_same_fingerprint(self):
+        """Test multiple sightings of the same crash from different runs."""
+        fp = "SEGV:multi"
+        self.registry.add_sighting(fp, "run_1", "inst_1", "2025-01-01T00:00:00")
+        self.registry.add_sighting(fp, "run_2", "inst_2", "2025-01-02T00:00:00")
+        self.assertEqual(self.registry.get_sighting_count(fp), 2)
+
+    def test_set_triage_status(self):
+        """Test changing triage status of a crash."""
+        fp = "ASSERT:status_test"
+        self.registry.add_sighting(fp, "run_1", "inst_1", "2025-01-01")
+
+        result = self.registry.set_triage_status(fp, "IGNORED")
+        self.assertTrue(result)
+
+        crash = self.registry.get_crash(fp)
+        self.assertEqual(crash["triage_status"], "IGNORED")
+
+    def test_set_triage_status_nonexistent_returns_false(self):
+        """Test set_triage_status returns False for unknown fingerprint."""
+        result = self.registry.set_triage_status("nonexistent", "IGNORED")
+        self.assertFalse(result)
+
+    def test_add_note(self):
+        """Test adding a note to a crash."""
+        fp = "ASSERT:note_test"
+        self.registry.add_sighting(fp, "run_1", "inst_1", "2025-01-01")
+
+        result = self.registry.add_note(fp, "This is a known issue")
+        self.assertTrue(result)
+
+        crash = self.registry.get_crash(fp)
+        self.assertEqual(crash["notes"], "This is a known issue")
+
+    def test_add_note_nonexistent_returns_false(self):
+        """Test add_note returns False for unknown fingerprint."""
+        result = self.registry.add_note("nonexistent", "note")
+        self.assertFalse(result)
+
+    def test_get_new_crashes(self):
+        """Test retrieving all NEW crashes."""
+        self.registry.add_sighting("fp1", "run_1", "inst_1", "2025-01-01")
+        self.registry.add_sighting("fp2", "run_1", "inst_1", "2025-01-02")
+        self.registry.set_triage_status("fp1", "IGNORED")
+
+        new_crashes = self.registry.get_new_crashes()
+        self.assertEqual(len(new_crashes), 1)
+        self.assertEqual(new_crashes[0]["fingerprint"], "fp2")
+
+    def test_get_triaged_crashes_all(self):
+        """Test retrieving all triaged (non-NEW) crashes."""
+        self.registry.add_sighting("fp1", "run_1", "inst_1", "2025-01-01")
+        self.registry.add_sighting("fp2", "run_1", "inst_1", "2025-01-02")
+        self.registry.set_triage_status("fp1", "TRIAGED")
+        self.registry.set_triage_status("fp2", "IGNORED")
+
+        triaged = self.registry.get_triaged_crashes()
+        self.assertEqual(len(triaged), 2)
+
+    def test_get_triaged_crashes_filtered(self):
+        """Test retrieving triaged crashes filtered by specific status."""
+        self.registry.add_sighting("fp1", "run_1", "inst_1", "2025-01-01")
+        self.registry.add_sighting("fp2", "run_1", "inst_1", "2025-01-02")
+        self.registry.set_triage_status("fp1", "TRIAGED")
+        self.registry.set_triage_status("fp2", "IGNORED")
+
+        triaged = self.registry.get_triaged_crashes(status="TRIAGED")
+        self.assertEqual(len(triaged), 1)
+        self.assertEqual(triaged[0]["fingerprint"], "fp1")
+
+    def test_get_all_crashes(self):
+        """Test retrieving all crashes regardless of status."""
+        self.registry.add_sighting("fp1", "run_1", "inst_1", "2025-01-01")
+        self.registry.add_sighting("fp2", "run_1", "inst_1", "2025-01-02")
+
+        all_crashes = self.registry.get_all_crashes()
+        self.assertEqual(len(all_crashes), 2)
+
+    def test_get_all_crashes_filtered(self):
+        """Test filtering crashes by triage status."""
+        self.registry.add_sighting("fp1", "run_1", "inst_1", "2025-01-01")
+        self.registry.add_sighting("fp2", "run_1", "inst_1", "2025-01-02")
+        self.registry.set_triage_status("fp1", "IGNORED")
+
+        filtered = self.registry.get_all_crashes(triage_status="NEW")
+        self.assertEqual(len(filtered), 1)
+        self.assertEqual(filtered[0]["fingerprint"], "fp2")
+
+    def test_get_stats(self):
+        """Test summary statistics."""
+        self.registry.add_sighting("fp1", "run_1", "inst_1", "2025-01-01")
+        self.registry.add_sighting("fp1", "run_2", "inst_2", "2025-01-02")
+        self.registry.add_sighting("fp2", "run_1", "inst_1", "2025-01-03")
+        self.registry.record_issue({"issue_number": 1, "title": "Bug"})
+
+        stats = self.registry.get_stats()
+        self.assertEqual(stats["total_crashes"], 2)
+        self.assertEqual(stats["total_sightings"], 3)
+        self.assertEqual(stats["total_issues"], 1)
+        self.assertEqual(stats["by_triage_status"]["NEW"], 2)
+        self.assertEqual(stats["unique_instances"], 2)
+        self.assertEqual(stats["unique_runs"], 2)
+
+    def test_get_sightings(self):
+        """Test retrieving sightings for a crash."""
+        self.registry.add_sighting("fp1", "run_1", "inst_1", "2025-01-01")
+        self.registry.add_sighting("fp1", "run_2", "inst_2", "2025-01-02")
+
+        sightings = self.registry.get_sightings("fp1")
+        self.assertEqual(len(sightings), 2)
+
+    def test_get_sightings_with_limit(self):
+        """Test sightings with a limit."""
+        self.registry.add_sighting("fp1", "run_1", "inst_1", "2025-01-01")
+        self.registry.add_sighting("fp1", "run_2", "inst_2", "2025-01-02")
+        self.registry.add_sighting("fp1", "run_3", "inst_3", "2025-01-03")
+
+        sightings = self.registry.get_sightings("fp1", limit=2)
+        self.assertEqual(len(sightings), 2)
+
+    def test_unlink_crash_from_issue(self):
+        """Test unlinking a crash from its issue."""
+        fp = "ASSERT:unlink"
+        self.registry.add_sighting(fp, "run_1", "inst_1", "2025-01-01")
+        self.registry.record_issue({"issue_number": 42, "title": "Bug"})
+        self.registry.link_crash_to_issue(fp, 42)
+
+        crash = self.registry.get_crash(fp)
+        self.assertEqual(crash["issue_number"], 42)
+
+        result = self.registry.unlink_crash_from_issue(fp)
+        self.assertTrue(result)
+
+        crash = self.registry.get_crash(fp)
+        self.assertIsNone(crash["issue_number"])
+
+    def test_get_crash_nonexistent(self):
+        """Test get_crash returns None for unknown fingerprint."""
+        self.assertIsNone(self.registry.get_crash("nonexistent"))
+
+    def test_get_crash_context_nonexistent(self):
+        """Test get_crash_context returns None for unknown fingerprint."""
+        self.assertIsNone(self.registry.get_crash_context("nonexistent"))
+
+    def test_get_crash_details(self):
+        """Test that get_crash returns complete details."""
+        fp = "ASSERT:details"
+        self.registry.add_sighting(fp, "run_1", "inst_1", "2025-01-01")
+        self.registry.add_sighting(fp, "run_2", "inst_2", "2025-01-02")
+
+        crash = self.registry.get_crash(fp)
+        self.assertEqual(crash["fingerprint"], fp)
+        self.assertEqual(crash["sighting_count"], 2)
+        self.assertEqual(crash["latest_sighting"], "2025-01-02")
+        self.assertIn("inst_1", crash["instances"])
+        self.assertIn("inst_2", crash["instances"])
+
+    def test_upsert_empty_list(self):
+        """Test that upserting an empty list returns 0."""
+        self.assertEqual(self.registry.upsert_reported_issues([]), 0)
+
+    def test_upsert_skips_missing_issue_number(self):
+        """Test that upsert skips dicts without issue_number."""
+        count = self.registry.upsert_reported_issues([{"title": "No number"}])
+        self.assertEqual(count, 0)
+
+    def test_record_issue_update(self):
+        """Test updating an existing issue via record_issue."""
+        self.registry.record_issue({"issue_number": 50, "title": "Original"})
+        self.registry.record_issue({"issue_number": 50, "title": "Updated"})
+
+        issues = self.registry.get_all_reported_issues()
+        self.assertEqual(len(issues), 1)
+        self.assertEqual(issues[0]["title"], "Updated")

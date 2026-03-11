@@ -216,10 +216,10 @@ class LafleurOrchestrator:
 
         fingerprinter = CrashFingerprinter()
 
-        TMP_DIR.mkdir(exist_ok=True)
-        LOGS_DIR.mkdir(exist_ok=True)
+        TMP_DIR.mkdir(parents=True, exist_ok=True)
+        LOGS_DIR.mkdir(parents=True, exist_ok=True)
         if self.keep_tmp_logs:
-            RUN_LOGS_DIR.mkdir(exist_ok=True)
+            RUN_LOGS_DIR.mkdir(parents=True, exist_ok=True)
             print(f"[+] Retaining temporary run logs in: {RUN_LOGS_DIR}")
 
         self.health_monitor = HealthMonitor(log_path=LOGS_DIR / "health_events.jsonl")
@@ -389,7 +389,9 @@ class LafleurOrchestrator:
 
                 # This should now only happen if min_corpus_files is 0 and corpus is empty.
                 if selection is None:
-                    print("[!] Corpus is empty and no minimum size was set. Halting.")
+                    print(
+                        "[!] Corpus is empty and no minimum size was set. Halting.", file=sys.stderr
+                    )
                     return
                 else:
                     parent_path, parent_score = selection
@@ -735,7 +737,7 @@ class LafleurOrchestrator:
             )
             if child_source:
                 child_path = TMP_DIR / f"child_{session_id}_{mutation_id}_dryrun.py"
-                child_path.write_text(child_source)
+                child_path.write_text(child_source, encoding="utf-8")
                 print(
                     f"    [DRY-RUN] Wrote {child_path.name} "
                     f"(strategy: {mutation_info.get('strategy', '?')})"
@@ -1236,7 +1238,7 @@ def main():
             print("Error: --mutators requires at least one mutator name.", file=sys.stderr)
             sys.exit(1)
 
-    LOGS_DIR.mkdir(exist_ok=True)
+    LOGS_DIR.mkdir(parents=True, exist_ok=True)
     # Use a consistent timestamp for the whole run
     run_start_time = datetime.now(timezone.utc)
     timestamp_iso = run_start_time.isoformat()

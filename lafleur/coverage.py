@@ -290,7 +290,7 @@ def load_coverage_state() -> dict[str, Any]:
 
 def save_coverage_state(state: dict[str, Any]) -> None:
     """Save the updated coverage state to its pickle file atomically."""
-    COVERAGE_DIR.mkdir(exist_ok=True)
+    COVERAGE_DIR.mkdir(parents=True, exist_ok=True)
     # Create a unique temporary file path in the same directory.
     tmp_path = COVERAGE_STATE_FILE.with_suffix(f".pkl.tmp.{secrets.token_hex(4)}")
 

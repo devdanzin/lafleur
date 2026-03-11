@@ -208,7 +208,7 @@ def _concatenate_scripts(
     combined_content = ""
 
     for script in necessary_scripts:
-        content = script.read_text()
+        content = script.read_text(encoding="utf-8")
         combined_content += f"\n# --- Source: {script.name} ---\n"
         combined_content += content + "\n"
 
@@ -231,12 +231,12 @@ def _concatenate_scripts(
                 use_concatenation = True
             else:
                 print("    Existing file FAILED reproduction. Overwriting with new candidate.")
-                combined_path.write_text(combined_content)
+                combined_path.write_text(combined_content, encoding="utf-8")
                 target_file = None
         else:
-            combined_path.write_text(combined_content)
+            combined_path.write_text(combined_content, encoding="utf-8")
     else:
-        combined_path.write_text(combined_content)
+        combined_path.write_text(combined_content, encoding="utf-8")
 
     if target_file is None:
         target_file = None
@@ -337,7 +337,7 @@ fi
 
 exit 0
 """
-    check_script_path.write_text(check_script_content)
+    check_script_path.write_text(check_script_content, encoding="utf-8")
     check_script_path.chmod(0o755)
 
     # Generate reproduce_minimized.sh
@@ -350,7 +350,7 @@ export ASAN_OPTIONS=detect_leaks=0
 
 {repro_cmd_display}
 """
-    repro_script_path.write_text(repro_script_content)
+    repro_script_path.write_text(repro_script_content, encoding="utf-8")
     repro_script_path.chmod(0o755)
 
     return check_script_path

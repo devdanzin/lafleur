@@ -295,7 +295,7 @@ class CorpusManager:
             else:
                 # File exists in both, verify its hash.
                 try:
-                    content = file_path.read_text()
+                    content = file_path.read_text(encoding="utf-8")
                     current_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
                     if (
                         self.coverage_state.state["per_file_coverage"][filename].get("content_hash")
@@ -305,7 +305,10 @@ class CorpusManager:
                         del self.coverage_state.state["per_file_coverage"][filename]
                         files_to_analyze.add(filename)
                 except (OSError, KeyError) as e:
-                    print(f"[!] Error processing existing file {filename}: {e}. Re-analyzing.")
+                    print(
+                        f"[!] Error processing existing file {filename}: {e}. Re-analyzing.",
+                        file=sys.stderr,
+                    )
                     if filename in self.coverage_state.state["per_file_coverage"]:
                         del self.coverage_state.state["per_file_coverage"][filename]
                     files_to_analyze.add(filename)
@@ -377,7 +380,7 @@ class CorpusManager:
             new_filename = f"{self.corpus_file_counter}.py"
 
         corpus_filepath = CORPUS_DIR / new_filename
-        corpus_filepath.write_text(core_code)
+        corpus_filepath.write_text(core_code, encoding="utf-8")
         print(f"[+] Added minimized file to corpus: {new_filename}")
 
         core_size = len(core_code.encode("utf-8"))

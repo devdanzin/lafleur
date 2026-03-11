@@ -303,7 +303,7 @@ class ExecutionManager:
             - None if no divergence was found (continue to next stage).
         """
         instrumented_code = source_code + "\n" + SERIALIZATION_SNIPPET
-        child_source_path.write_text(instrumented_code)
+        child_source_path.write_text(instrumented_code, encoding="utf-8")
 
         # Run Non-JIT
         nojit_run = None
@@ -400,7 +400,7 @@ class ExecutionManager:
             - (jit_avg_ms, nojit_avg_ms, nojit_cv): Timing results.
             - Early exit result if a timeout occurred, or None to continue.
         """
-        child_source_path.write_text(source_code)
+        child_source_path.write_text(source_code, encoding="utf-8")
 
         nojit_avg_ms, timed_out, nojit_cv = self._run_timed_trial(
             child_source_path, self.TIMING_NUM_RUNS, jit_enabled=False
@@ -472,7 +472,7 @@ class ExecutionManager:
         try:
             print("[COVERAGE] Running child with JIT=True.", file=sys.stderr)
             # Re-write the original source to ensure we're not running instrumented code
-            child_source_path.write_text(source_code)
+            child_source_path.write_text(source_code, encoding="utf-8")
 
             # Build the command based on session fuzzing mode
             session_files: list[Path] | None = None

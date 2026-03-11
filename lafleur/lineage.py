@@ -479,7 +479,7 @@ def resolve_session_scripts(
                 if ch:
                     hash_to_file[ch] = filename
 
-        script_content = script.read_text()
+        script_content = script.read_text(encoding="utf-8")
         script_hash = hashlib.sha256(script_content.encode()).hexdigest()
         result[role] = hash_to_file.get(script_hash)
 
@@ -1610,7 +1610,7 @@ def emit_html(
         info=info,
         svg_content=svg_content,
     )
-    output_path.write_text(html)
+    output_path.write_text(html, encoding="utf-8")
     print(f"HTML written to {output_path}", file=sys.stderr)
     return True
 
@@ -2354,7 +2354,7 @@ Examples:
         else:
             sys.exit(1)
     elif args.output:
-        args.output.write_text(output)
+        args.output.write_text(output, encoding="utf-8")
     else:
         print(output)
 

@@ -80,7 +80,7 @@ def apply_jit_tweaks(
 
         print(f"[*] Processing file: {file_path}")
         try:
-            content = file_path.read_text()
+            content = file_path.read_text(encoding="utf-8")
             original_content = content
 
             for param_name, new_value in tweaks:
@@ -105,7 +105,7 @@ def apply_jit_tweaks(
 
             if content != original_content and not dry_run:
                 print(f"[*] Writing changes to: {file_path}")
-                file_path.write_text(content)
+                file_path.write_text(content, encoding="utf-8")
             elif dry_run and content != original_content:
                 print(f"[*] Dry run: Changes for {file_path} were not written.")
 

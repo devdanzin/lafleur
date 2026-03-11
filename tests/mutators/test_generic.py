@@ -8,7 +8,6 @@ lafleur/mutators/generic.py
 
 import ast
 import random
-import sys
 import unittest
 from textwrap import dedent
 from unittest.mock import patch
@@ -321,7 +320,6 @@ class TestLiteralTypeSwapMutator(unittest.TestCase):
         self.assertNotIn('b"Value:', result)
         self.assertNotIn('b".2f"', result)
 
-    @unittest.skipIf(sys.version_info < (3, 14), "t-strings require Python 3.14+")
     def test_literal_swap_tstring_safety(self):
         """
         Test that t-string literal parts are not mutated to prevent ast.unparse crash.
@@ -1477,7 +1475,6 @@ class TestStringInterpolationMutator(unittest.TestCase):
         self.assertIsInstance(reparsed, ast.Module)
         compile(result, "<test>", "exec")
 
-    @unittest.skipIf(sys.version_info < (3, 14), "t-strings require Python 3.14+")
     def test_injects_tstring(self):
         """Test t-string template injection (Python 3.14+)."""
         # NOTE: side_effect sequence is coupled to internal random call order.

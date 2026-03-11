@@ -93,6 +93,7 @@ All notable changes to this project should be documented in this file.
 
 ### Enhanced
 
+- Updated CLAUDE.md: renamed stale `coverage_parser.py` reference to `coverage.py`, added 6 missing modules (`analysis.py`, `health.py`, `learning.py`, `metadata.py`, `types.py`, `uop_names.py`) to the project structure, by @devdanzin.
 - Guarded `psutil.Process().memory_info()` call in telemetry (`artifacts.py`) with try/except to prevent crashes on edge-case process states, by @devdanzin.
 - Standardized CLI path arguments to `type=Path` in `orchestrator.py`, `jit_tuner.py`, `triage.py`, and `report.py`, removing redundant `Path()` wrapping at call sites, by @devdanzin.
 - Sent all error/warning output in `minimize.py` to stderr instead of stdout, by @devdanzin.

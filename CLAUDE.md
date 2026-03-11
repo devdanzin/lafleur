@@ -141,8 +141,14 @@ lafleur-triage export-issues known_issues.json
     - `utils.py` — Shared utilities for mutators
     - `helper_injection.py` — HelperFunctionInjector for Sniper targeting
     - `sniper.py` — SniperMutator for surgical Bloom filter invalidation
-  - `coverage_parser.py` — Parses JIT trace logs for uop-edge coverage
+  - `coverage.py` — JIT trace log parsing and uop-edge coverage extraction
   - `corpus_manager.py` — Manages test case corpus and scheduling
+  - `learning.py` — Adaptive mutation strategy learning (epsilon-greedy selection)
+  - `analysis.py` — Crash fingerprinting and classification
+  - `health.py` — HealthMonitor observability (adverse event logging)
+  - `metadata.py` — Run metadata generation and persistence
+  - `types.py` — Shared type definitions (JitStats, MutationInfo, etc.)
+  - `uop_names.py` — Micro-op name mappings for coverage analysis
   - `report.py` — Single-instance text reporter CLI
   - `campaign.py` — Multi-instance campaign aggregator with HTML reports
   - `registry.py` — SQLite-based crash registry for historical tracking

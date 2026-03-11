@@ -105,6 +105,7 @@ All notable changes to this project should be documented in this file.
 - Extracted 7 formatting methods from `CampaignAggregator` into module-level functions, reducing class method count and improving separation of concerns, by @devdanzin.
 - Added 28 tests for previously untested `ArtifactManager` methods: `truncate_huge_log`, `compress_log_stream`, `process_log_file`, and `_classify_crash`, by @devdanzin.
 - Added `RunStats` TypedDict to `types.py` and updated `run_stats` parameter types across `utils.py`, `orchestrator.py`, `artifacts.py`, `corpus_manager.py`, `scoring.py`, and `report.py`, by @devdanzin.
+- Renamed 10 camelCase generator functions in `mutators/utils.py` to snake_case for naming consistency, by @devdanzin.
 - Removed obsolete `@unittest.skipIf(sys.version_info < (3, 14))` guards from t-string tests in `test_generic.py`, since Python 3.14+ is the minimum supported version, by @devdanzin.
 - Extracted `_decorate_special_node` and `_prune_by_strahler` helpers in `lineage.py`, reducing nesting in `decorate` and `extract_forest`, by @devdanzin.
 - Decomposed `InterestingnessScorer.calculate_score` into `_score_timing`, `_score_jit_vitals`, and `_score_coverage` private methods in `scoring.py`, by @devdanzin.

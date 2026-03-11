@@ -17,16 +17,16 @@ from textwrap import dedent, indent
 from typing import Any, Callable, cast
 
 from lafleur.mutators.utils import (
-    genStatefulIterObject,
-    genStatefulLenObject,
-    genUnstableHashObject,
+    gen_stateful_iter_object,
+    gen_stateful_len_object,
+    gen_unstable_hash_object,
 )
 
 
 def _create_len_attack(prefix: str) -> list[ast.stmt]:
     """Generate a self-contained scenario to attack len()."""
     var_name = f"len_obj_{prefix}"
-    class_def_str = genStatefulLenObject(var_name)
+    class_def_str = gen_stateful_len_object(var_name)
     attack_code = dedent(f"""
 # len() attack injected by fuzzer
 {class_def_str}
@@ -43,7 +43,7 @@ for i_len in range(100):
 def _create_hash_attack(prefix: str) -> list[ast.stmt]:
     """Generate a self-contained scenario to attack hash()."""
     var_name = f"hash_obj_{prefix}"
-    class_def_str = genUnstableHashObject(var_name)
+    class_def_str = gen_unstable_hash_object(var_name)
     attack_code = dedent(f"""
 # hash() attack injected by fuzzer
 {class_def_str}
@@ -94,7 +94,7 @@ def _mutate_for_loop_iter(func_node: ast.FunctionDef) -> bool:
         if isinstance(stmt, ast.For):
             print(f"    -> Mutating for loop iterator in '{func_node.name}'", file=sys.stderr)
             prefix = f"iter_{random.randint(1000, 9999)}"
-            class_def_str = genStatefulIterObject(prefix)
+            class_def_str = gen_stateful_iter_object(prefix)
             class_def_node = cast(ast.ClassDef, ast.parse(class_def_str).body[0])
             func_node.body.insert(0, class_def_node)
             # Adjust index since we inserted a class def at position 0
@@ -284,7 +284,7 @@ class IterableMutator(ast.NodeTransformer):
         """Generate a scenario attacking tuple() with an unstable-type iterator."""
         print("    -> Injecting tuple() attack scenario...", file=sys.stderr)
         # For this attack, we can reuse the StatefulIterObject
-        class_def_str = genStatefulIterObject(prefix)
+        class_def_str = gen_stateful_iter_object(prefix)
         attack_code = dedent(f"""
 # tuple() attack injected by fuzzer
 print('[{prefix}] Running tuple() attack scenario...', file=sys.stderr)

@@ -33,8 +33,8 @@ from lafleur.mutators.generic import (
 from lafleur.mutators.utils import RedundantStatementSanitizer
 from lafleur.mutators.utils import (
     FuzzerSetupNormalizer,
-    genStatefulBoolObject,
-    genStatefulIndexObject,
+    gen_stateful_bool_object,
+    gen_stateful_index_object,
 )
 
 
@@ -525,8 +525,8 @@ class TestASTMutator(unittest.TestCase):
         """Test combining multiple evil object generators."""
         # Generate a scenario using multiple evil objects
         code = dedent(f"""
-            {genStatefulBoolObject("bool_obj")}
-            {genStatefulIndexObject("idx_obj")}
+            {gen_stateful_bool_object("bool_obj")}
+            {gen_stateful_index_object("idx_obj")}
 
             def uop_harness_test():
                 data = [1, 2, 3, 4, 5]

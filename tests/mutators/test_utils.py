@@ -16,16 +16,16 @@ from lafleur.mutators.utils import (
     FuzzerSetupNormalizer,
     HarnessInstrumentor,
     RedundantStatementSanitizer,
-    genLyingEqualityObject,
-    genSimpleObject,
-    genStatefulBoolObject,
-    genStatefulGetattrObject,
-    genStatefulGetitemObject,
-    genStatefulIndexObject,
-    genStatefulIterObject,
-    genStatefulLenObject,
-    genStatefulStrReprObject,
-    genUnstableHashObject,
+    gen_lying_equality_object,
+    gen_simple_object,
+    gen_stateful_bool_object,
+    gen_stateful_getattr_object,
+    gen_stateful_getitem_object,
+    gen_stateful_index_object,
+    gen_stateful_iter_object,
+    gen_stateful_len_object,
+    gen_stateful_str_repr_object,
+    gen_unstable_hash_object,
     is_simple_statement,
 )
 
@@ -33,9 +33,9 @@ from lafleur.mutators.utils import (
 class TestEvilObjectGenerators(unittest.TestCase):
     """Test evil object generator functions."""
 
-    def test_genLyingEqualityObject(self):
+    def test_gen_lying_equality_object(self):
         """Test lying equality object generation."""
-        code = genLyingEqualityObject("test_eq")
+        code = gen_lying_equality_object("test_eq")
         self.assertIn("class LyingEquality_test_eq:", code)
         self.assertIn("def __eq__", code)
         self.assertIn("def __ne__", code)
@@ -47,9 +47,9 @@ class TestEvilObjectGenerators(unittest.TestCase):
         # Verify it actually runs — catches runtime issues ast.parse misses
         exec(code, {})
 
-    def test_genStatefulLenObject(self):
+    def test_gen_stateful_len_object(self):
         """Test stateful len object generation."""
-        code = genStatefulLenObject("test_len")
+        code = gen_stateful_len_object("test_len")
         self.assertIn("class StatefulLen_test_len:", code)
         self.assertIn("def __len__", code)
         self.assertIn("test_len = StatefulLen_test_len()", code)
@@ -60,9 +60,9 @@ class TestEvilObjectGenerators(unittest.TestCase):
         # Verify it actually runs — catches runtime issues ast.parse misses
         exec(code, {})
 
-    def test_genUnstableHashObject(self):
+    def test_gen_unstable_hash_object(self):
         """Test unstable hash object generation."""
-        code = genUnstableHashObject("test_hash")
+        code = gen_unstable_hash_object("test_hash")
         self.assertIn("class UnstableHash_test_hash:", code)
         self.assertIn("def __hash__", code)
         self.assertIn("fuzzer_rng.randint", code)
@@ -73,9 +73,9 @@ class TestEvilObjectGenerators(unittest.TestCase):
         # Verify it actually runs — catches runtime issues ast.parse misses
         exec(code, {})
 
-    def test_genSimpleObject(self):
+    def test_gen_simple_object(self):
         """Test simple object generation."""
-        code = genSimpleObject("test_obj")
+        code = gen_simple_object("test_obj")
         self.assertIn("class C_test_obj:", code)
         self.assertIn("self.x = 1", code)
         self.assertIn("self.y = 'y'", code)
@@ -87,9 +87,9 @@ class TestEvilObjectGenerators(unittest.TestCase):
         # Verify it actually runs — catches runtime issues ast.parse misses
         exec(code, {})
 
-    def test_genStatefulStrReprObject(self):
+    def test_gen_stateful_str_repr_object(self):
         """Test stateful str/repr object generation."""
-        code = genStatefulStrReprObject("test_str_repr")
+        code = gen_stateful_str_repr_object("test_str_repr")
         self.assertIn("class StatefulStrRepr_test_str_repr:", code)
         self.assertIn("def __str__", code)
         self.assertIn("def __repr__", code)
@@ -102,9 +102,9 @@ class TestEvilObjectGenerators(unittest.TestCase):
         # Verify it actually runs — catches runtime issues ast.parse misses
         exec(code, {})
 
-    def test_genStatefulGetitemObject(self):
+    def test_gen_stateful_getitem_object(self):
         """Test stateful getitem object generation."""
-        code = genStatefulGetitemObject("test_getitem")
+        code = gen_stateful_getitem_object("test_getitem")
         self.assertIn("class StatefulGetitem_test_getitem:", code)
         self.assertIn("def __getitem__", code)
         self.assertIn("return 99.9", code)  # Float return
@@ -117,9 +117,9 @@ class TestEvilObjectGenerators(unittest.TestCase):
         # Verify it actually runs — catches runtime issues ast.parse misses
         exec(code, {})
 
-    def test_genStatefulGetattrObject(self):
+    def test_gen_stateful_getattr_object(self):
         """Test stateful getattr object generation."""
-        code = genStatefulGetattrObject("test_getattr")
+        code = gen_stateful_getattr_object("test_getattr")
         self.assertIn("class StatefulGetattr_test_getattr:", code)
         self.assertIn("def __getattr__", code)
         self.assertIn("return b'evil_attribute'", code)
@@ -132,9 +132,9 @@ class TestEvilObjectGenerators(unittest.TestCase):
         # Verify it actually runs — catches runtime issues ast.parse misses
         exec(code, {})
 
-    def test_genStatefulBoolObject(self):
+    def test_gen_stateful_bool_object(self):
         """Test stateful bool object generation."""
-        code = genStatefulBoolObject("test_bool")
+        code = gen_stateful_bool_object("test_bool")
         self.assertIn("class StatefulBool_test_bool:", code)
         self.assertIn("def __bool__", code)
         self.assertIn("return False", code)
@@ -147,9 +147,9 @@ class TestEvilObjectGenerators(unittest.TestCase):
         # Verify it actually runs — catches runtime issues ast.parse misses
         exec(code, {})
 
-    def test_genStatefulIterObject(self):
+    def test_gen_stateful_iter_object(self):
         """Test stateful iter object generation."""
-        code = genStatefulIterObject("test_iter")
+        code = gen_stateful_iter_object("test_iter")
         self.assertIn("class StatefulIter_test_iter:", code)
         self.assertIn("def __iter__", code)
         self.assertIn("self._iterable = [1, 2, 3]", code)
@@ -162,9 +162,9 @@ class TestEvilObjectGenerators(unittest.TestCase):
         # Verify it actually runs — catches runtime issues ast.parse misses
         exec(code, {})
 
-    def test_genStatefulIndexObject(self):
+    def test_gen_stateful_index_object(self):
         """Test stateful index object generation."""
-        code = genStatefulIndexObject("test_index")
+        code = gen_stateful_index_object("test_index")
         self.assertIn("class StatefulIndex_test_index:", code)
         self.assertIn("def __index__", code)
         self.assertIn("return 99", code)  # Out-of-bounds index
@@ -180,16 +180,16 @@ class TestEvilObjectGenerators(unittest.TestCase):
     def test_all_evil_objects_are_executable(self):
         """Verify every evil object generator produces code that runs cleanly."""
         generators = [
-            (genLyingEqualityObject, "obj_eq"),
-            (genStatefulLenObject, "obj_len"),
-            (genUnstableHashObject, "obj_hash"),
-            (genSimpleObject, "obj_simple"),
-            (genStatefulStrReprObject, "obj_str"),
-            (genStatefulGetitemObject, "obj_getitem"),
-            (genStatefulGetattrObject, "obj_getattr"),
-            (genStatefulBoolObject, "obj_bool"),
-            (genStatefulIterObject, "obj_iter"),
-            (genStatefulIndexObject, "obj_index"),
+            (gen_lying_equality_object, "obj_eq"),
+            (gen_stateful_len_object, "obj_len"),
+            (gen_unstable_hash_object, "obj_hash"),
+            (gen_simple_object, "obj_simple"),
+            (gen_stateful_str_repr_object, "obj_str"),
+            (gen_stateful_getitem_object, "obj_getitem"),
+            (gen_stateful_getattr_object, "obj_getattr"),
+            (gen_stateful_bool_object, "obj_bool"),
+            (gen_stateful_iter_object, "obj_iter"),
+            (gen_stateful_index_object, "obj_index"),
         ]
         for gen_func, var_name in generators:
             with self.subTest(generator=gen_func.__name__):

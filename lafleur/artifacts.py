@@ -420,7 +420,7 @@ class ArtifactManager:
 
             python3 {dest_name}
         """)
-        reproduce_script.write_text(reproduce_content)
+        reproduce_script.write_text(reproduce_content, encoding="utf-8")
         reproduce_script.chmod(0o755)
 
         return crash_dir
@@ -493,7 +493,7 @@ class ArtifactManager:
             python3 -m lafleur.driver {" ".join(script_names)}
         """).strip()
 
-        reproduce_script.write_text(reproduce_content)
+        reproduce_script.write_text(reproduce_content, encoding="utf-8")
         reproduce_script.chmod(0o755)  # Make executable
 
         return crash_dir
@@ -694,7 +694,7 @@ class ArtifactManager:
             tofile="jit_output",
         )
         try:
-            diff_path.write_text("".join(diff))
+            diff_path.write_text("".join(diff), encoding="utf-8")
         except OSError as e:
             print(f"  [!] CRITICAL: Could not save divergence diff: {e}", file=sys.stderr)
             return

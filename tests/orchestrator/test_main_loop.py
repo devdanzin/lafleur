@@ -313,11 +313,11 @@ class TestRunEvolutionaryLoop(unittest.TestCase):
         }
 
         with patch.object(self.orchestrator.corpus_manager, "select_parent", return_value=None):
-            with patch("sys.stdout", new_callable=io.StringIO) as mock_stdout:
+            with patch("sys.stderr", new_callable=io.StringIO) as mock_stderr:
                 self.orchestrator.run_evolutionary_loop()
 
-                stdout_output = mock_stdout.getvalue()
-                self.assertIn("Corpus is empty and no minimum size was set", stdout_output)
+                stderr_output = mock_stderr.getvalue()
+                self.assertIn("Corpus is empty and no minimum size was set", stderr_output)
 
     def test_max_sessions_stops_loop(self):
         """--max-sessions=2 stops loop after 2 sessions."""

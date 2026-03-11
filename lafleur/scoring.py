@@ -608,7 +608,7 @@ class ScoringManager:
 
         log_content = ""
         try:
-            log_content = exec_result.log_path.read_text()
+            log_content = exec_result.log_path.read_text(encoding="utf-8")
         except OSError as e:
             print(f"  [!] Warning: Could not read log file for analysis: {e}", file=sys.stderr)
 
@@ -684,7 +684,7 @@ class ScoringManager:
         assert self.corpus_manager is not None
         assert self._get_core_code is not None
 
-        core_code_to_save = self._get_core_code(exec_result.source_path.read_text())
+        core_code_to_save = self._get_core_code(exec_result.source_path.read_text(encoding="utf-8"))
 
         # Validate the extracted core code is syntactically valid before saving.
         # _get_core_code() can produce broken output if boilerplate boundaries

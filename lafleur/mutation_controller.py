@@ -146,7 +146,7 @@ class MutationController:
     ) -> tuple[ast.FunctionDef, ast.Module, list[ast.stmt]] | tuple[None, None, None]:
         """Parse a parent file and extract its setup and harness AST nodes."""
         try:
-            parent_source = parent_path.read_text()
+            parent_source = parent_path.read_text(encoding="utf-8")
             if self.boilerplate_code is None:
                 self._extract_and_cache_boilerplate(parent_source)
             parent_core_code = self._get_core_code(parent_source)

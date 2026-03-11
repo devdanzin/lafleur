@@ -383,17 +383,21 @@ class MutationController:
         tree_copy = normalizer.visit(tree_copy)
 
         # --- Strategy selection ---
+        # Canonical mapping from strategy method to name, used for both
+        # forced selection and adaptive weight lookup.
+        strategy_map: dict[MutationStrategy, str] = {
+            self._run_deterministic_stage: "deterministic",
+            self._run_havoc_stage: "havoc",
+            self._run_spam_stage: "spam",
+            self._run_helper_sniper_stage: "helper_sniper",
+            self._run_sniper_stage: "sniper",
+        }
+
         chosen_strategy: MutationStrategy
         if self.forced_strategy is not None:
             # Diagnostic mode: bypass adaptive selection
-            strategy_map: dict[str, MutationStrategy] = {
-                "deterministic": self._run_deterministic_stage,
-                "havoc": self._run_havoc_stage,
-                "spam": self._run_spam_stage,
-                "helper_sniper": self._run_helper_sniper_stage,
-                "sniper": self._run_sniper_stage,
-            }
-            chosen_strategy = strategy_map[self.forced_strategy]
+            name_to_strategy = {v: k for k, v in strategy_map.items()}
+            chosen_strategy = name_to_strategy[self.forced_strategy]
             chosen_name = self.forced_strategy
             self.score_tracker.record_attempt(chosen_name)
         else:
@@ -408,9 +412,7 @@ class MutationController:
             if watched_keys:
                 strategy_candidates.append(self._run_sniper_stage)
 
-            strategy_names = [
-                s.__name__.replace("_run_", "").replace("_stage", "") for s in strategy_candidates
-            ]
+            strategy_names = [strategy_map[s] for s in strategy_candidates]
 
             dynamic_weights = self.score_tracker.get_weights(strategy_names)
 
@@ -420,7 +422,7 @@ class MutationController:
                 dynamic_weights[sniper_idx] = max(dynamic_weights[sniper_idx], avg_weight * 1.5)
 
             chosen_strategy = RANDOM.choices(strategy_candidates, weights=dynamic_weights, k=1)[0]
-            chosen_name = chosen_strategy.__name__.replace("_run_", "").replace("_stage", "")
+            chosen_name = strategy_map[chosen_strategy]
             self.score_tracker.record_attempt(chosen_name)
 
         len_body = (

@@ -23,6 +23,7 @@ import ctypes
 import json
 import sys
 import traceback
+from dataclasses import dataclass, field
 from pathlib import Path
 from types import CodeType, FunctionType, MethodType, ModuleType
 
@@ -197,7 +198,7 @@ def _emit_stats(stats: dict) -> None:
             try:
                 json.dumps(v)
                 safe[k] = v
-            except (TypeError, ValueError, OverflowError):
+            except TypeError, ValueError, OverflowError:
                 safe[k] = repr(v)
         safe["_serialization_fallback"] = True
         print(f"[DRIVER:STATS] {json.dumps(safe)}", flush=True)
@@ -274,10 +275,54 @@ def snapshot_executor_state(namespace: dict) -> dict[tuple[int, int], int]:
                                 id(executor), ctypes.POINTER(PyExecutorObject)
                             )
                             snapshot[(id(code), offset)] = executor_ptr.contents.exit_count
-                    except (ValueError, TypeError):
+                    except ValueError, TypeError:
                         pass
 
     return snapshot
+
+
+@dataclass
+class _JitMetrics:
+    """Mutable accumulator for JIT executor statistics."""
+
+    executor_count: int = 0
+    functions_scanned: int = 0
+    zombie_traces: int = 0
+    valid_traces: int = 0
+    warm_traces: int = 0
+    max_exit_count: int = 0
+    max_chain_depth: int = 0
+    min_code_size: float = field(default_factory=lambda: float("inf"))
+    max_exit_density: float = 0.0
+    # Delta metrics (only computed when baseline is provided)
+    delta_max_exit_count: int = 0
+    delta_max_exit_density: float = 0.0
+    delta_total_exits: int = 0
+    delta_new_executors: int = 0
+    delta_new_zombies: int = 0
+    introspection_error_logged: bool = False
+
+    def to_dict(self, *, include_deltas: bool = False) -> dict:
+        """Convert to the result dict expected by callers."""
+        result = {
+            "executors": self.executor_count,
+            "functions_scanned": self.functions_scanned,
+            "jit_available": True,
+            "zombie_traces": self.zombie_traces,
+            "valid_traces": self.valid_traces,
+            "warm_traces": self.warm_traces,
+            "max_exit_count": self.max_exit_count,
+            "max_chain_depth": self.max_chain_depth,
+            "min_code_size": self.min_code_size if self.min_code_size != float("inf") else 0,
+            "max_exit_density": self.max_exit_density,
+        }
+        if include_deltas:
+            result["delta_max_exit_count"] = self.delta_max_exit_count
+            result["delta_max_exit_density"] = self.delta_max_exit_density
+            result["delta_total_exits"] = self.delta_total_exits
+            result["delta_new_executors"] = self.delta_new_executors
+            result["delta_new_zombies"] = self.delta_new_zombies
+        return result
 
 
 def get_jit_stats(namespace: dict, baseline: dict[tuple[int, int], int] | None = None) -> dict:
@@ -298,23 +343,6 @@ def get_jit_stats(namespace: dict, baseline: dict[tuple[int, int], int] | None =
     Returns:
         A dict with executor count and other JIT metrics.
     """
-    executor_count = 0
-    functions_scanned = 0
-    zombie_traces = 0
-    valid_traces = 0
-    warm_traces = 0
-    max_exit_count = 0
-    max_chain_depth = 0
-    min_code_size = float("inf")
-    max_exit_density = 0.0
-
-    # Delta metrics (only computed when baseline is provided)
-    delta_max_exit_count = 0
-    delta_max_exit_density = 0.0
-    delta_total_exits = 0
-    delta_new_executors = 0
-    delta_new_zombies = 0
-
     if not HAS_OPCODE:
         return {
             "executors": 0,
@@ -329,70 +357,58 @@ def get_jit_stats(namespace: dict, baseline: dict[tuple[int, int], int] | None =
             "max_exit_density": 0.0,
         }
 
-    introspection_error_logged = False
+    m = _JitMetrics()
 
     def inspect_executor(executor, code_id: int, offset: int):
-        nonlocal zombie_traces, valid_traces, warm_traces
-        nonlocal max_exit_count, max_chain_depth, min_code_size, max_exit_density
-        nonlocal delta_max_exit_count, delta_max_exit_density, delta_total_exits
-        nonlocal delta_new_executors, delta_new_zombies
-        nonlocal introspection_error_logged
         try:
             executor_ptr = ctypes.cast(id(executor), ctypes.POINTER(PyExecutorObject))
 
-            # --- Existing absolute metrics (unchanged) ---
             if executor_ptr.contents.vm_data.pending_deletion:
-                zombie_traces += 1
+                m.zombie_traces += 1
             if executor_ptr.contents.vm_data.valid:
-                valid_traces += 1
+                m.valid_traces += 1
             if executor_ptr.contents.vm_data.warm:
-                warm_traces += 1
+                m.warm_traces += 1
 
             exit_count = executor_ptr.contents.exit_count
             chain_depth = executor_ptr.contents.vm_data.chain_depth
             code_size = executor_ptr.contents.code_size
 
-            max_exit_count = max(max_exit_count, exit_count)
-            max_chain_depth = max(max_chain_depth, chain_depth)
+            m.max_exit_count = max(m.max_exit_count, exit_count)
+            m.max_chain_depth = max(m.max_chain_depth, chain_depth)
             if code_size > 0:
-                min_code_size = min(min_code_size, code_size)
+                m.min_code_size = min(m.min_code_size, code_size)
                 density = exit_count / code_size
-                max_exit_density = max(max_exit_density, density)
+                m.max_exit_density = max(m.max_exit_density, density)
 
-                # Scan for watched variables on executors with meaningful exit density.
-                # A density of 0.0 means no bailouts — nothing interesting to scan.
                 if density > 0.0:
                     watched = scan_watched_variables(executor_ptr, namespace)
                     if watched:
                         print(f"[EKG] WATCHED: {', '.join(watched)}", flush=True)
 
-            # --- Delta metrics (only when baseline provided) ---
             if baseline is not None:
                 key = (code_id, offset)
                 if key in baseline:
-                    # Pre-existing executor: compute exit count increase
                     delta_exits = exit_count - baseline[key]
                     if delta_exits > 0:
-                        delta_max_exit_count = max(delta_max_exit_count, delta_exits)
-                        delta_total_exits += delta_exits
+                        m.delta_max_exit_count = max(m.delta_max_exit_count, delta_exits)
+                        m.delta_total_exits += delta_exits
                         if code_size > 0:
                             delta_density = delta_exits / code_size
-                            delta_max_exit_density = max(delta_max_exit_density, delta_density)
+                            m.delta_max_exit_density = max(m.delta_max_exit_density, delta_density)
                 else:
-                    # New executor created by this script
-                    delta_new_executors += 1
-                    delta_max_exit_count = max(delta_max_exit_count, exit_count)
-                    delta_total_exits += exit_count
+                    m.delta_new_executors += 1
+                    m.delta_max_exit_count = max(m.delta_max_exit_count, exit_count)
+                    m.delta_total_exits += exit_count
                     if code_size > 0:
                         delta_density = exit_count / code_size
-                        delta_max_exit_density = max(delta_max_exit_density, delta_density)
+                        m.delta_max_exit_density = max(m.delta_max_exit_density, delta_density)
 
-                    # Track new zombies (didn't exist before, now pending_deletion)
                     if executor_ptr.contents.vm_data.pending_deletion:
-                        delta_new_zombies += 1
+                        m.delta_new_zombies += 1
 
         except Exception as e:
-            if not introspection_error_logged:
+            if not m.introspection_error_logged:
                 print(
                     f"[!] Executor introspection failed: {e}\n"
                     f"    This may indicate a CPython version mismatch with the"
@@ -401,13 +417,12 @@ def get_jit_stats(namespace: dict, baseline: dict[tuple[int, int], int] | None =
                     file=sys.stderr,
                 )
                 traceback.print_exc(file=sys.stderr)
-                introspection_error_logged = True
+                m.introspection_error_logged = True
 
     for name, obj in list(namespace.items()):
         if not isinstance(name, str) or name.startswith("_"):
             continue
 
-        # Extract root code objects from Functions and Methods
         root_code_objs = []
         if isinstance(obj, FunctionType):
             root_code_objs.append(obj.__code__)
@@ -418,41 +433,20 @@ def get_jit_stats(namespace: dict, baseline: dict[tuple[int, int], int] | None =
                 if isinstance(method, FunctionType):
                     root_code_objs.append(method.__code__)
 
-        # Recursively scan all code objects found
         for root_code in root_code_objs:
             for code in walk_code_objects(root_code):
-                functions_scanned += 1
+                m.functions_scanned += 1
                 co_code = code.co_code
                 for offset in range(0, len(co_code), 2):
                     try:
                         executor = _opcode.get_executor(code, offset)
                         if executor:
-                            executor_count += 1
+                            m.executor_count += 1
                             inspect_executor(executor, id(code), offset)
-                    except (ValueError, TypeError):
+                    except ValueError, TypeError:
                         pass
 
-    result = {
-        "executors": executor_count,
-        "functions_scanned": functions_scanned,
-        "jit_available": True,
-        "zombie_traces": zombie_traces,
-        "valid_traces": valid_traces,
-        "warm_traces": warm_traces,
-        "max_exit_count": max_exit_count,
-        "max_chain_depth": max_chain_depth,
-        "min_code_size": min_code_size if min_code_size != float("inf") else 0,
-        "max_exit_density": max_exit_density,
-    }
-
-    if baseline is not None:
-        result["delta_max_exit_count"] = delta_max_exit_count
-        result["delta_max_exit_density"] = delta_max_exit_density
-        result["delta_total_exits"] = delta_total_exits
-        result["delta_new_executors"] = delta_new_executors
-        result["delta_new_zombies"] = delta_new_zombies
-
-    return result
+    return m.to_dict(include_deltas=baseline is not None)
 
 
 def run_session(files: list[str], *, no_ekg: bool = False) -> int:

@@ -91,6 +91,7 @@ All notable changes to this project should be documented in this file.
 
 ### Enhanced
 
+- Extracted `_clamp_and_decay()` helper in `scoring.py` to deduplicate 3× copy-pasted clamping+decay arithmetic in `_prepare_new_coverage_result`, by @devdanzin.
 - Replaced `dict[str, Any]` with existing TypedDicts (`HarnessCoverage`, `CorpusFileMetadata`, `CrashRegistry`) in function signatures across `types.py`, `campaign.py`, `corpus_manager.py`, and `lineage.py` for stronger static typing, by @devdanzin.
 - Deduplicated `load_json_file()` from `report.py`, `campaign.py`, and `triage.py` into `lafleur/utils.py`, fixing divergent exception syntax between copies, by @devdanzin.
 - Added missing `-> None` return annotations to 4 `learning.py` methods, deduplicated `TMP_DIR` constant in `orchestrator.py` (now imported from `corpus_manager`), standardized `triage.py` JSON indent from 4 to 2, and fixed `pyproject.toml` duplicate classifier and inconsistent quote style, by @devdanzin.

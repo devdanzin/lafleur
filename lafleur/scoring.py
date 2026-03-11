@@ -46,6 +46,26 @@ TACHYCARDIA_DECAY_FACTOR = 0.95
 MAX_DENSITY_GROWTH_FACTOR = 5.0
 
 
+def _clamp_and_decay(
+    child_val: float,
+    parent_val: float,
+    growth_factor: float = MAX_DENSITY_GROWTH_FACTOR,
+    decay_factor: float = TACHYCARDIA_DECAY_FACTOR,
+) -> tuple[float, float]:
+    """Clamp a child metric relative to its parent, then apply decay.
+
+    Prevents a single massive spike from setting an unreachable bar for the
+    next generation, then applies exponential decay to gradually cool the value.
+
+    Returns (clamped_value, decayed_value).
+    """
+    if parent_val > 0:
+        clamped = min(parent_val * growth_factor, child_val)
+    else:
+        clamped = child_val
+    return clamped, clamped * decay_factor
+
+
 @dataclass
 class NewCoverageInfo:
     """A data class to hold the counts of new coverage found."""
@@ -721,42 +741,21 @@ class ScoringManager:
         # This is the crucial step: if it's new and not a duplicate, we commit the coverage.
         self._update_global_coverage(child_coverage)
 
-        # --- Dynamic Density Clamping ---
-        # Prevent a single massive spike from setting an unreachable bar for the next generation.
-        child_density = jit_stats.get("max_exit_density") or 0.0
-        parent_density = parent_jit_stats.get("max_exit_density") or 0.0
-
-        if parent_density > 0:
-            clamped_density = min(parent_density * MAX_DENSITY_GROWTH_FACTOR, child_density)
-        else:
-            clamped_density = child_density
-
-        # Also clamp delta density if present
-        child_delta_density = jit_stats.get("child_delta_max_exit_density") or 0.0
-        parent_delta_density = parent_jit_stats.get("child_delta_max_exit_density") or 0.0
-
-        if parent_delta_density > 0:
-            clamped_delta_density = min(
-                parent_delta_density * MAX_DENSITY_GROWTH_FACTOR, child_delta_density
-            )
-        else:
-            clamped_delta_density = child_delta_density
-
-        # Also clamp delta exits if present
-        child_delta_exits = jit_stats.get("child_delta_total_exits") or 0
-        parent_delta_exits = parent_jit_stats.get("child_delta_total_exits") or 0
-
-        if parent_delta_exits > 0:
-            clamped_delta_exits = min(
-                parent_delta_exits * MAX_DENSITY_GROWTH_FACTOR, child_delta_exits
-            )
-        else:
-            clamped_delta_exits = child_delta_exits
-
-        # --- Tachycardia Decay ---
-        saved_density = clamped_density * TACHYCARDIA_DECAY_FACTOR
-        saved_delta_density = clamped_delta_density * TACHYCARDIA_DECAY_FACTOR
-        saved_delta_exits = clamped_delta_exits * TACHYCARDIA_DECAY_FACTOR
+        # --- Dynamic Density Clamping + Tachycardia Decay ---
+        # Clamp each metric relative to its parent (prevent unreachable spikes),
+        # then apply exponential decay to gradually cool the value.
+        clamped_density, saved_density = _clamp_and_decay(
+            jit_stats.get("max_exit_density") or 0.0,
+            parent_jit_stats.get("max_exit_density") or 0.0,
+        )
+        clamped_delta_density, saved_delta_density = _clamp_and_decay(
+            jit_stats.get("child_delta_max_exit_density") or 0.0,
+            parent_jit_stats.get("child_delta_max_exit_density") or 0.0,
+        )
+        clamped_delta_exits, saved_delta_exits = _clamp_and_decay(
+            jit_stats.get("child_delta_total_exits") or 0,
+            parent_jit_stats.get("child_delta_total_exits") or 0,
+        )
 
         if clamped_density > 0:
             print(

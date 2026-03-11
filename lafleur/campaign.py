@@ -85,6 +85,160 @@ WASTE_EVENT_TYPES: frozenset[str] = frozenset(
 )
 
 
+_HTML_STYLE = """\
+    :root {
+      --bg: #1a1a2e;
+      --surface: #16213e;
+      --primary: #0f3460;
+      --accent: #e94560;
+      --text: #eee;
+      --text-dim: #888;
+      --success: #4ade80;
+      --warning: #fbbf24;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.6;
+      padding: 2rem;
+    }
+    h1 { color: var(--accent); margin-bottom: 0.5rem; }
+    h2 { color: var(--text); margin: 2rem 0 1rem; border-bottom: 2px solid var(--primary); padding-bottom: 0.5rem; }
+    .subtitle { color: var(--text-dim); margin-bottom: 2rem; }
+    .kpi-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 1rem;
+      margin-bottom: 2rem;
+    }
+    .kpi-card {
+      background: var(--surface);
+      border-radius: 8px;
+      padding: 1.5rem;
+      border-left: 4px solid var(--accent);
+    }
+    .kpi-card .label { color: var(--text-dim); font-size: 0.875rem; text-transform: uppercase; }
+    .kpi-card .value { font-size: 2rem; font-weight: bold; color: var(--text); }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      background: var(--surface);
+      border-radius: 8px;
+      overflow: hidden;
+    }
+    th, td { padding: 0.75rem 1rem; text-align: left; }
+    th {
+      background: var(--primary);
+      cursor: pointer;
+      user-select: none;
+      white-space: nowrap;
+    }
+    th:hover { background: #1a4a7a; }
+    th::after { content: " \\2195"; opacity: 0.5; }
+    th.asc::after { content: " \\2191"; opacity: 1; }
+    th.desc::after { content: " \\2193"; opacity: 1; }
+    tr:nth-child(even) { background: rgba(255,255,255,0.02); }
+    tr:hover { background: rgba(255,255,255,0.05); }
+    .status {
+      padding: 0.25rem 0.5rem;
+      border-radius: 4px;
+      font-size: 0.75rem;
+      font-weight: bold;
+      text-transform: uppercase;
+    }
+    .status.running { background: var(--success); color: #000; }
+    .status.stopped { background: var(--text-dim); color: #000; }
+    .bar-container {
+      position: relative;
+      background: rgba(255,255,255,0.1);
+      border-radius: 4px;
+      height: 24px;
+      min-width: 100px;
+    }
+    .bar-fill {
+      position: absolute;
+      top: 0;
+      left: 0;
+      height: 100%;
+      border-radius: 4px;
+      opacity: 0.7;
+    }
+    .bar-fill.speed { background: linear-gradient(90deg, #4ade80, #22c55e); }
+    .bar-fill.coverage { background: linear-gradient(90deg, #60a5fa, #3b82f6); }
+    .bar-fill.hits { background: linear-gradient(90deg, #f87171, #ef4444); }
+    .bar-text {
+      position: relative;
+      z-index: 1;
+      display: block;
+      padding: 2px 8px;
+      font-size: 0.875rem;
+      font-weight: 500;
+    }
+    .summary { background: var(--surface); padding: 1.5rem; border-radius: 8px; margin-top: 2rem; }
+    .summary p { margin: 0.5rem 0; }
+    .mutation {
+      background: var(--primary);
+      padding: 0.125rem 0.5rem;
+      border-radius: 4px;
+      font-size: 0.875rem;
+    }
+    .badge {
+      padding: 0.25rem 0.5rem;
+      border-radius: 4px;
+      font-size: 0.7rem;
+      font-weight: bold;
+      text-transform: uppercase;
+    }
+    .badge.regression { background: #dc2626; color: #fff; }
+    .badge.noise { background: #6b7280; color: #fff; }
+    .badge.known { background: #2563eb; color: #fff; }
+    .badge.new { background: #16a34a; color: #fff; }
+    tr.regression { background: rgba(220, 38, 38, 0.15) !important; }
+    tr.regression:hover { background: rgba(220, 38, 38, 0.25) !important; }
+    tr.noise { opacity: 0.6; }
+    tr.noise:hover { opacity: 0.8; }
+    .health-badge {
+      padding: 0.25rem 0.5rem;
+      border-radius: 4px;
+      font-size: 0.7rem;
+      font-weight: bold;
+    }
+    .health-ok { background: var(--success); color: #000; }
+    .health-warn { background: var(--warning); color: #000; }
+    .health-bad { background: var(--accent); color: #fff; }
+    .timeout-high { color: #dc3545; font-weight: bold; }
+    a { color: #60a5fa; text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    footer { margin-top: 3rem; text-align: center; color: var(--text-dim); font-size: 0.875rem; }"""
+
+
+_HTML_SCRIPT = """\
+    document.querySelectorAll('th').forEach(th => {
+      th.addEventListener('click', () => {
+        const table = th.closest('table');
+        const tbody = table.querySelector('tbody');
+        const idx = Array.from(th.parentNode.children).indexOf(th);
+        const rows = Array.from(tbody.querySelectorAll('tr'));
+        const asc = !th.classList.contains('asc');
+
+        th.parentNode.querySelectorAll('th').forEach(h => h.classList.remove('asc', 'desc'));
+        th.classList.add(asc ? 'asc' : 'desc');
+
+        rows.sort((a, b) => {
+          const aCell = a.children[idx], bCell = b.children[idx];
+          let aVal = aCell.dataset.sort !== undefined ? aCell.dataset.sort : aCell.textContent.trim();
+          let bVal = bCell.dataset.sort !== undefined ? bCell.dataset.sort : bCell.textContent.trim();
+          const aNum = parseFloat(aVal.replace(/,/g, '')), bNum = parseFloat(bVal.replace(/,/g, ''));
+          if (!isNaN(aNum) && !isNaN(bNum)) return asc ? aNum - bNum : bNum - aNum;
+          return asc ? aVal.localeCompare(bVal) : bVal.localeCompare(aVal);
+        });
+        rows.forEach(row => tbody.appendChild(row));
+      });
+    });"""
+
+
 def load_json_file(path: Path) -> dict[str, Any] | None:
     """Load a JSON file, returning None if it doesn't exist or is invalid."""
     try:
@@ -1113,6 +1267,117 @@ class CampaignAggregator:
         return "\n".join(lines)
 
 
+def _build_html_instance_rows(
+    sorted_instances: list[InstanceData],
+    max_speed: float,
+    max_coverage: int,
+) -> str:
+    """Build HTML table rows for the instance leaderboard.
+
+    Args:
+        sorted_instances: Instances sorted by coverage descending.
+        max_speed: Maximum speed across all instances (for bar scaling).
+        max_coverage: Maximum coverage across all instances (for bar scaling).
+
+    Returns:
+        Newline-joined HTML table rows.
+    """
+    instance_rows = []
+    for inst in sorted_instances:
+        name_escaped = html.escape(inst.name)
+        dir_escaped = html.escape(inst.relative_dir)
+        status_class = "running" if inst.status == "Running" else "stopped"
+        speed_pct = (inst.speed / max_speed) * 100 if max_speed else 0
+        coverage_pct = (inst.coverage / max_coverage) * 100 if max_coverage else 0
+        speed_str = f"{inst.speed:.2f}/s" if inst.speed > 0 else "N/A"
+
+        if inst.health_summary and inst.stats:
+            total_muts = inst.stats.get("total_mutations", 0)
+            if total_muts > 0:
+                inst_waste = inst.health_summary["waste_event_count"] / total_muts
+            else:
+                inst_waste = 0.0
+            short_label, _ = CampaignAggregator.health_grade(inst_waste)
+            health_class = f"health-{short_label.lower()}"
+            health_badge = f'<span class="health-badge {health_class}">{short_label}</span>'
+        else:
+            health_badge = '<span class="health-badge">N/A</span>'
+
+        to_class = ' class="timeout-high"' if inst.timeout_rate > 15 else ""
+        instance_rows.append(f"""        <tr>
+          <td>{name_escaped}</td>
+          <td><span class="status {status_class}">{inst.status}</span></td>
+          <td data-sort="{inst.speed:.4f}"><div class="bar-container"><div class="bar-fill speed" style="width:{speed_pct:.1f}%"></div><span class="bar-text">{speed_str}</span></div></td>
+          <td data-sort="{inst.coverage}"><div class="bar-container"><div class="bar-fill coverage" style="width:{coverage_pct:.1f}%"></div><span class="bar-text">{inst.coverage:,}</span></div></td>
+          <td data-sort="{inst.corpus_size}">{inst.corpus_size:,}</td>
+          <td data-sort="{inst.crash_count}">{inst.crash_count:,}</td>
+          <td data-sort="{inst.timeout_rate:.1f}"{to_class}>{inst.timeout_rate:.1f}%</td>
+          <td>{health_badge}</td>
+          <td>{dir_escaped}</td>
+        </tr>""")
+
+    return chr(10).join(instance_rows)
+
+
+def _build_html_crash_rows(
+    sorted_crashes: list[tuple[str, CrashInfo]],
+    max_hits: int,
+    instance_count: int,
+    status_priority: dict[str, int],
+) -> str:
+    """Build HTML table rows for the global crash table.
+
+    Args:
+        sorted_crashes: Crash entries sorted by priority.
+        max_hits: Maximum hit count across all crashes (for bar scaling).
+        instance_count: Total number of instances (for repro percentage).
+        status_priority: Mapping of status labels to sort priority values.
+
+    Returns:
+        Newline-joined HTML table rows.
+    """
+    crash_rows = []
+    for fingerprint, info in sorted_crashes:
+        fp_escaped = html.escape(fingerprint[:40] if len(fingerprint) > 40 else fingerprint)
+        instance_pct = (len(info.finding_instances) / instance_count * 100) if instance_count else 0
+        hits_pct = (info.count / max_hits) * 100 if max_hits else 0
+
+        status_label = info.status_label
+        row_class = ""
+        if status_label == "REGRESSION":
+            row_class = "regression"
+            badge = '<span class="badge regression">REGRESSION</span>'
+        elif status_label == "NOISE":
+            row_class = "noise"
+            badge = '<span class="badge noise">NOISE</span>'
+        elif status_label == "KNOWN":
+            badge = '<span class="badge known">KNOWN</span>'
+        else:
+            badge = '<span class="badge new">NEW</span>'
+
+        if info.issue_number:
+            issue_url = (
+                info.issue_url or f"https://github.com/python/cpython/issues/{info.issue_number}"
+            )
+            issue_html_str = (
+                f'<a href="{html.escape(issue_url)}" target="_blank">#{info.issue_number}</a>'
+            )
+        else:
+            issue_html_str = "-"
+
+        crash_rows.append(
+            f"""        <tr class="{row_class}" data-status="{status_priority.get(status_label, 1)}">
+          <td>{badge}</td>
+          <td title="{html.escape(fingerprint)}">{fp_escaped}</td>
+          <td data-sort="{info.count}"><div class="bar-container"><div class="bar-fill hits" style="width:{hits_pct:.1f}%"></div><span class="bar-text">{info.count:,}</span></div></td>
+          <td data-sort="{instance_pct:.1f}">{instance_pct:.1f}%</td>
+          <td>{issue_html_str}</td>
+        </tr>"""
+        )
+
+    return chr(10).join(crash_rows)
+
+
 def generate_html_report(aggregator: CampaignAggregator) -> str:
     """
     Generate an offline HTML report with embedded CSS and JavaScript.
@@ -1148,76 +1413,10 @@ def generate_html_report(aggregator: CampaignAggregator) -> str:
         ),
     )[:15]  # Top 15
 
-    instance_rows = []
-    for inst in sorted_instances:
-        name_escaped = html.escape(inst.name)
-        dir_escaped = html.escape(inst.relative_dir)
-        status_class = "running" if inst.status == "Running" else "stopped"
-        speed_pct = (inst.speed / max_speed) * 100 if max_speed else 0
-        coverage_pct = (inst.coverage / max_coverage) * 100 if max_coverage else 0
-        speed_str = f"{inst.speed:.2f}/s" if inst.speed > 0 else "N/A"
-
-        if inst.health_summary and inst.stats:
-            total_muts = inst.stats.get("total_mutations", 0)
-            if total_muts > 0:
-                inst_waste = inst.health_summary["waste_event_count"] / total_muts
-            else:
-                inst_waste = 0.0
-            short_label, _ = CampaignAggregator.health_grade(inst_waste)
-            health_class = f"health-{short_label.lower()}"
-            health_badge = f'<span class="health-badge {health_class}">{short_label}</span>'
-        else:
-            health_badge = '<span class="health-badge">N/A</span>'
-
-        to_class = ' class="timeout-high"' if inst.timeout_rate > 15 else ""
-        instance_rows.append(f"""        <tr>
-          <td>{name_escaped}</td>
-          <td><span class="status {status_class}">{inst.status}</span></td>
-          <td data-sort="{inst.speed:.4f}"><div class="bar-container"><div class="bar-fill speed" style="width:{speed_pct:.1f}%"></div><span class="bar-text">{speed_str}</span></div></td>
-          <td data-sort="{inst.coverage}"><div class="bar-container"><div class="bar-fill coverage" style="width:{coverage_pct:.1f}%"></div><span class="bar-text">{inst.coverage:,}</span></div></td>
-          <td data-sort="{inst.corpus_size}">{inst.corpus_size:,}</td>
-          <td data-sort="{inst.crash_count}">{inst.crash_count:,}</td>
-          <td data-sort="{inst.timeout_rate:.1f}"{to_class}>{inst.timeout_rate:.1f}%</td>
-          <td>{health_badge}</td>
-          <td>{dir_escaped}</td>
-        </tr>""")
-
-    crash_rows = []
-    for fingerprint, info in sorted_crashes:
-        fp_escaped = html.escape(fingerprint[:40] if len(fingerprint) > 40 else fingerprint)
-        instance_pct = (len(info.finding_instances) / instance_count * 100) if instance_count else 0
-        hits_pct = (info.count / max_hits) * 100 if max_hits else 0
-
-        status_label = info.status_label
-        row_class = ""
-        if status_label == "REGRESSION":
-            row_class = "regression"
-            badge = '<span class="badge regression">REGRESSION</span>'
-        elif status_label == "NOISE":
-            row_class = "noise"
-            badge = '<span class="badge noise">NOISE</span>'
-        elif status_label == "KNOWN":
-            badge = '<span class="badge known">KNOWN</span>'
-        else:
-            badge = '<span class="badge new">NEW</span>'
-
-        if info.issue_number:
-            issue_url = (
-                info.issue_url or f"https://github.com/python/cpython/issues/{info.issue_number}"
-            )
-            issue_html = (
-                f'<a href="{html.escape(issue_url)}" target="_blank">#{info.issue_number}</a>'
-            )
-        else:
-            issue_html = "-"
-
-        crash_rows.append(f"""        <tr class="{row_class}" data-status="{status_priority.get(status_label, 1)}">
-          <td>{badge}</td>
-          <td title="{html.escape(fingerprint)}">{fp_escaped}</td>
-          <td data-sort="{info.count}"><div class="bar-container"><div class="bar-fill hits" style="width:{hits_pct:.1f}%"></div><span class="bar-text">{info.count:,}</span></div></td>
-          <td data-sort="{instance_pct:.1f}">{instance_pct:.1f}%</td>
-          <td>{issue_html}</td>
-        </tr>""")
+    instance_rows_html = _build_html_instance_rows(sorted_instances, max_speed, max_coverage)
+    crash_rows_html = _build_html_crash_rows(
+        sorted_crashes, max_hits, instance_count, status_priority
+    )
 
     # Top strategies
     top_strategies = aggregator.get_top_strategies(5)
@@ -1331,132 +1530,7 @@ def generate_html_report(aggregator: CampaignAggregator) -> str:
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Lafleur Campaign Report</title>
   <style>
-    :root {{
-      --bg: #1a1a2e;
-      --surface: #16213e;
-      --primary: #0f3460;
-      --accent: #e94560;
-      --text: #eee;
-      --text-dim: #888;
-      --success: #4ade80;
-      --warning: #fbbf24;
-    }}
-    * {{ box-sizing: border-box; margin: 0; padding: 0; }}
-    body {{
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-      background: var(--bg);
-      color: var(--text);
-      line-height: 1.6;
-      padding: 2rem;
-    }}
-    h1 {{ color: var(--accent); margin-bottom: 0.5rem; }}
-    h2 {{ color: var(--text); margin: 2rem 0 1rem; border-bottom: 2px solid var(--primary); padding-bottom: 0.5rem; }}
-    .subtitle {{ color: var(--text-dim); margin-bottom: 2rem; }}
-    .kpi-grid {{
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-      gap: 1rem;
-      margin-bottom: 2rem;
-    }}
-    .kpi-card {{
-      background: var(--surface);
-      border-radius: 8px;
-      padding: 1.5rem;
-      border-left: 4px solid var(--accent);
-    }}
-    .kpi-card .label {{ color: var(--text-dim); font-size: 0.875rem; text-transform: uppercase; }}
-    .kpi-card .value {{ font-size: 2rem; font-weight: bold; color: var(--text); }}
-    table {{
-      width: 100%;
-      border-collapse: collapse;
-      background: var(--surface);
-      border-radius: 8px;
-      overflow: hidden;
-    }}
-    th, td {{ padding: 0.75rem 1rem; text-align: left; }}
-    th {{
-      background: var(--primary);
-      cursor: pointer;
-      user-select: none;
-      white-space: nowrap;
-    }}
-    th:hover {{ background: #1a4a7a; }}
-    th::after {{ content: " \\2195"; opacity: 0.5; }}
-    th.asc::after {{ content: " \\2191"; opacity: 1; }}
-    th.desc::after {{ content: " \\2193"; opacity: 1; }}
-    tr:nth-child(even) {{ background: rgba(255,255,255,0.02); }}
-    tr:hover {{ background: rgba(255,255,255,0.05); }}
-    .status {{
-      padding: 0.25rem 0.5rem;
-      border-radius: 4px;
-      font-size: 0.75rem;
-      font-weight: bold;
-      text-transform: uppercase;
-    }}
-    .status.running {{ background: var(--success); color: #000; }}
-    .status.stopped {{ background: var(--text-dim); color: #000; }}
-    .bar-container {{
-      position: relative;
-      background: rgba(255,255,255,0.1);
-      border-radius: 4px;
-      height: 24px;
-      min-width: 100px;
-    }}
-    .bar-fill {{
-      position: absolute;
-      top: 0;
-      left: 0;
-      height: 100%;
-      border-radius: 4px;
-      opacity: 0.7;
-    }}
-    .bar-fill.speed {{ background: linear-gradient(90deg, #4ade80, #22c55e); }}
-    .bar-fill.coverage {{ background: linear-gradient(90deg, #60a5fa, #3b82f6); }}
-    .bar-fill.hits {{ background: linear-gradient(90deg, #f87171, #ef4444); }}
-    .bar-text {{
-      position: relative;
-      z-index: 1;
-      display: block;
-      padding: 2px 8px;
-      font-size: 0.875rem;
-      font-weight: 500;
-    }}
-    .summary {{ background: var(--surface); padding: 1.5rem; border-radius: 8px; margin-top: 2rem; }}
-    .summary p {{ margin: 0.5rem 0; }}
-    .mutation {{
-      background: var(--primary);
-      padding: 0.125rem 0.5rem;
-      border-radius: 4px;
-      font-size: 0.875rem;
-    }}
-    .badge {{
-      padding: 0.25rem 0.5rem;
-      border-radius: 4px;
-      font-size: 0.7rem;
-      font-weight: bold;
-      text-transform: uppercase;
-    }}
-    .badge.regression {{ background: #dc2626; color: #fff; }}
-    .badge.noise {{ background: #6b7280; color: #fff; }}
-    .badge.known {{ background: #2563eb; color: #fff; }}
-    .badge.new {{ background: #16a34a; color: #fff; }}
-    tr.regression {{ background: rgba(220, 38, 38, 0.15) !important; }}
-    tr.regression:hover {{ background: rgba(220, 38, 38, 0.25) !important; }}
-    tr.noise {{ opacity: 0.6; }}
-    tr.noise:hover {{ opacity: 0.8; }}
-    .health-badge {{
-      padding: 0.25rem 0.5rem;
-      border-radius: 4px;
-      font-size: 0.7rem;
-      font-weight: bold;
-    }}
-    .health-ok {{ background: var(--success); color: #000; }}
-    .health-warn {{ background: var(--warning); color: #000; }}
-    .health-bad {{ background: var(--accent); color: #fff; }}
-    .timeout-high {{ color: #dc3545; font-weight: bold; }}
-    a {{ color: #60a5fa; text-decoration: none; }}
-    a:hover {{ text-decoration: underline; }}
-    footer {{ margin-top: 3rem; text-align: center; color: var(--text-dim); font-size: 0.875rem; }}
+{_HTML_STYLE}
   </style>
 </head>
 <body>
@@ -1508,7 +1582,7 @@ def generate_html_report(aggregator: CampaignAggregator) -> str:
       </tr>
     </thead>
     <tbody>
-{chr(10).join(instance_rows)}
+{instance_rows_html}
     </tbody>
   </table>
 
@@ -1524,7 +1598,7 @@ def generate_html_report(aggregator: CampaignAggregator) -> str:
       </tr>
     </thead>
     <tbody>
-{chr(10).join(crash_rows)}
+{crash_rows_html}
     </tbody>
   </table>
 {crash_attribution_html}
@@ -1549,28 +1623,7 @@ def generate_html_report(aggregator: CampaignAggregator) -> str:
   <footer>Lafleur Fuzzer Campaign Analysis</footer>
 
   <script>
-    document.querySelectorAll('th').forEach(th => {{
-      th.addEventListener('click', () => {{
-        const table = th.closest('table');
-        const tbody = table.querySelector('tbody');
-        const idx = Array.from(th.parentNode.children).indexOf(th);
-        const rows = Array.from(tbody.querySelectorAll('tr'));
-        const asc = !th.classList.contains('asc');
-
-        th.parentNode.querySelectorAll('th').forEach(h => h.classList.remove('asc', 'desc'));
-        th.classList.add(asc ? 'asc' : 'desc');
-
-        rows.sort((a, b) => {{
-          const aCell = a.children[idx], bCell = b.children[idx];
-          let aVal = aCell.dataset.sort !== undefined ? aCell.dataset.sort : aCell.textContent.trim();
-          let bVal = bCell.dataset.sort !== undefined ? bCell.dataset.sort : bCell.textContent.trim();
-          const aNum = parseFloat(aVal.replace(/,/g, '')), bNum = parseFloat(bVal.replace(/,/g, ''));
-          if (!isNaN(aNum) && !isNaN(bNum)) return asc ? aNum - bNum : bNum - aNum;
-          return asc ? aVal.localeCompare(bVal) : bVal.localeCompare(aVal);
-        }});
-        rows.forEach(row => tbody.appendChild(row));
-      }});
-    }});
+{_HTML_SCRIPT}
   </script>
 </body>
 </html>"""

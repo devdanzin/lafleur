@@ -17,9 +17,15 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable
 
-from lafleur.coverage import HarnessCoverage, save_coverage_state, CoverageManager
+from lafleur.coverage import save_coverage_state, CoverageManager
 from lafleur.health import FILE_SIZE_WARNING_THRESHOLD
-from lafleur.types import CorpusFileMetadata, MutationInfo, NewCoverageResult, RunStats
+from lafleur.types import (
+    CorpusFileMetadata,
+    HarnessCoverage,
+    MutationInfo,
+    NewCoverageResult,
+    RunStats,
+)
 from lafleur.utils import ExecutionResult, FUZZING_ENV
 
 if TYPE_CHECKING:

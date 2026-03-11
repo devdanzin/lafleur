@@ -115,6 +115,7 @@ All notable changes to this project should be documented in this file.
 - Decomposed `InterestingnessScorer.calculate_score` into `_score_timing`, `_score_jit_vitals`, and `_score_coverage` private methods in `scoring.py`, by @devdanzin.
 - Introduced `ScoringContext` frozen dataclass to bundle 9 parameters of `score_and_decide_interestingness` in `scoring.py`, reducing the method signature from 11 to 3 parameters, by @devdanzin.
 - Fixed API surface inconsistencies: changed `driver.py:main()` from returning `int` to `None` (using `sys.exit()`) matching all other entry points, prefixed internal ctypes structs `PyVMData`/`PyExecutorObject` with underscore, and removed private `_dump_unparse_diagnostics` from `mutators/__init__.py` `__all__`, by @devdanzin.
+- Moved `HarnessCoverage` TypedDict from `coverage.py` to `types.py`, fixing a layer violation where the types module depended on a domain module, by @devdanzin.
 - Replaced fragile `__name__.replace()` strategy name extraction in `mutation_controller.py` with an explicit `strategy_map` dict mapping methods to canonical names, by @devdanzin.
 - Extracted `_prompt_issue_number` and `_prompt_note` shared helpers in `triage.py` to deduplicate interactive input logic between `run_interactive_triage` and `run_review_triage`, with unified EOF handling via `_EOFReceived` sentinel, by @devdanzin.
 - Extracted `_compose_session` helper in `execution.py` to isolate session file composition logic (solo/standard/mixer) from `execute_child`, reducing nesting depth, by @devdanzin.

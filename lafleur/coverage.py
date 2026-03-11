@@ -16,8 +16,9 @@ import sys
 from collections import defaultdict, Counter
 from enum import Enum, auto
 from pathlib import Path
-from typing import Any, Callable, TypedDict
+from typing import Any, Callable
 
+from lafleur.types import HarnessCoverage
 from lafleur.uop_names import UOP_NAMES
 
 migrate_state_to_integers: Callable[[dict[str, Any]], dict[str, Any]] | None
@@ -137,16 +138,6 @@ class CoverageManager:
         self.state["next_id_map"][item_type] += 1
         reverse_map[new_id] = item_string
         return new_id
-
-
-class HarnessCoverage(TypedDict, total=False):
-    """Type for harness coverage data."""
-
-    uops: Counter[int]
-    edges: Counter[int]
-    rare_events: Counter[int]
-    trace_length: int
-    side_exits: int
 
 
 def _create_empty_harness_coverage() -> HarnessCoverage:

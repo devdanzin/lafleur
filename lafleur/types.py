@@ -14,10 +14,19 @@ dispatch and preventing accidental mutation.
 
 from __future__ import annotations
 
+from collections import Counter
 from dataclasses import dataclass
 from typing import TypedDict
 
-from lafleur.coverage import HarnessCoverage
+
+class HarnessCoverage(TypedDict, total=False):
+    """Coverage data for a single harness execution."""
+
+    uops: Counter[int]
+    edges: Counter[int]
+    rare_events: Counter[int]
+    trace_length: int
+    side_exits: int
 
 
 class RunStats(TypedDict, total=False):

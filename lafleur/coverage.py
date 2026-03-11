@@ -281,7 +281,7 @@ def load_coverage_state() -> dict[str, Any]:
 
         ensure_state_schema(state)
         return state
-    except (pickle.UnpicklingError, IOError, EOFError) as e:
+    except (pickle.UnpicklingError, OSError, EOFError) as e:
         print(f"Warning: Could not load coverage state file. Error: {e}", file=sys.stderr)
         state = {}
         ensure_state_schema(state)
@@ -299,7 +299,7 @@ def save_coverage_state(state: dict[str, Any]) -> None:
             pickle.dump(state, f)
         # The write was successful, now atomically rename the file.
         tmp_path.rename(COVERAGE_STATE_FILE)
-    except (IOError, OSError, pickle.PicklingError) as e:
+    except (OSError, pickle.PicklingError) as e:
         print(f"[!] Error during atomic save of coverage state: {e}", file=sys.stderr)
         # If an error occurred, try to clean up the temporary file.
         if tmp_path.exists():

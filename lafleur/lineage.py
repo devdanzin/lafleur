@@ -709,7 +709,7 @@ def scan_crashes(crashes_dir: Path) -> list[dict]:
         try:
             with open(metadata_path) as f:
                 meta = json.load(f)
-        except (json.JSONDecodeError, OSError):
+        except json.JSONDecodeError, OSError:
             continue
 
         crash_info: dict = {
@@ -1661,7 +1661,7 @@ def render_ancestry_svg(
             timeout=60,
         )
         return result.stdout if result.returncode == 0 else None
-    except (subprocess.TimeoutExpired, OSError):
+    except subprocess.TimeoutExpired, OSError:
         return None
 
 
@@ -2042,6 +2042,223 @@ def resolve_target(target_str: str, per_file_coverage: dict[str, dict]) -> tuple
 
 
 # ---------------------------------------------------------------------------
+# Per-mode handlers
+# ---------------------------------------------------------------------------
+
+
+def _run_ancestry_mode(
+    args: argparse.Namespace,
+    graph: LineageGraph,
+    state: dict,
+) -> tuple[Subgraph, dict]:
+    """Handle 'ancestry' mode: resolve target and build ancestry subgraph."""
+    per_file_coverage = state.get("per_file_coverage", {})
+    target, target_type = resolve_target(args.target, per_file_coverage)
+    multi_lineage = getattr(args, "multi_lineage", False)
+    attack_only = getattr(args, "attack_only", False)
+
+    ctx: dict = {}
+
+    if target_type == "crash_dir" and isinstance(target, Path):
+        ctx["crash_dir"] = target
+        if multi_lineage or not attack_only:
+            subgraph = extract_session_ancestry(
+                graph, target, per_file_coverage, attack_only=attack_only
+            )
+            ctx["role_to_file"] = resolve_session_scripts(target, per_file_coverage)
+        else:
+            # attack-only: find the warmup/parent and trace it
+            role_to_file = resolve_session_scripts(target, per_file_coverage)
+            ctx["role_to_file"] = role_to_file
+            warmup = role_to_file.get("warmup")
+            if warmup and warmup in graph.metadata:
+                subgraph = extract_ancestry(graph, warmup)
+                ctx["chain"] = _extract_ancestry_chain(graph, warmup)
+            else:
+                print("Error: no resolvable warmup file.", file=sys.stderr)
+                sys.exit(1)
+    else:
+        assert isinstance(target, str)
+        subgraph = extract_ancestry(graph, target)
+        ctx["chain"] = _extract_ancestry_chain(graph, target)
+
+    return subgraph, ctx
+
+
+def _run_descendants_mode(
+    args: argparse.Namespace,
+    graph: LineageGraph,
+    state: dict,
+) -> tuple[Subgraph, dict]:
+    """Handle 'descendants' mode: resolve root and build descendant subgraph."""
+    per_file_coverage = state.get("per_file_coverage", {})
+    root, _ = resolve_target(args.root, per_file_coverage)
+    assert isinstance(root, str)
+    subgraph = extract_descendants(
+        graph,
+        root,
+        max_depth=args.max_depth,
+        collapse_sterile=not args.no_collapse_sterile,
+    )
+    return subgraph, {}
+
+
+def _run_mrca_mode(
+    args: argparse.Namespace,
+    graph: LineageGraph,
+    state: dict,
+) -> tuple[Subgraph, dict]:
+    """Handle 'mrca' mode: resolve targets and compute most recent common ancestor."""
+    per_file_coverage = state.get("per_file_coverage", {})
+    mrca_targets_raw = [resolve_target(t, per_file_coverage) for t in args.targets]
+    mrca_targets = [str(t) for t, _ in mrca_targets_raw]
+    subgraph = extract_mrca(graph, mrca_targets)
+
+    mrca_node: str | None = None
+    for node, role in subgraph.special_nodes.items():
+        if role == "mrca":
+            mrca_node = node
+            break
+
+    return subgraph, {"mrca_node": mrca_node, "mrca_targets": mrca_targets}
+
+
+def _run_forest_mode(
+    args: argparse.Namespace,
+    graph: LineageGraph,
+    state: dict,
+) -> tuple[Subgraph, dict]:
+    """Handle 'forest' mode: extract pruned forest overview."""
+    subgraph = extract_forest(
+        graph,
+        max_depth=args.max_depth,
+        min_descendants=args.min_descendants,
+        min_strahler=args.min_strahler,
+        collapse_sterile=not args.no_collapse_sterile,
+    )
+    return subgraph, {"total_seeds": len(graph.roots)}
+
+
+def _emit_output(
+    args: argparse.Namespace,
+    subgraph: Subgraph,
+    graph: LineageGraph,
+    state: dict,
+    mode_context: dict,
+) -> None:
+    """Common output pipeline: crash attachment, metrics, decoration, emit, stats."""
+    # Attach crash nodes if requested
+    if args.include_crashes:
+        crashes = scan_crashes(args.crashes_dir)
+        if crashes:
+            attached = attach_crashes(subgraph, crashes, graph)
+            if attached:
+                print(f"  Attached {attached} crash nodes", file=sys.stderr)
+            else:
+                print("  No crashes found matching nodes in this subgraph.", file=sys.stderr)
+        else:
+            print("  No crash directories found.", file=sys.stderr)
+
+    # Compute metrics
+    metrics = compute_tree_metrics(subgraph, graph)
+
+    # Only show discoveries for ancestry/mrca modes
+    effective_show_discoveries = args.show_discoveries and args.mode in ("ancestry", "mrca")
+
+    include_legend = not args.no_legend
+
+    # Decorate
+    decorated = decorate(
+        subgraph,
+        graph,
+        label_style=args.label_style,
+        no_color=args.no_color,
+        metrics=metrics,
+        show_strahler=args.show_strahler,
+        show_success_rate=args.show_success_rate,
+        show_discoveries=effective_show_discoveries,
+        state=state if effective_show_discoveries else None,
+    )
+    decorated.graph_attrs["rankdir"] = args.layout
+
+    # Compute edge discoveries for JSON output
+    edge_discoveries: dict[tuple[str, str], list[str]] | None = None
+    if effective_show_discoveries and state is not None:
+        edge_discoveries = {}
+        for parent_node, child_node in subgraph.edges:
+            disc = compute_edge_discoveries(parent_node, child_node, graph, state)
+            if disc:
+                edge_discoveries[(parent_node, child_node)] = disc
+
+    # Emit
+    if args.json:
+        output = emit_json(
+            decorated, graph, subgraph, metrics=metrics, edge_discoveries=edge_discoveries
+        )
+    else:
+        output = emit_dot(decorated, include_legend=include_legend, no_color=args.no_color)
+
+    # HTML output
+    if args.html:
+        dot_output = emit_dot(decorated, include_legend=include_legend, no_color=args.no_color)
+        info = f"Mode: {args.mode} | Nodes: {len(subgraph.nodes)}"
+        if metrics:
+            info += f" | Strahler: {metrics.max_strahler}"
+        success = emit_html(dot_output, args.html, title=f"Lafleur Lineage: {args.mode}", info=info)
+        if not success:
+            sys.exit(1)
+
+    # Render or write
+    if args.render:
+        output_path = args.output or Path(f"lineage.{args.format}")
+        dot_output = emit_dot(decorated, include_legend=include_legend, no_color=args.no_color)
+        success = render_graphviz(dot_output, output_path, fmt=args.format)
+        if success:
+            print(f"Rendered to {output_path}", file=sys.stderr)
+        else:
+            sys.exit(1)
+    elif args.output:
+        args.output.write_text(output)
+    else:
+        print(output)
+
+    # Print statistics to stderr
+    _print_mode_stats(args, subgraph, graph, metrics, mode_context)
+
+
+def _print_mode_stats(
+    args: argparse.Namespace,
+    subgraph: Subgraph,
+    graph: LineageGraph,
+    metrics: TreeMetrics | None,
+    mode_context: dict,
+) -> None:
+    """Dispatch stats printing to the appropriate mode-specific function."""
+    if args.mode == "ancestry":
+        role_to_file = mode_context.get("role_to_file")
+        crash_dir = mode_context.get("crash_dir")
+        chain = mode_context.get("chain")
+        if role_to_file is not None and crash_dir is not None:
+            print_session_ancestry_stats(crash_dir, role_to_file, subgraph, graph)
+        elif chain is not None:
+            print_ancestry_stats(chain, graph)
+    elif args.mode == "descendants":
+        print_descendants_stats(subgraph, graph, metrics=metrics)
+    elif args.mode == "mrca":
+        mrca_targets = mode_context.get("mrca_targets", [])
+        mrca_node = mode_context.get("mrca_node")
+        print_mrca_stats(mrca_targets, mrca_node, subgraph, graph)
+    elif args.mode == "forest":
+        total_seeds = mode_context.get("total_seeds", len(graph.roots))
+        filtered_count = total_seeds - len(
+            [n for n in subgraph.nodes if not n.startswith("__") and graph.parent.get(n) is None]
+        )
+        print_forest_stats(
+            subgraph, graph, metrics, total_seeds=total_seeds, filtered_count=filtered_count
+        )
+
+
+# ---------------------------------------------------------------------------
 # CLI entry point
 # ---------------------------------------------------------------------------
 
@@ -2221,168 +2438,26 @@ Examples:
         parser.print_help()
         sys.exit(0)
 
-    # Load state
+    # Load state and build graph
     state = load_coverage_state(args.state_path)
-    per_file_coverage = state.get("per_file_coverage", {})
+    graph = build_adjacency_graph(state.get("per_file_coverage", {}))
 
-    # Build graph
-    graph = build_adjacency_graph(per_file_coverage)
-
-    # Extract subgraph based on mode
-    mrca_node: str | None = None
-    mrca_targets: list[str] = []
-    chain: list[str] | None = None
-    role_to_file: dict[str, str | None] | None = None
-    crash_dir: Path | None = None
-    total_seeds = len(graph.roots)
-
-    if args.mode == "ancestry":
-        target, target_type = resolve_target(args.target, per_file_coverage)
-        multi_lineage = getattr(args, "multi_lineage", False)
-        attack_only = getattr(args, "attack_only", False)
-
-        if target_type == "crash_dir" and isinstance(target, Path):
-            crash_dir = target
-            if multi_lineage or not attack_only:
-                subgraph = extract_session_ancestry(
-                    graph, crash_dir, per_file_coverage, attack_only=attack_only
-                )
-                role_to_file = resolve_session_scripts(crash_dir, per_file_coverage)
-            else:
-                # attack-only: find the warmup/parent and trace it
-                role_to_file = resolve_session_scripts(crash_dir, per_file_coverage)
-                warmup = role_to_file.get("warmup")
-                if warmup and warmup in graph.metadata:
-                    subgraph = extract_ancestry(graph, warmup)
-                    chain = _extract_ancestry_chain(graph, warmup)
-                else:
-                    print("Error: no resolvable warmup file.", file=sys.stderr)
-                    sys.exit(1)
-        else:
-            assert isinstance(target, str)
-            subgraph = extract_ancestry(graph, target)
-            chain = _extract_ancestry_chain(graph, target)
-    elif args.mode == "descendants":
-        root, _ = resolve_target(args.root, per_file_coverage)
-        assert isinstance(root, str)
-        subgraph = extract_descendants(
-            graph,
-            root,
-            max_depth=args.max_depth,
-            collapse_sterile=not args.no_collapse_sterile,
-        )
-    elif args.mode == "mrca":
-        mrca_targets_raw = [resolve_target(t, per_file_coverage) for t in args.targets]
-        mrca_targets = [str(t) for t, _ in mrca_targets_raw]
-        subgraph = extract_mrca(graph, mrca_targets)
-        for node, role in subgraph.special_nodes.items():
-            if role == "mrca":
-                mrca_node = node
-                break
-    elif args.mode == "forest":
-        subgraph = extract_forest(
-            graph,
-            max_depth=args.max_depth,
-            min_descendants=args.min_descendants,
-            min_strahler=args.min_strahler,
-            collapse_sterile=not args.no_collapse_sterile,
-        )
-    else:
+    # Dispatch to mode handler
+    handlers = {
+        "ancestry": _run_ancestry_mode,
+        "descendants": _run_descendants_mode,
+        "mrca": _run_mrca_mode,
+        "forest": _run_forest_mode,
+    }
+    handler = handlers.get(args.mode)
+    if handler is None:
         parser.print_help()
         sys.exit(0)
 
-    # Attach crash nodes if requested
-    if args.include_crashes:
-        crashes = scan_crashes(args.crashes_dir)
-        if crashes:
-            attached = attach_crashes(subgraph, crashes, graph)
-            if attached:
-                print(f"  Attached {attached} crash nodes", file=sys.stderr)
-            else:
-                print("  No crashes found matching nodes in this subgraph.", file=sys.stderr)
-        else:
-            print("  No crash directories found.", file=sys.stderr)
+    subgraph, mode_context = handler(args, graph, state)
 
-    # Compute metrics
-    metrics = compute_tree_metrics(subgraph, graph)
-
-    # Only show discoveries for ancestry/mrca modes
-    effective_show_discoveries = args.show_discoveries and args.mode in ("ancestry", "mrca")
-
-    include_legend = not args.no_legend
-
-    # Decorate
-    decorated = decorate(
-        subgraph,
-        graph,
-        label_style=args.label_style,
-        no_color=args.no_color,
-        metrics=metrics,
-        show_strahler=args.show_strahler,
-        show_success_rate=args.show_success_rate,
-        show_discoveries=effective_show_discoveries,
-        state=state if effective_show_discoveries else None,
-    )
-    decorated.graph_attrs["rankdir"] = args.layout
-
-    # Compute edge discoveries for JSON output
-    edge_discoveries: dict[tuple[str, str], list[str]] | None = None
-    if effective_show_discoveries and state is not None:
-        edge_discoveries = {}
-        for parent_node, child_node in subgraph.edges:
-            disc = compute_edge_discoveries(parent_node, child_node, graph, state)
-            if disc:
-                edge_discoveries[(parent_node, child_node)] = disc
-
-    # Emit
-    if args.json:
-        output = emit_json(
-            decorated, graph, subgraph, metrics=metrics, edge_discoveries=edge_discoveries
-        )
-    else:
-        output = emit_dot(decorated, include_legend=include_legend, no_color=args.no_color)
-
-    # HTML output
-    if args.html:
-        dot_output = emit_dot(decorated, include_legend=include_legend, no_color=args.no_color)
-        info = f"Mode: {args.mode} | Nodes: {len(subgraph.nodes)}"
-        if metrics:
-            info += f" | Strahler: {metrics.max_strahler}"
-        success = emit_html(dot_output, args.html, title=f"Lafleur Lineage: {args.mode}", info=info)
-        if not success:
-            sys.exit(1)
-
-    # Render or write
-    if args.render:
-        output_path = args.output or Path(f"lineage.{args.format}")
-        dot_output = emit_dot(decorated, include_legend=include_legend, no_color=args.no_color)
-        success = render_graphviz(dot_output, output_path, fmt=args.format)
-        if success:
-            print(f"Rendered to {output_path}", file=sys.stderr)
-        else:
-            sys.exit(1)
-    elif args.output:
-        args.output.write_text(output)
-    else:
-        print(output)
-
-    # Print statistics to stderr
-    if args.mode == "ancestry":
-        if role_to_file is not None and crash_dir is not None:
-            print_session_ancestry_stats(crash_dir, role_to_file, subgraph, graph)
-        elif chain is not None:
-            print_ancestry_stats(chain, graph)
-    elif args.mode == "descendants":
-        print_descendants_stats(subgraph, graph, metrics=metrics)
-    elif args.mode == "mrca":
-        print_mrca_stats(mrca_targets, mrca_node, subgraph, graph)
-    elif args.mode == "forest":
-        filtered_count = total_seeds - len(
-            [n for n in subgraph.nodes if not n.startswith("__") and graph.parent.get(n) is None]
-        )
-        print_forest_stats(
-            subgraph, graph, metrics, total_seeds=total_seeds, filtered_count=filtered_count
-        )
+    # Common output pipeline
+    _emit_output(args, subgraph, graph, state, mode_context)
 
 
 def _extract_ancestry_chain(graph: LineageGraph, target: str) -> list[str]:

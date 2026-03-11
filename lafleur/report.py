@@ -19,6 +19,7 @@ from lafleur.campaign import (
     load_health_summary,
     load_timeout_summary,
 )
+from lafleur.types import RunStats
 from lafleur.utils import format_duration, load_json_file, parse_timestamp
 
 
@@ -83,7 +84,7 @@ def _get_dir_size_mb(dir_path: Path) -> float | None:
 
 def _format_timeout_section(
     timeout_summary: TimeoutSummary | None,
-    run_stats: dict[str, Any] | None,
+    run_stats: RunStats | None,
     instance_dir: Path,
 ) -> list[str]:
     """Format the TIMEOUT ANALYSIS section for the instance report."""

@@ -20,6 +20,48 @@ from typing import TypedDict
 from lafleur.coverage import HarnessCoverage
 
 
+class RunStats(TypedDict, total=False):
+    """Persistent run statistics written to fuzz_run_stats.json.
+
+    Uses total=False because:
+    - Some fields (regressions_found, global_uops, etc.) are only populated
+      after the first telemetry save, so they may be absent in fresh stats.
+    - Dynamic stat keys (jit_hangs_found, regression_timeouts_found) are
+      added at runtime by execute_child() and may not exist yet.
+    - Older stats files from previous versions may lack newer fields.
+    """
+
+    # --- Timestamps ---
+    start_time: str  # ISO 8601
+    last_update_time: str | None
+
+    # --- Session & mutation counters ---
+    total_sessions: int
+    total_mutations: int
+    corpus_size: int
+    corpus_file_counter: int
+    global_seed_counter: int
+
+    # --- Finding counters ---
+    crashes_found: int
+    timeouts_found: int
+    divergences_found: int
+    regressions_found: int
+    new_coverage_finds: int
+    sum_of_mutations_per_find: int
+    average_mutations_per_find: float
+
+    # --- Coverage summary ---
+    global_uops: int
+    global_edges: int
+    global_rare_events: int
+
+    # --- Runtime-only (not in defaults, added during execution) ---
+    timeouts_since_last_telemetry: int
+    jit_hangs_found: int
+    regression_timeouts_found: int
+
+
 class JitStats(TypedDict, total=False):
     """JIT vitals parsed from driver log output and stored in discovery_mutation.
 

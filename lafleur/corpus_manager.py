@@ -15,11 +15,11 @@ import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable
+from typing import TYPE_CHECKING, Callable
 
 from lafleur.coverage import HarnessCoverage, save_coverage_state, CoverageManager
 from lafleur.health import FILE_SIZE_WARNING_THRESHOLD
-from lafleur.types import CorpusFileMetadata, MutationInfo, NewCoverageResult
+from lafleur.types import CorpusFileMetadata, MutationInfo, NewCoverageResult, RunStats
 from lafleur.utils import ExecutionResult, FUZZING_ENV
 
 if TYPE_CHECKING:
@@ -131,7 +131,7 @@ class CorpusManager:
     def __init__(
         self,
         coverage_state: CoverageManager,
-        run_stats: dict[str, Any],
+        run_stats: RunStats,
         fusil_path: str | Path | None,
         get_boilerplate_func: Callable[..., str],
         execution_timeout: int = 10,

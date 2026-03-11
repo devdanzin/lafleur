@@ -184,12 +184,12 @@ class TestMinimizeShrinkRay(unittest.TestCase):
         from io import StringIO
 
         captured_stdout = StringIO()
-        with patch("sys.stdout", captured_stdout):
+        captured_stderr = StringIO()
+        with patch("sys.stdout", captured_stdout), patch("sys.stderr", captured_stderr):
             minimize_session(self.crash_dir, target_python="python3", force_overwrite=True)
 
-        output = captured_stdout.getvalue()
-        self.assertIn("ShrinkRay failed", output)
-        self.assertIn("Minimization Complete", output)
+        self.assertIn("ShrinkRay failed", captured_stderr.getvalue())
+        self.assertIn("Minimization Complete", captured_stdout.getvalue())
 
     @patch("lafleur.minimize.run_session")
     @patch("lafleur.minimize.shutil.which")
@@ -220,11 +220,11 @@ class TestMinimizeShrinkRay(unittest.TestCase):
 
         from io import StringIO
 
-        captured_stdout = StringIO()
-        with patch("sys.stdout", captured_stdout):
+        captured_stderr = StringIO()
+        with patch("sys.stderr", captured_stderr):
             minimize_session(self.crash_dir, target_python="python3", force_overwrite=True)
 
-        output = captured_stdout.getvalue()
+        output = captured_stderr.getvalue()
         self.assertIn("shrinkray", output.lower())
         self.assertIn("not found", output.lower())
 
@@ -360,11 +360,11 @@ class TestMinimizeEdgeCases(unittest.TestCase):
 
         from io import StringIO
 
-        captured_stdout = StringIO()
-        with patch("sys.stdout", captured_stdout):
+        captured_stderr = StringIO()
+        with patch("sys.stderr", captured_stderr):
             minimize_session(crash_dir, target_python="python3", force_overwrite=True)
 
-        output = captured_stdout.getvalue()
+        output = captured_stderr.getvalue()
         self.assertIn("Concatenation broke the crash", output)
         self.assertIn("Falling back", output)
 
@@ -403,13 +403,13 @@ class TestMinimizeHelperFunctions(unittest.TestCase):
 
         from io import StringIO
 
-        captured_stdout = StringIO()
-        with patch("sys.stdout", captured_stdout):
+        captured_stderr = StringIO()
+        with patch("sys.stderr", captured_stderr):
             result = measure_execution_time(["python", "test.py"], timeout=30)
 
         self.assertEqual(result, 30.0)
-        self.assertIn("timed out", captured_stdout.getvalue())
-        self.assertIn("30s", captured_stdout.getvalue())
+        self.assertIn("timed out", captured_stderr.getvalue())
+        self.assertIn("30s", captured_stderr.getvalue())
 
 
 class TestReturncodeValidation(unittest.TestCase):
@@ -430,13 +430,13 @@ class TestReturncodeValidation(unittest.TestCase):
 
         from io import StringIO
 
-        captured_stdout = StringIO()
-        with patch("sys.stdout", captured_stdout):
+        captured_stderr = StringIO()
+        with patch("sys.stderr", captured_stderr):
             with self.assertRaises(SystemExit) as ctx:
                 minimize_session(self.crash_dir, "python3", force_overwrite=True)
 
         self.assertEqual(ctx.exception.code, 1)
-        self.assertIn("returncode", captured_stdout.getvalue().lower())
+        self.assertIn("returncode", captured_stderr.getvalue().lower())
 
     def test_zero_returncode_exits(self):
         """Test that returncode 0 in metadata causes exit."""
@@ -447,13 +447,13 @@ class TestReturncodeValidation(unittest.TestCase):
 
         from io import StringIO
 
-        captured_stdout = StringIO()
-        with patch("sys.stdout", captured_stdout):
+        captured_stderr = StringIO()
+        with patch("sys.stderr", captured_stderr):
             with self.assertRaises(SystemExit) as ctx:
                 minimize_session(self.crash_dir, "python3", force_overwrite=True)
 
         self.assertEqual(ctx.exception.code, 1)
-        self.assertIn("returncode", captured_stdout.getvalue().lower())
+        self.assertIn("returncode", captured_stderr.getvalue().lower())
 
     @patch("lafleur.minimize.run_session")
     @patch("lafleur.minimize.shutil.which")
@@ -470,11 +470,11 @@ class TestReturncodeValidation(unittest.TestCase):
         # Should NOT exit due to returncode validation — will proceed to the main logic
         from io import StringIO
 
-        captured_stdout = StringIO()
-        with patch("sys.stdout", captured_stdout):
+        captured_stderr = StringIO()
+        with patch("sys.stderr", captured_stderr):
             minimize_session(self.crash_dir, "python3", force_overwrite=True)
 
-        output = captured_stdout.getvalue()
+        output = captured_stderr.getvalue()
         # Should have reached the minimization stage (not exited early)
         self.assertNotIn("returncode is missing or 0", output)
 

@@ -524,7 +524,7 @@ class TestRunInteractiveTriage(unittest.TestCase):
                 run_interactive_triage(args)
 
         output = captured_output.getvalue()
-        self.assertIn("EOF received", output)
+        self.assertIn("Interrupted", output)
 
     def test_handles_keyboard_interrupt(self):
         """Test handling keyboard interrupt."""
@@ -817,7 +817,7 @@ class TestRunReviewTriage(unittest.TestCase):
                 run_review_triage(args)
 
         output = captured_output.getvalue()
-        self.assertIn("EOF received", output)
+        self.assertIn("Interrupted", output)
 
     def test_handles_keyboard_interrupt(self):
         """Test handling keyboard interrupt during review."""

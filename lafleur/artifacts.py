@@ -32,7 +32,7 @@ if TYPE_CHECKING:
     from lafleur.coverage import CoverageManager
     from lafleur.health import HealthMonitor
     from lafleur.learning import MutatorScoreTracker
-    from lafleur.types import MutationInfo
+    from lafleur.types import MutationInfo, RunStats
 
 # Log processing constants
 TIMEOUT_LOG_COMPRESSION_THRESHOLD = 1_048_576  # 1 MB
@@ -721,7 +721,7 @@ class TelemetryManager:
 
     def __init__(
         self,
-        run_stats: dict,
+        run_stats: "RunStats",
         coverage_manager: "CoverageManager",
         corpus_manager: "CorpusManager",
         score_tracker: "MutatorScoreTracker",

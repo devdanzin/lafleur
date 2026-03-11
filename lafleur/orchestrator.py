@@ -40,6 +40,7 @@ from lafleur.types import (
     DivergenceResult,
     MutationInfo,
     NewCoverageResult,
+    RunStats,
 )
 from lafleur.learning import MutatorScoreTracker
 from lafleur.mutation_controller import MutationController
@@ -135,7 +136,7 @@ class LafleurOrchestrator:
         max_crash_log_size: int = 400,
         target_python: str = sys.executable,
         deepening_probability: float = 0.2,
-        run_stats: dict | None = None,
+        run_stats: RunStats | None = None,
         no_ekg: bool = False,
         max_sessions: int | None = None,
         max_mutations_per_session: int | None = None,

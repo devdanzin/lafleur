@@ -30,6 +30,7 @@ from lafleur.types import (
     MutationInfo,
     NewCoverageResult,
     NoChangeResult,
+    RunStats,
 )
 from lafleur.utils import ExecutionResult
 
@@ -300,7 +301,7 @@ class ScoringManager:
         artifact_manager: "ArtifactManager | None" = None,
         corpus_manager: "CorpusManager | None" = None,
         get_core_code_func: Callable[[str], str] | None = None,
-        run_stats: dict | None = None,
+        run_stats: RunStats | None = None,
         health_monitor: "HealthMonitor | None" = None,
     ):
         """

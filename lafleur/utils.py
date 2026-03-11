@@ -4,13 +4,18 @@ This module contains generic, reusable helper functions and classes for the lafl
 It includes utilities for logging, managing run statistics, and structuring data.
 """
 
+from __future__ import annotations
+
 import json
 import os
 import sys
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, TextIO
+from typing import TYPE_CHECKING, Any, TextIO
+
+if TYPE_CHECKING:
+    from lafleur.types import RunStats
 
 RUN_STATS_FILE = Path("fuzz_run_stats.json")
 
@@ -135,7 +140,7 @@ def discover_instances(root_dir: Path) -> list[Path]:
     return instances
 
 
-def _default_run_stats() -> dict[str, Any]:
+def _default_run_stats() -> RunStats:
     """Return the canonical default run statistics structure."""
     return {
         "start_time": datetime.now(timezone.utc).isoformat(),
@@ -154,7 +159,7 @@ def _default_run_stats() -> dict[str, Any]:
     }
 
 
-def load_run_stats() -> dict[str, Any]:
+def load_run_stats() -> RunStats:
     """
     Load the persistent run statistics from the JSON file.
     Returns a default structure if the file doesn't exist.
@@ -163,7 +168,7 @@ def load_run_stats() -> dict[str, Any]:
         return _default_run_stats()
     try:
         with open(RUN_STATS_FILE, "r", encoding="utf-8") as f:
-            stats: dict[str, Any] = json.load(f)
+            stats: RunStats = json.load(f)
             # Fill in any fields missing from older stats files
             defaults = _default_run_stats()
             for key, value in defaults.items():
@@ -178,7 +183,7 @@ def load_run_stats() -> dict[str, Any]:
         return _default_run_stats()
 
 
-def save_run_stats(stats: dict[str, Any]) -> None:
+def save_run_stats(stats: RunStats) -> None:
     """Save the updated run statistics to the JSON file."""
     save_json_file(RUN_STATS_FILE, stats)
 

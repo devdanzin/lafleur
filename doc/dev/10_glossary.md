@@ -454,7 +454,7 @@ After [Dynamic Density Clamping](#dynamic-density-clamping), the saved [Exit Den
 A minimal metadata entry retained in `per_file_coverage` when a [Corpus](#corpus) file is removed by pruning. Contains only `parent_id`, `discovery_mutation`, `lineage_depth`, `discovery_time`, and `is_pruned: True`. Preserves [Lineage](#lineage) chain connectivity for [`lafleur-lineage`](#lafleur-lineage) [Ghost Nodes](#ghost-node) while releasing the bulk of the metadata (coverage data, hashes, etc.).
 
 ### TelemetryManager
-The component (`telemetry.py`) that tracks [Run](#run) statistics, logs time-series datapoints for [Campaign](#campaign) analysis, records [Corpus](#corpus) evolution stats, and generates `corpus_stats.json`.
+The component (in `artifacts.py`) that tracks [Run](#run) statistics, logs time-series datapoints for [Campaign](#campaign) analysis, records [Corpus](#corpus) evolution stats, and generates `corpus_stats.json`.
 
 ### Test Case
 A Python script that exercises JIT behavior, consisting of [Boilerplate](#boilerplate) (setup and invocation loop) and [Core Code](#core-code) (the mutatable [Harness](#harness) function and its setup variables). Each [Corpus](#corpus) file is a complete, standalone test case.

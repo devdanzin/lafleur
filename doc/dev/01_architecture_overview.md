@@ -123,9 +123,7 @@ The `lafleur` project is organized into modules with clear responsibilities. The
 
 * **`lafleur/scoring.py`** — The `ScoringManager` analyzes execution results. It parses coverage profiles, determines whether a child is "interesting" (new global or lineage-relative coverage), implements differential scoring that rewards JIT instability (high exit density), and performs duplicate detection via content and coverage hashing.
 
-* **`lafleur/telemetry.py`** — The `TelemetryManager` tracks run statistics, logs time-series datapoints for campaign analysis, and generates corpus evolution stats (lineage depth, sterile rate, tree topology).
-
-* **`lafleur/artifacts.py`** — The `ArtifactManager` saves crashes, timeouts, and divergences to disk with accompanying metadata and compressed logs.
+* **`lafleur/artifacts.py`** — The `ArtifactManager` saves crashes, timeouts, and divergences to disk with accompanying metadata and compressed logs. The `TelemetryManager` (also in this module) tracks run statistics, logs time-series datapoints for campaign analysis, and generates corpus evolution stats (lineage depth, sterile rate, tree topology).
 
 #### Core Subsystems
 

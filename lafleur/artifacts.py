@@ -421,7 +421,10 @@ class ArtifactManager:
             python3 {dest_name}
         """)
         reproduce_script.write_text(reproduce_content, encoding="utf-8")
-        reproduce_script.chmod(0o755)
+        try:
+            reproduce_script.chmod(0o755)
+        except OSError:
+            pass  # chmod may fail on restricted filesystems
 
         return crash_dir
 
@@ -494,7 +497,10 @@ class ArtifactManager:
         """).strip()
 
         reproduce_script.write_text(reproduce_content, encoding="utf-8")
-        reproduce_script.chmod(0o755)  # Make executable
+        try:
+            reproduce_script.chmod(0o755)
+        except OSError:
+            pass  # chmod may fail on restricted filesystems
 
         return crash_dir
 

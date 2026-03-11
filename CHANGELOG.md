@@ -91,6 +91,7 @@ All notable changes to this project should be documented in this file.
 
 ### Enhanced
 
+- Fixed misleading docstring on `genStatefulGetitemObject` in `mutators/utils.py` (said `__iter__`, actually `__getitem__`), by @devdanzin.
 - Removed dead code: unused `_create_guard_side_effect_function` method in `scenarios_control.py` and unused `COLOR_TIMEOUT` constant in `lineage.py`, by @devdanzin.
 - Added missing `-> None` return type annotations to 10 functions across `generic.py`, `helper_injection.py`, `scenarios_data.py`, `minimize.py`, `orchestrator.py`, and `driver.py`, by @devdanzin.
 - Consolidated duplicated `parse_timestamp`, `format_duration`, and `discover_instances` utilities into `lafleur/utils.py`, removing copies from `report.py`, `campaign.py`, and `triage.py`, by @devdanzin.

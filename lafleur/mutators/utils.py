@@ -379,7 +379,7 @@ def genStatefulStrReprObject(var_name: str) -> str:
 
 
 def genStatefulGetitemObject(var_name: str) -> str:
-    """Generate the source code for a class whose `__iter__` returns different iterators."""
+    """Generate a class whose ``__getitem__`` returns different types based on call count."""
     class_name = f"StatefulGetitem_{var_name}"
     setup_code = dedent(f"""
         class {class_name}:

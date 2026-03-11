@@ -385,7 +385,7 @@ def generate_report(instance_dir: Path) -> str:
     lines.append(f"Run ID:         {run_id}")
     lines.append(f"Hostname:       {hostname}")
     lines.append(f"Platform:       {truncate_string(platform_info, 60)}")
-    lines.append(f"Report Date:    {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    lines.append(f"Report Date:    {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')} UTC")
     lines.append("")
 
     # ========== SYSTEM ==========

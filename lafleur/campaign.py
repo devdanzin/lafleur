@@ -822,278 +822,288 @@ class CampaignAggregator:
             crash_info.issue_url = context.get("issue_url")
             crash_info.issue_title = context.get("title")
 
-    def _format_campaign_header(self) -> list[str]:
-        """Format the campaign header with fleet-level KPIs."""
+    def generate_report(self) -> str:
+        """Generate a text report of the campaign analysis."""
+        return generate_campaign_report(self)
+
+
+# ---------------------------------------------------------------------------
+# Report formatting — pure functions that read from a CampaignAggregator
+# ---------------------------------------------------------------------------
+
+
+def _format_campaign_header(agg: CampaignAggregator) -> list[str]:
+    """Format the campaign header with fleet-level KPIs."""
+    lines: list[str] = []
+    instance_count = len(agg.instances)
+    lines.append("=" * 90)
+    lines.append("LAFLEUR CAMPAIGN REPORT")
+    lines.append("=" * 90)
+
+    instance_names = [i.name for i in agg.instances]
+    if len(instance_names) <= 3:
+        names_str = ", ".join(instance_names)
+    else:
+        names_str = f"{instance_names[0]}, ... {instance_names[-1]}"
+
+    lines.append(f"Instances:      {instance_count} ({names_str})")
+    lines.append(f"Core-Hours:     {agg.get_core_hours():,.1f} hours")
+    lines.append(f"Executions:     {agg.totals['total_executions']:,}")
+    lines.append(f"Fleet Speed:    {agg.get_fleet_speed():,.2f} exec/s (aggregate)")
+    fleet_to_rate = agg.get_fleet_timeout_rate()
+    lines.append(f"Timeout Rate:   {fleet_to_rate:.1f}%")
+    time_wasted_hrs = agg.get_fleet_timeout_time_wasted()
+    total_timeout_secs = agg.global_timeout.get("total_timeout_seconds", 0.0)
+    if time_wasted_hrs >= 1.0:
+        lines.append(f"Time on Timeouts: {time_wasted_hrs:.1f} hours ({total_timeout_secs:,.0f}s)")
+    else:
+        time_wasted_mins = total_timeout_secs / 60
+        lines.append(
+            f"Time on Timeouts: {time_wasted_mins:.1f} minutes ({total_timeout_secs:,.0f}s)"
+        )
+    by_type = agg.global_timeout.get("by_type", {})
+    jit_hangs = by_type.get("jit_hang", 0)
+    regression = by_type.get("regression_timeout", 0)
+    if jit_hangs > 0 or regression > 0:
+        lines.append(f"  JIT Hangs: {jit_hangs:,}  |  Regression Timeouts: {regression:,}")
+    lines.append(f"Report Date:    {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')} UTC")
+    lines.append("")
+    return lines
+
+
+def _format_leaderboard(agg: CampaignAggregator) -> list[str]:
+    """Format the INSTANCE LEADERBOARD section."""
+    lines: list[str] = []
+    lines.append("-" * 90)
+    lines.append("INSTANCE LEADERBOARD")
+    lines.append("-" * 90)
+
+    sorted_instances = sorted(agg.instances, key=lambda i: i.coverage, reverse=True)
+
+    lines.append(
+        f"{'Name':<25} | {'Status':<8} | {'Speed':>10} | {'Coverage':>8} | "
+        f"{'Crashes':>7} | {'TO%':>5} | {'Corpus':>8} | {'Health':>6} | {'Dir'}"
+    )
+    lines.append("-" * 138)
+
+    for inst in sorted_instances:
+        speed_str = f"{inst.speed:.2f}/s" if inst.speed > 0 else "N/A"
+
+        if inst.health_summary and inst.stats:
+            total_muts = inst.stats.get("total_mutations", 0)
+            if total_muts > 0:
+                inst_waste = inst.health_summary["waste_event_count"] / total_muts
+            else:
+                inst_waste = 0.0
+            health_str, _ = CampaignAggregator.health_grade(inst_waste)
+        else:
+            health_str = "N/A"
+
+        to_rate_str = f"{inst.timeout_rate:.1f}" if inst.timeout_rate > 0 else "0.0"
+        lines.append(
+            f"{inst.name:<25} | {inst.status:<8} | {speed_str:>10} | "
+            f"{inst.coverage:>8,} | {inst.crash_count:>7,} | {to_rate_str:>5} | "
+            f"{inst.corpus_size:>8,} | {health_str:>6} | {inst.relative_dir}"
+        )
+
+    lines.append("")
+    return lines
+
+
+def _format_fleet_health(agg: CampaignAggregator) -> list[str]:
+    """Format the FLEET HEALTH section."""
+    lines: list[str] = []
+    lines.append("-" * 90)
+    lines.append("FLEET HEALTH")
+    lines.append("-" * 90)
+
+    waste_rate = agg.get_fleet_waste_rate()
+    short_grade, long_grade = agg.get_fleet_health_grade()
+    lines.append(f"Waste Rate:     {waste_rate * 100:.2f}% ({long_grade})")
+    lines.append(
+        f"Health Events:  {agg.global_health['total_events']:,} total, "
+        f"{agg.global_health['waste_events']:,} waste"
+    )
+
+    top_offenders = agg.get_top_offenders(5)
+    if top_offenders:
+        offender_str = ", ".join(f"{name} ({count:,})" for name, count in top_offenders)
+        lines.append(f"Top Offenders:  {offender_str}")
+
+    crash_profile = agg.get_crash_profile(5)
+    if crash_profile:
+        profile_str = ", ".join(f"{reason} ({count:,})" for reason, count in crash_profile)
+        lines.append(f"Crash Profile:  {profile_str}")
+
+    lines.append("")
+    return lines
+
+
+def _format_crash_table(agg: CampaignAggregator) -> list[str]:
+    """Format the GLOBAL CRASH TABLE section."""
+    lines: list[str] = []
+    instance_count = len(agg.instances)
+    lines.append("-" * 100)
+    lines.append("GLOBAL CRASH TABLE")
+    lines.append("-" * 100)
+
+    if agg.global_crashes:
+        status_priority = {"REGRESSION": 0, "NEW": 1, "KNOWN": 2, "NOISE": 3}
+
+        sorted_crashes = sorted(
+            agg.global_crashes.items(),
+            key=lambda x: (
+                status_priority.get(x[1].status_label, 1),
+                -len(x[1].finding_instances) / instance_count if instance_count else 0,
+                -x[1].count,
+            ),
+        )
+
+        lines.append(
+            f"{'Status':<12} | {'Fingerprint':<35} | {'Hits':>6} | {'Repro %':>7} | {'Issue':<15}"
+        )
+        lines.append("-" * 100)
+
+        for fingerprint, info in sorted_crashes[:15]:
+            instance_pct = (len(info.finding_instances) / instance_count) * 100
+            status = f"[{info.status_label}]"
+            fp_display = fingerprint[:35] if len(fingerprint) > 35 else fingerprint
+
+            if info.issue_number:
+                issue_str = f"#{info.issue_number}"
+            else:
+                issue_str = "-"
+
+            lines.append(
+                f"{status:<12} | {fp_display:<35} | {info.count:>6,} | "
+                f"{instance_pct:>6.1f}% | {issue_str:<15}"
+            )
+
+        if len(sorted_crashes) > 15:
+            lines.append(f"... and {len(sorted_crashes) - 15} more unique fingerprints")
+
+        status_counts = Counter(info.status_label for info in agg.global_crashes.values())
+        lines.append("")
+        lines.append(f"Total Unique Crashes: {len(agg.global_crashes)}")
+        lines.append(f"Total Crash Hits:     {sum(c.count for c in agg.global_crashes.values()):,}")
+        if status_counts.get("REGRESSION", 0) > 0:
+            lines.append(f"  REGRESSIONS: {status_counts['REGRESSION']}")
+        if status_counts.get("KNOWN", 0) > 0:
+            lines.append(f"  KNOWN:       {status_counts['KNOWN']}")
+        if status_counts.get("NOISE", 0) > 0:
+            lines.append(f"  NOISE:       {status_counts['NOISE']}")
+    else:
+        lines.append("No crashes recorded across fleet.")
+
+    lines.append("")
+    return lines
+
+
+def _format_crash_attribution(agg: CampaignAggregator) -> list[str]:
+    """Format the CRASH-PRODUCTIVE MUTATORS section."""
+    if not agg.fleet_crash_attribution:
+        return []
+
+    lines: list[str] = []
+    ca = agg.fleet_crash_attribution
+    lines.append("-" * 90)
+    lines.append("CRASH-PRODUCTIVE MUTATORS")
+    lines.append("-" * 90)
+
+    lines.append(
+        f"Attributed Crashes: {ca['total_attributed_crashes']:,} "
+        f"({ca['unique_fingerprints']:,} unique fingerprints)"
+    )
+    lines.append(f"Avg Lineage Depth:  {ca['avg_lineage_depth']:.1f}")
+    lines.append("")
+
+    top_strategies = ca["combined_strategy_scores"].most_common(5)
+    if top_strategies:
+        strat_strs = [f"{name} (score: {score:,})" for name, score in top_strategies]
+        lines.append(f"Top Crash Strategies: {', '.join(strat_strs)}")
+        lines.append("")
+
+    top_mutators = ca["combined_transformer_scores"].most_common(10)
+    if top_mutators:
+        lines.append("Top Crash Mutators (by attribution score):")
+
+        max_name_len = max(len(name) for name, _ in top_mutators)
+        pad = max(max_name_len + 2, 30)
+
+        half = (len(top_mutators) + 1) // 2
+        for i in range(half):
+            left_name, left_score = top_mutators[i]
+            left_str = f"  {left_name} {'.' * (pad - len(left_name) - 2)} {left_score:,}"
+
+            if i + half < len(top_mutators):
+                right_name, right_score = top_mutators[i + half]
+                right_str = f"  {right_name} {'.' * (pad - len(right_name) - 2)} {right_score:,}"
+                lines.append(f"{left_str}    {right_str}")
+            else:
+                lines.append(left_str)
+
+    lines.append("")
+    return lines
+
+
+def _format_corpus_summary(agg: CampaignAggregator) -> list[str]:
+    """Format the FLEET CORPUS SUMMARY section."""
+    lines: list[str] = []
+    lines.append("-" * 90)
+    lines.append("FLEET CORPUS SUMMARY")
+    lines.append("-" * 90)
+
+    total_files = agg.global_corpus["total_files"]
+    total_sterile = agg.global_corpus["total_sterile"]
+    sterile_rate = agg.get_global_sterile_rate() * 100
+    avg_depth = agg.get_avg_lineage_depth()
+
+    lines.append(f"Total Files:    {total_files:,}")
+    lines.append(f"Sterile Rate:   {total_sterile:,} ({sterile_rate:.2f}%)")
+    lines.append(f"Avg Depth:      {avg_depth:.1f}")
+
+    top_strategies = agg.get_top_strategies(5)
+    if top_strategies:
+        top_str = ", ".join(f"{name} ({count:,})" for name, count in top_strategies)
+        lines.append(f"Top Strategies: {top_str}")
+    else:
+        lines.append("Top Strategies: N/A")
+
+    top_mutators = agg.get_top_mutators(5)
+    if top_mutators:
+        top_str = ", ".join(f"{name} ({count:,})" for name, count in top_mutators)
+        lines.append(f"Top Mutators:   {top_str}")
+    else:
+        lines.append("Top Mutators:   N/A")
+
+    lines.append("")
+    return lines
+
+
+def generate_campaign_report(agg: CampaignAggregator) -> str:
+    """Generate a text report of the campaign analysis.
+
+    This is a module-level function that formats the aggregated data from
+    a :class:`CampaignAggregator` into a human-readable text report.
+    """
+    if len(agg.instances) == 0:
         lines: list[str] = []
-        instance_count = len(self.instances)
         lines.append("=" * 90)
         lines.append("LAFLEUR CAMPAIGN REPORT")
         lines.append("=" * 90)
-
-        instance_names = [i.name for i in self.instances]
-        if len(instance_names) <= 3:
-            names_str = ", ".join(instance_names)
-        else:
-            names_str = f"{instance_names[0]}, ... {instance_names[-1]}"
-
-        lines.append(f"Instances:      {instance_count} ({names_str})")
-        lines.append(f"Core-Hours:     {self.get_core_hours():,.1f} hours")
-        lines.append(f"Executions:     {self.totals['total_executions']:,}")
-        lines.append(f"Fleet Speed:    {self.get_fleet_speed():,.2f} exec/s (aggregate)")
-        fleet_to_rate = self.get_fleet_timeout_rate()
-        lines.append(f"Timeout Rate:   {fleet_to_rate:.1f}%")
-        time_wasted_hrs = self.get_fleet_timeout_time_wasted()
-        total_timeout_secs = self.global_timeout.get("total_timeout_seconds", 0.0)
-        if time_wasted_hrs >= 1.0:
-            lines.append(
-                f"Time on Timeouts: {time_wasted_hrs:.1f} hours ({total_timeout_secs:,.0f}s)"
-            )
-        else:
-            time_wasted_mins = total_timeout_secs / 60
-            lines.append(
-                f"Time on Timeouts: {time_wasted_mins:.1f} minutes ({total_timeout_secs:,.0f}s)"
-            )
-        by_type = self.global_timeout.get("by_type", {})
-        jit_hangs = by_type.get("jit_hang", 0)
-        regression = by_type.get("regression_timeout", 0)
-        if jit_hangs > 0 or regression > 0:
-            lines.append(f"  JIT Hangs: {jit_hangs:,}  |  Regression Timeouts: {regression:,}")
-        lines.append(
-            f"Report Date:    {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')} UTC"
-        )
-        lines.append("")
-        return lines
-
-    def _format_leaderboard(self) -> list[str]:
-        """Format the INSTANCE LEADERBOARD section."""
-        lines: list[str] = []
-        lines.append("-" * 90)
-        lines.append("INSTANCE LEADERBOARD")
-        lines.append("-" * 90)
-
-        sorted_instances = sorted(self.instances, key=lambda i: i.coverage, reverse=True)
-
-        lines.append(
-            f"{'Name':<25} | {'Status':<8} | {'Speed':>10} | {'Coverage':>8} | "
-            f"{'Crashes':>7} | {'TO%':>5} | {'Corpus':>8} | {'Health':>6} | {'Dir'}"
-        )
-        lines.append("-" * 138)
-
-        for inst in sorted_instances:
-            speed_str = f"{inst.speed:.2f}/s" if inst.speed > 0 else "N/A"
-
-            if inst.health_summary and inst.stats:
-                total_muts = inst.stats.get("total_mutations", 0)
-                if total_muts > 0:
-                    inst_waste = inst.health_summary["waste_event_count"] / total_muts
-                else:
-                    inst_waste = 0.0
-                health_str, _ = self.health_grade(inst_waste)
-            else:
-                health_str = "N/A"
-
-            to_rate_str = f"{inst.timeout_rate:.1f}" if inst.timeout_rate > 0 else "0.0"
-            lines.append(
-                f"{inst.name:<25} | {inst.status:<8} | {speed_str:>10} | "
-                f"{inst.coverage:>8,} | {inst.crash_count:>7,} | {to_rate_str:>5} | "
-                f"{inst.corpus_size:>8,} | {health_str:>6} | {inst.relative_dir}"
-            )
-
-        lines.append("")
-        return lines
-
-    def _format_fleet_health(self) -> list[str]:
-        """Format the FLEET HEALTH section."""
-        lines: list[str] = []
-        lines.append("-" * 90)
-        lines.append("FLEET HEALTH")
-        lines.append("-" * 90)
-
-        waste_rate = self.get_fleet_waste_rate()
-        short_grade, long_grade = self.get_fleet_health_grade()
-        lines.append(f"Waste Rate:     {waste_rate * 100:.2f}% ({long_grade})")
-        lines.append(
-            f"Health Events:  {self.global_health['total_events']:,} total, "
-            f"{self.global_health['waste_events']:,} waste"
-        )
-
-        top_offenders = self.get_top_offenders(5)
-        if top_offenders:
-            offender_str = ", ".join(f"{name} ({count:,})" for name, count in top_offenders)
-            lines.append(f"Top Offenders:  {offender_str}")
-
-        crash_profile = self.get_crash_profile(5)
-        if crash_profile:
-            profile_str = ", ".join(f"{reason} ({count:,})" for reason, count in crash_profile)
-            lines.append(f"Crash Profile:  {profile_str}")
-
-        lines.append("")
-        return lines
-
-    def _format_crash_table(self) -> list[str]:
-        """Format the GLOBAL CRASH TABLE section."""
-        lines: list[str] = []
-        instance_count = len(self.instances)
-        lines.append("-" * 100)
-        lines.append("GLOBAL CRASH TABLE")
-        lines.append("-" * 100)
-
-        if self.global_crashes:
-            status_priority = {"REGRESSION": 0, "NEW": 1, "KNOWN": 2, "NOISE": 3}
-
-            sorted_crashes = sorted(
-                self.global_crashes.items(),
-                key=lambda x: (
-                    status_priority.get(x[1].status_label, 1),
-                    -len(x[1].finding_instances) / instance_count if instance_count else 0,
-                    -x[1].count,
-                ),
-            )
-
-            lines.append(
-                f"{'Status':<12} | {'Fingerprint':<35} | {'Hits':>6} | "
-                f"{'Repro %':>7} | {'Issue':<15}"
-            )
-            lines.append("-" * 100)
-
-            for fingerprint, info in sorted_crashes[:15]:
-                instance_pct = (len(info.finding_instances) / instance_count) * 100
-                status = f"[{info.status_label}]"
-                fp_display = fingerprint[:35] if len(fingerprint) > 35 else fingerprint
-
-                if info.issue_number:
-                    issue_str = f"#{info.issue_number}"
-                else:
-                    issue_str = "-"
-
-                lines.append(
-                    f"{status:<12} | {fp_display:<35} | {info.count:>6,} | "
-                    f"{instance_pct:>6.1f}% | {issue_str:<15}"
-                )
-
-            if len(sorted_crashes) > 15:
-                lines.append(f"... and {len(sorted_crashes) - 15} more unique fingerprints")
-
-            status_counts = Counter(info.status_label for info in self.global_crashes.values())
-            lines.append("")
-            lines.append(f"Total Unique Crashes: {len(self.global_crashes)}")
-            lines.append(
-                f"Total Crash Hits:     {sum(c.count for c in self.global_crashes.values()):,}"
-            )
-            if status_counts.get("REGRESSION", 0) > 0:
-                lines.append(f"  REGRESSIONS: {status_counts['REGRESSION']}")
-            if status_counts.get("KNOWN", 0) > 0:
-                lines.append(f"  KNOWN:       {status_counts['KNOWN']}")
-            if status_counts.get("NOISE", 0) > 0:
-                lines.append(f"  NOISE:       {status_counts['NOISE']}")
-        else:
-            lines.append("No crashes recorded across fleet.")
-
-        lines.append("")
-        return lines
-
-    def _format_crash_attribution(self) -> list[str]:
-        """Format the CRASH-PRODUCTIVE MUTATORS section."""
-        if not self.fleet_crash_attribution:
-            return []
-
-        lines: list[str] = []
-        ca = self.fleet_crash_attribution
-        lines.append("-" * 90)
-        lines.append("CRASH-PRODUCTIVE MUTATORS")
-        lines.append("-" * 90)
-
-        lines.append(
-            f"Attributed Crashes: {ca['total_attributed_crashes']:,} "
-            f"({ca['unique_fingerprints']:,} unique fingerprints)"
-        )
-        lines.append(f"Avg Lineage Depth:  {ca['avg_lineage_depth']:.1f}")
-        lines.append("")
-
-        top_strategies = ca["combined_strategy_scores"].most_common(5)
-        if top_strategies:
-            strat_strs = [f"{name} (score: {score:,})" for name, score in top_strategies]
-            lines.append(f"Top Crash Strategies: {', '.join(strat_strs)}")
-            lines.append("")
-
-        top_mutators = ca["combined_transformer_scores"].most_common(10)
-        if top_mutators:
-            lines.append("Top Crash Mutators (by attribution score):")
-
-            max_name_len = max(len(name) for name, _ in top_mutators)
-            pad = max(max_name_len + 2, 30)
-
-            half = (len(top_mutators) + 1) // 2
-            for i in range(half):
-                left_name, left_score = top_mutators[i]
-                left_str = f"  {left_name} {'.' * (pad - len(left_name) - 2)} {left_score:,}"
-
-                if i + half < len(top_mutators):
-                    right_name, right_score = top_mutators[i + half]
-                    right_str = (
-                        f"  {right_name} {'.' * (pad - len(right_name) - 2)} {right_score:,}"
-                    )
-                    lines.append(f"{left_str}    {right_str}")
-                else:
-                    lines.append(left_str)
-
-        lines.append("")
-        return lines
-
-    def _format_corpus_summary(self) -> list[str]:
-        """Format the FLEET CORPUS SUMMARY section."""
-        lines: list[str] = []
-        lines.append("-" * 90)
-        lines.append("FLEET CORPUS SUMMARY")
-        lines.append("-" * 90)
-
-        total_files = self.global_corpus["total_files"]
-        total_sterile = self.global_corpus["total_sterile"]
-        sterile_rate = self.get_global_sterile_rate() * 100
-        avg_depth = self.get_avg_lineage_depth()
-
-        lines.append(f"Total Files:    {total_files:,}")
-        lines.append(f"Sterile Rate:   {total_sterile:,} ({sterile_rate:.2f}%)")
-        lines.append(f"Avg Depth:      {avg_depth:.1f}")
-
-        top_strategies = self.get_top_strategies(5)
-        if top_strategies:
-            top_str = ", ".join(f"{name} ({count:,})" for name, count in top_strategies)
-            lines.append(f"Top Strategies: {top_str}")
-        else:
-            lines.append("Top Strategies: N/A")
-
-        top_mutators = self.get_top_mutators(5)
-        if top_mutators:
-            top_str = ", ".join(f"{name} ({count:,})" for name, count in top_mutators)
-            lines.append(f"Top Mutators:   {top_str}")
-        else:
-            lines.append("Top Mutators:   N/A")
-
-        lines.append("")
-        return lines
-
-    def generate_report(self) -> str:
-        """Generate a text report of the campaign analysis."""
-        if len(self.instances) == 0:
-            lines: list[str] = []
-            lines.append("=" * 90)
-            lines.append("LAFLEUR CAMPAIGN REPORT")
-            lines.append("=" * 90)
-            lines.append("No valid instances found.")
-            return "\n".join(lines)
-
-        # Assemble report from independent sections
-        lines: list[str] = []
-        lines.extend(self._format_campaign_header())
-        lines.extend(self._format_leaderboard())
-        lines.extend(self._format_fleet_health())
-        lines.extend(self._format_crash_table())
-        lines.extend(self._format_crash_attribution())
-        lines.extend(self._format_corpus_summary())
-        lines.append("=" * 90)
-
+        lines.append("No valid instances found.")
         return "\n".join(lines)
+
+    lines: list[str] = []
+    lines.extend(_format_campaign_header(agg))
+    lines.extend(_format_leaderboard(agg))
+    lines.extend(_format_fleet_health(agg))
+    lines.extend(_format_crash_table(agg))
+    lines.extend(_format_crash_attribution(agg))
+    lines.extend(_format_corpus_summary(agg))
+    lines.append("=" * 90)
+
+    return "\n".join(lines)
 
 
 _HTML_CSS = """\

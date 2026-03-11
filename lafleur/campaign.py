@@ -18,6 +18,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, TypedDict
 
+from lafleur.utils import load_json_file
+
 
 class GlobalCorpusData(TypedDict):
     """Type definition for global corpus aggregation data."""
@@ -83,15 +85,6 @@ WASTE_EVENT_TYPES: frozenset[str] = frozenset(
         "core_code_syntax_error",
     }
 )
-
-
-def load_json_file(path: Path) -> dict[str, Any] | None:
-    """Load a JSON file, returning None if it doesn't exist or is invalid."""
-    try:
-        with open(path, encoding="utf-8") as f:
-            return json.load(f)
-    except FileNotFoundError, json.JSONDecodeError, OSError:
-        return None
 
 
 def load_health_summary(health_log_path: Path) -> HealthSummary | None:

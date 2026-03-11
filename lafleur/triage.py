@@ -823,7 +823,7 @@ def main() -> None:
     )
     list_parser.add_argument(
         "--status",
-        choices=["NEW", "TRIAGED", "IGNORED"],
+        choices=["NEW", "TRIAGED", "REPORTED", "IGNORED", "FIXED"],
         help="Filter by triage status",
     )
 

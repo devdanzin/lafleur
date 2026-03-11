@@ -80,6 +80,7 @@ All notable changes to this project should be documented in this file.
 
 ### Fixed
 
+- Added module docstring to `analysis.py` describing crash fingerprinting and classification, by @devdanzin.
 - Added missing `REPORTED` and `FIXED` choices to `lafleur-triage list --status`, matching the full set of valid triage statuses, by @devdanzin.
 - Added explicit `encoding="utf-8"` to 10 text-mode `open()` calls missing it across 6 modules, matching the majority convention, by @devdanzin.
 - Replaced deprecated `IOError` with `OSError` in 11 locations across 8 modules, removing redundant dual-catches at `coverage.py` and `utils.py`, by @devdanzin.

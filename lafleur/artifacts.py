@@ -785,7 +785,12 @@ class TelemetryManager:
         except OSError, AttributeError:
             datapoint["system_load_1min"] = None
 
-        datapoint["process_rss_mb"] = round(psutil.Process().memory_info().rss / (1024 * 1024), 2)
+        try:
+            datapoint["process_rss_mb"] = round(
+                psutil.Process().memory_info().rss / (1024 * 1024), 2
+            )
+        except OSError, psutil.Error:
+            datapoint["process_rss_mb"] = None
 
         # Corpus size: use cache, refresh only when file count changes
         datapoint["corpus_size_mb"] = self._get_corpus_size_mb()

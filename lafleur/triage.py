@@ -11,7 +11,7 @@ import argparse
 import json
 import subprocess
 import sys
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -393,9 +393,11 @@ def record_issue_wizard(args: argparse.Namespace) -> None:
         url = f"https://github.com/python/cpython/issues/{issue_number}"
 
     reported_by = input("Reported by (your GitHub username): ").strip()
-    reported_date = input(f"Reported date (default: {datetime.now().date().isoformat()}): ").strip()
+    reported_date = input(
+        f"Reported date (default: {datetime.now(timezone.utc).date().isoformat()}): "
+    ).strip()
     if not reported_date:
-        reported_date = datetime.now().date().isoformat()
+        reported_date = datetime.now(timezone.utc).date().isoformat()
 
     description = input("Brief description: ").strip()
 
@@ -456,7 +458,7 @@ def record_issue_wizard(args: argparse.Namespace) -> None:
                     fingerprint=fingerprint,
                     run_id="manual",
                     instance_name="manual",
-                    timestamp=datetime.now().isoformat(),
+                    timestamp=datetime.now(timezone.utc).isoformat(),
                 )
                 registry.link_crash_to_issue(fingerprint, issue_number)
                 print(f"[+] Created crash record and linked to issue #{issue_number}")

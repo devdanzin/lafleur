@@ -892,7 +892,9 @@ class CampaignAggregator:
         regression = by_type.get("regression_timeout", 0)
         if jit_hangs > 0 or regression > 0:
             lines.append(f"  JIT Hangs: {jit_hangs:,}  |  Regression Timeouts: {regression:,}")
-        lines.append(f"Report Date:    {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        lines.append(
+            f"Report Date:    {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')} UTC"
+        )
         lines.append("")
 
         # ========== INSTANCE LEADERBOARD ==========
@@ -1234,7 +1236,7 @@ def generate_html_report(aggregator: CampaignAggregator) -> str:
         else "N/A"
     )
 
-    report_date = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    report_date = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
 
     # Fleet health data
     fleet_waste_rate = aggregator.get_fleet_waste_rate()

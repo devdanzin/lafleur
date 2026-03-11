@@ -98,7 +98,7 @@ def do_export_issues(registry: CrashRegistry, output_path: Path) -> int:
     """
     issues = registry.get_all_reported_issues()
     with open(output_path, "w", encoding="utf-8") as f:
-        json.dump(issues, f, indent=4, sort_keys=True)
+        json.dump(issues, f, indent=2, sort_keys=True)
     return len(issues)
 
 

@@ -447,7 +447,8 @@ class TestDriverVerboseMode(unittest.TestCase):
 
             captured_stdout = StringIO()
             with patch("sys.stdout", captured_stdout):
-                driver_main()
+                with self.assertRaises(SystemExit):
+                    driver_main()
 
         output = captured_stdout.getvalue()
         self.assertIn("[DRIVER:INFO]", output)
@@ -465,7 +466,8 @@ class TestDriverVerboseMode(unittest.TestCase):
 
             captured_stdout = StringIO()
             with patch("sys.stdout", captured_stdout):
-                driver_main()
+                with self.assertRaises(SystemExit):
+                    driver_main()
 
         output = captured_stdout.getvalue()
         self.assertIn("Scripts to execute", output)

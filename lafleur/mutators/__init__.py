@@ -19,7 +19,6 @@ from lafleur.mutators.generic import ImportPrunerMutator, StatementDuplicator, V
 __all__ = [
     "ASTMutator",
     "SlicingMutator",
-    "_dump_unparse_diagnostics",
     "FuzzerSetupNormalizer",
     "EmptyBodySanitizer",
     "HarnessInstrumentor",

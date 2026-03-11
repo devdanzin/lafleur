@@ -247,9 +247,10 @@ class TestDriverMain(unittest.TestCase):
 
             captured_stdout = StringIO()
             with patch("sys.stdout", captured_stdout):
-                result = driver_main()
+                with self.assertRaises(SystemExit) as cm:
+                    driver_main()
 
-        self.assertEqual(result, 0)
+        self.assertEqual(cm.exception.code, 0)
         output = captured_stdout.getvalue()
         self.assertIn("[DRIVER:START]", output)
         self.assertIn("[DRIVER:STATS]", output)
@@ -264,9 +265,10 @@ class TestDriverMain(unittest.TestCase):
 
             captured_stdout = StringIO()
             with patch("sys.stdout", captured_stdout):
-                result = driver_main()
+                with self.assertRaises(SystemExit) as cm:
+                    driver_main()
 
-        self.assertEqual(result, 0)
+        self.assertEqual(cm.exception.code, 0)
         output = captured_stdout.getvalue()
         self.assertIn("[DRIVER:INFO]", output)
 
@@ -282,9 +284,10 @@ class TestDriverMain(unittest.TestCase):
 
             captured_stdout = StringIO()
             with patch("sys.stdout", captured_stdout):
-                result = driver_main()
+                with self.assertRaises(SystemExit) as cm:
+                    driver_main()
 
-        self.assertEqual(result, 0)
+        self.assertEqual(cm.exception.code, 0)
         output = captured_stdout.getvalue()
         self.assertIn("a.py", output)
         self.assertIn("b.py", output)

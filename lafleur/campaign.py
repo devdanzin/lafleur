@@ -852,21 +852,14 @@ class CampaignAggregator:
             crash_info.issue_url = context.get("issue_url")
             crash_info.issue_title = context.get("title")
 
-    def generate_report(self) -> str:
-        """Generate a text report of the campaign analysis."""
+    def _format_campaign_header(self) -> list[str]:
+        """Format the campaign header with fleet-level KPIs."""
         lines: list[str] = []
         instance_count = len(self.instances)
-
-        # ========== CAMPAIGN HEADER ==========
         lines.append("=" * 90)
         lines.append("LAFLEUR CAMPAIGN REPORT")
         lines.append("=" * 90)
 
-        if instance_count == 0:
-            lines.append("No valid instances found.")
-            return "\n".join(lines)
-
-        # List instances
         instance_names = [i.name for i in self.instances]
         if len(instance_names) <= 3:
             names_str = ", ".join(instance_names)
@@ -899,16 +892,17 @@ class CampaignAggregator:
             f"Report Date:    {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')} UTC"
         )
         lines.append("")
+        return lines
 
-        # ========== INSTANCE LEADERBOARD ==========
+    def _format_leaderboard(self) -> list[str]:
+        """Format the INSTANCE LEADERBOARD section."""
+        lines: list[str] = []
         lines.append("-" * 90)
         lines.append("INSTANCE LEADERBOARD")
         lines.append("-" * 90)
 
-        # Sort instances by coverage (descending)
         sorted_instances = sorted(self.instances, key=lambda i: i.coverage, reverse=True)
 
-        # Table header
         lines.append(
             f"{'Name':<25} | {'Status':<8} | {'Speed':>10} | {'Coverage':>8} | "
             f"{'Crashes':>7} | {'TO%':>5} | {'Corpus':>8} | {'Health':>6} | {'Dir'}"
@@ -918,7 +912,6 @@ class CampaignAggregator:
         for inst in sorted_instances:
             speed_str = f"{inst.speed:.2f}/s" if inst.speed > 0 else "N/A"
 
-            # Per-instance health grade
             if inst.health_summary and inst.stats:
                 total_muts = inst.stats.get("total_mutations", 0)
                 if total_muts > 0:
@@ -937,8 +930,11 @@ class CampaignAggregator:
             )
 
         lines.append("")
+        return lines
 
-        # ========== FLEET HEALTH ==========
+    def _format_fleet_health(self) -> list[str]:
+        """Format the FLEET HEALTH section."""
+        lines: list[str] = []
         lines.append("-" * 90)
         lines.append("FLEET HEALTH")
         lines.append("-" * 90)
@@ -962,17 +958,19 @@ class CampaignAggregator:
             lines.append(f"Crash Profile:  {profile_str}")
 
         lines.append("")
+        return lines
 
-        # ========== GLOBAL CRASH TABLE ==========
+    def _format_crash_table(self) -> list[str]:
+        """Format the GLOBAL CRASH TABLE section."""
+        lines: list[str] = []
+        instance_count = len(self.instances)
         lines.append("-" * 100)
         lines.append("GLOBAL CRASH TABLE")
         lines.append("-" * 100)
 
         if self.global_crashes:
-            # Status priority for sorting: REGRESSION > NEW > KNOWN > NOISE
             status_priority = {"REGRESSION": 0, "NEW": 1, "KNOWN": 2, "NOISE": 3}
 
-            # Sort by status priority, then by reproducibility, then by count
             sorted_crashes = sorted(
                 self.global_crashes.items(),
                 key=lambda x: (
@@ -982,21 +980,17 @@ class CampaignAggregator:
                 ),
             )
 
-            # Table header
             lines.append(
                 f"{'Status':<12} | {'Fingerprint':<35} | {'Hits':>6} | "
                 f"{'Repro %':>7} | {'Issue':<15}"
             )
             lines.append("-" * 100)
 
-            for fingerprint, info in sorted_crashes[:15]:  # Top 15
+            for fingerprint, info in sorted_crashes[:15]:
                 instance_pct = (len(info.finding_instances) / instance_count) * 100
                 status = f"[{info.status_label}]"
-
-                # Truncate fingerprint if too long
                 fp_display = fingerprint[:35] if len(fingerprint) > 35 else fingerprint
 
-                # Format issue reference
                 if info.issue_number:
                     issue_str = f"#{info.issue_number}"
                 else:
@@ -1010,7 +1004,6 @@ class CampaignAggregator:
             if len(sorted_crashes) > 15:
                 lines.append(f"... and {len(sorted_crashes) - 15} more unique fingerprints")
 
-            # Count by status
             status_counts = Counter(info.status_label for info in self.global_crashes.values())
             lines.append("")
             lines.append(f"Total Unique Crashes: {len(self.global_crashes)}")
@@ -1027,55 +1020,59 @@ class CampaignAggregator:
             lines.append("No crashes recorded across fleet.")
 
         lines.append("")
+        return lines
 
-        # ========== CRASH-PRODUCTIVE MUTATORS ==========
-        if self.fleet_crash_attribution:
-            ca = self.fleet_crash_attribution
-            lines.append("-" * 90)
-            lines.append("CRASH-PRODUCTIVE MUTATORS")
-            lines.append("-" * 90)
+    def _format_crash_attribution(self) -> list[str]:
+        """Format the CRASH-PRODUCTIVE MUTATORS section."""
+        if not self.fleet_crash_attribution:
+            return []
 
-            lines.append(
-                f"Attributed Crashes: {ca['total_attributed_crashes']:,} "
-                f"({ca['unique_fingerprints']:,} unique fingerprints)"
-            )
-            lines.append(f"Avg Lineage Depth:  {ca['avg_lineage_depth']:.1f}")
+        lines: list[str] = []
+        ca = self.fleet_crash_attribution
+        lines.append("-" * 90)
+        lines.append("CRASH-PRODUCTIVE MUTATORS")
+        lines.append("-" * 90)
+
+        lines.append(
+            f"Attributed Crashes: {ca['total_attributed_crashes']:,} "
+            f"({ca['unique_fingerprints']:,} unique fingerprints)"
+        )
+        lines.append(f"Avg Lineage Depth:  {ca['avg_lineage_depth']:.1f}")
+        lines.append("")
+
+        top_strategies = ca["combined_strategy_scores"].most_common(5)
+        if top_strategies:
+            strat_strs = [f"{name} (score: {score:,})" for name, score in top_strategies]
+            lines.append(f"Top Crash Strategies: {', '.join(strat_strs)}")
             lines.append("")
 
-            # Top strategies by combined score
-            top_strategies = ca["combined_strategy_scores"].most_common(5)
-            if top_strategies:
-                strat_strs = [f"{name} (score: {score:,})" for name, score in top_strategies]
-                lines.append(f"Top Crash Strategies: {', '.join(strat_strs)}")
-                lines.append("")
+        top_mutators = ca["combined_transformer_scores"].most_common(10)
+        if top_mutators:
+            lines.append("Top Crash Mutators (by attribution score):")
 
-            # Top mutators by combined score — two-column layout, top 10
-            top_mutators = ca["combined_transformer_scores"].most_common(10)
-            if top_mutators:
-                lines.append("Top Crash Mutators (by attribution score):")
+            max_name_len = max(len(name) for name, _ in top_mutators)
+            pad = max(max_name_len + 2, 30)
 
-                # Calculate padding for alignment
-                max_name_len = max(len(name) for name, _ in top_mutators)
-                pad = max(max_name_len + 2, 30)
+            half = (len(top_mutators) + 1) // 2
+            for i in range(half):
+                left_name, left_score = top_mutators[i]
+                left_str = f"  {left_name} {'.' * (pad - len(left_name) - 2)} {left_score:,}"
 
-                # Two-column layout
-                half = (len(top_mutators) + 1) // 2
-                for i in range(half):
-                    left_name, left_score = top_mutators[i]
-                    left_str = f"  {left_name} {'.' * (pad - len(left_name) - 2)} {left_score:,}"
+                if i + half < len(top_mutators):
+                    right_name, right_score = top_mutators[i + half]
+                    right_str = (
+                        f"  {right_name} {'.' * (pad - len(right_name) - 2)} {right_score:,}"
+                    )
+                    lines.append(f"{left_str}    {right_str}")
+                else:
+                    lines.append(left_str)
 
-                    if i + half < len(top_mutators):
-                        right_name, right_score = top_mutators[i + half]
-                        right_str = (
-                            f"  {right_name} {'.' * (pad - len(right_name) - 2)} {right_score:,}"
-                        )
-                        lines.append(f"{left_str}    {right_str}")
-                    else:
-                        lines.append(left_str)
+        lines.append("")
+        return lines
 
-            lines.append("")
-
-        # ========== FLEET CORPUS SUMMARY ==========
+    def _format_corpus_summary(self) -> list[str]:
+        """Format the FLEET CORPUS SUMMARY section."""
+        lines: list[str] = []
         lines.append("-" * 90)
         lines.append("FLEET CORPUS SUMMARY")
         lines.append("-" * 90)
@@ -1089,7 +1086,6 @@ class CampaignAggregator:
         lines.append(f"Sterile Rate:   {total_sterile:,} ({sterile_rate:.2f}%)")
         lines.append(f"Avg Depth:      {avg_depth:.1f}")
 
-        # Top strategies
         top_strategies = self.get_top_strategies(5)
         if top_strategies:
             top_str = ", ".join(f"{name} ({count:,})" for name, count in top_strategies)
@@ -1097,7 +1093,6 @@ class CampaignAggregator:
         else:
             lines.append("Top Strategies: N/A")
 
-        # Top mutators
         top_mutators = self.get_top_mutators(5)
         if top_mutators:
             top_str = ", ".join(f"{name} ({count:,})" for name, count in top_mutators)
@@ -1106,69 +1101,209 @@ class CampaignAggregator:
             lines.append("Top Mutators:   N/A")
 
         lines.append("")
+        return lines
+
+    def generate_report(self) -> str:
+        """Generate a text report of the campaign analysis."""
+        if len(self.instances) == 0:
+            lines: list[str] = []
+            lines.append("=" * 90)
+            lines.append("LAFLEUR CAMPAIGN REPORT")
+            lines.append("=" * 90)
+            lines.append("No valid instances found.")
+            return "\n".join(lines)
+
+        # Assemble report from independent sections
+        lines: list[str] = []
+        lines.extend(self._format_campaign_header())
+        lines.extend(self._format_leaderboard())
+        lines.extend(self._format_fleet_health())
+        lines.extend(self._format_crash_table())
+        lines.extend(self._format_crash_attribution())
+        lines.extend(self._format_corpus_summary())
         lines.append("=" * 90)
 
         return "\n".join(lines)
 
 
-def generate_html_report(aggregator: CampaignAggregator) -> str:
-    """
-    Generate an offline HTML report with embedded CSS and JavaScript.
+_HTML_CSS = """\
+    :root {
+      --bg: #1a1a2e;
+      --surface: #16213e;
+      --primary: #0f3460;
+      --accent: #e94560;
+      --text: #eee;
+      --text-dim: #888;
+      --success: #4ade80;
+      --warning: #fbbf24;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.6;
+      padding: 2rem;
+    }
+    h1 { color: var(--accent); margin-bottom: 0.5rem; }
+    h2 { color: var(--text); margin: 2rem 0 1rem; border-bottom: 2px solid var(--primary); padding-bottom: 0.5rem; }
+    .subtitle { color: var(--text-dim); margin-bottom: 2rem; }
+    .kpi-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 1rem;
+      margin-bottom: 2rem;
+    }
+    .kpi-card {
+      background: var(--surface);
+      border-radius: 8px;
+      padding: 1.5rem;
+      border-left: 4px solid var(--accent);
+    }
+    .kpi-card .label { color: var(--text-dim); font-size: 0.875rem; text-transform: uppercase; }
+    .kpi-card .value { font-size: 2rem; font-weight: bold; color: var(--text); }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      background: var(--surface);
+      border-radius: 8px;
+      overflow: hidden;
+    }
+    th, td { padding: 0.75rem 1rem; text-align: left; }
+    th {
+      background: var(--primary);
+      cursor: pointer;
+      user-select: none;
+      white-space: nowrap;
+    }
+    th:hover { background: #1a4a7a; }
+    th::after { content: " \\2195"; opacity: 0.5; }
+    th.asc::after { content: " \\2191"; opacity: 1; }
+    th.desc::after { content: " \\2193"; opacity: 1; }
+    tr:nth-child(even) { background: rgba(255,255,255,0.02); }
+    tr:hover { background: rgba(255,255,255,0.05); }
+    .status {
+      padding: 0.25rem 0.5rem;
+      border-radius: 4px;
+      font-size: 0.75rem;
+      font-weight: bold;
+      text-transform: uppercase;
+    }
+    .status.running { background: var(--success); color: #000; }
+    .status.stopped { background: var(--text-dim); color: #000; }
+    .bar-container {
+      position: relative;
+      background: rgba(255,255,255,0.1);
+      border-radius: 4px;
+      height: 24px;
+      min-width: 100px;
+    }
+    .bar-fill {
+      position: absolute;
+      top: 0;
+      left: 0;
+      height: 100%;
+      border-radius: 4px;
+      opacity: 0.7;
+    }
+    .bar-fill.speed { background: linear-gradient(90deg, #4ade80, #22c55e); }
+    .bar-fill.coverage { background: linear-gradient(90deg, #60a5fa, #3b82f6); }
+    .bar-fill.hits { background: linear-gradient(90deg, #f87171, #ef4444); }
+    .bar-text {
+      position: relative;
+      z-index: 1;
+      display: block;
+      padding: 2px 8px;
+      font-size: 0.875rem;
+      font-weight: 500;
+    }
+    .summary { background: var(--surface); padding: 1.5rem; border-radius: 8px; margin-top: 2rem; }
+    .summary p { margin: 0.5rem 0; }
+    .mutation {
+      background: var(--primary);
+      padding: 0.125rem 0.5rem;
+      border-radius: 4px;
+      font-size: 0.875rem;
+    }
+    .badge {
+      padding: 0.25rem 0.5rem;
+      border-radius: 4px;
+      font-size: 0.7rem;
+      font-weight: bold;
+      text-transform: uppercase;
+    }
+    .badge.regression { background: #dc2626; color: #fff; }
+    .badge.noise { background: #6b7280; color: #fff; }
+    .badge.known { background: #2563eb; color: #fff; }
+    .badge.new { background: #16a34a; color: #fff; }
+    tr.regression { background: rgba(220, 38, 38, 0.15) !important; }
+    tr.regression:hover { background: rgba(220, 38, 38, 0.25) !important; }
+    tr.noise { opacity: 0.6; }
+    tr.noise:hover { opacity: 0.8; }
+    .health-badge {
+      padding: 0.25rem 0.5rem;
+      border-radius: 4px;
+      font-size: 0.7rem;
+      font-weight: bold;
+    }
+    .health-ok { background: var(--success); color: #000; }
+    .health-warn { background: var(--warning); color: #000; }
+    .health-bad { background: var(--accent); color: #fff; }
+    .timeout-high { color: #dc3545; font-weight: bold; }
+    a { color: #60a5fa; text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    footer { margin-top: 3rem; text-align: center; color: var(--text-dim); font-size: 0.875rem; }
+"""
 
-    Args:
-        aggregator: The CampaignAggregator with loaded and aggregated data.
+_HTML_SORT_JS = """\
+    document.querySelectorAll('th').forEach(th => {
+      th.addEventListener('click', () => {
+        const table = th.closest('table');
+        const tbody = table.querySelector('tbody');
+        const idx = Array.from(th.parentNode.children).indexOf(th);
+        const rows = Array.from(tbody.querySelectorAll('tr'));
+        const asc = !th.classList.contains('asc');
 
-    Returns:
-        Complete HTML document as a string.
-    """
-    instance_count = len(aggregator.instances)
-    total_crashes = sum(c.count for c in aggregator.global_crashes.values())
-    unique_crashes = len(aggregator.global_crashes)
+        th.parentNode.querySelectorAll('th').forEach(h => h.classList.remove('asc', 'desc'));
+        th.classList.add(asc ? 'asc' : 'desc');
 
-    # Calculate max values for bar scaling
-    max_speed = max((i.speed for i in aggregator.instances), default=1) or 1
-    max_coverage = max((i.coverage for i in aggregator.instances), default=1) or 1
-    max_hits = max((c.count for c in aggregator.global_crashes.values()), default=1) or 1
+        rows.sort((a, b) => {
+          const aCell = a.children[idx], bCell = b.children[idx];
+          let aVal = aCell.dataset.sort !== undefined ? aCell.dataset.sort : aCell.textContent.trim();
+          let bVal = bCell.dataset.sort !== undefined ? bCell.dataset.sort : bCell.textContent.trim();
+          const aNum = parseFloat(aVal.replace(/,/g, '')), bNum = parseFloat(bVal.replace(/,/g, ''));
+          if (!isNaN(aNum) && !isNaN(bNum)) return asc ? aNum - bNum : bNum - aNum;
+          return asc ? aVal.localeCompare(bVal) : bVal.localeCompare(aVal);
+        });
+        rows.forEach(row => tbody.appendChild(row));
+      });
+    });
+"""
 
-    # Sort instances by coverage (descending)
-    sorted_instances = sorted(aggregator.instances, key=lambda i: i.coverage, reverse=True)
 
-    # Status priority for sorting: REGRESSION > NEW > KNOWN > NOISE
-    status_priority = {"REGRESSION": 0, "NEW": 1, "KNOWN": 2, "NOISE": 3}
+def _build_instance_row(inst: InstanceData, max_speed: float, max_coverage: int) -> str:
+    """Build a single HTML table row for an instance."""
+    name_escaped = html.escape(inst.name)
+    dir_escaped = html.escape(inst.relative_dir)
+    status_class = "running" if inst.status == "Running" else "stopped"
+    speed_pct = (inst.speed / max_speed) * 100 if max_speed else 0
+    coverage_pct = (inst.coverage / max_coverage) * 100 if max_coverage else 0
+    speed_str = f"{inst.speed:.2f}/s" if inst.speed > 0 else "N/A"
 
-    # Sort crashes by status priority, then by reproducibility, then by count
-    sorted_crashes = sorted(
-        aggregator.global_crashes.items(),
-        key=lambda x: (
-            status_priority.get(x[1].status_label, 1),
-            -len(x[1].finding_instances) / instance_count if instance_count else 0,
-            -x[1].count,
-        ),
-    )[:15]  # Top 15
-
-    instance_rows = []
-    for inst in sorted_instances:
-        name_escaped = html.escape(inst.name)
-        dir_escaped = html.escape(inst.relative_dir)
-        status_class = "running" if inst.status == "Running" else "stopped"
-        speed_pct = (inst.speed / max_speed) * 100 if max_speed else 0
-        coverage_pct = (inst.coverage / max_coverage) * 100 if max_coverage else 0
-        speed_str = f"{inst.speed:.2f}/s" if inst.speed > 0 else "N/A"
-
-        if inst.health_summary and inst.stats:
-            total_muts = inst.stats.get("total_mutations", 0)
-            if total_muts > 0:
-                inst_waste = inst.health_summary["waste_event_count"] / total_muts
-            else:
-                inst_waste = 0.0
-            short_label, _ = CampaignAggregator.health_grade(inst_waste)
-            health_class = f"health-{short_label.lower()}"
-            health_badge = f'<span class="health-badge {health_class}">{short_label}</span>'
+    if inst.health_summary and inst.stats:
+        total_muts = inst.stats.get("total_mutations", 0)
+        if total_muts > 0:
+            inst_waste = inst.health_summary["waste_event_count"] / total_muts
         else:
-            health_badge = '<span class="health-badge">N/A</span>'
+            inst_waste = 0.0
+        short_label, _ = CampaignAggregator.health_grade(inst_waste)
+        health_class = f"health-{short_label.lower()}"
+        health_badge = f'<span class="health-badge {health_class}">{short_label}</span>'
+    else:
+        health_badge = '<span class="health-badge">N/A</span>'
 
-        to_class = ' class="timeout-high"' if inst.timeout_rate > 15 else ""
-        instance_rows.append(f"""        <tr>
+    to_class = ' class="timeout-high"' if inst.timeout_rate > 15 else ""
+    return f"""        <tr>
           <td>{name_escaped}</td>
           <td><span class="status {status_class}">{inst.status}</span></td>
           <td data-sort="{inst.speed:.4f}"><div class="bar-container"><div class="bar-fill speed" style="width:{speed_pct:.1f}%"></div><span class="bar-text">{speed_str}</span></div></td>
@@ -1178,70 +1313,137 @@ def generate_html_report(aggregator: CampaignAggregator) -> str:
           <td data-sort="{inst.timeout_rate:.1f}"{to_class}>{inst.timeout_rate:.1f}%</td>
           <td>{health_badge}</td>
           <td>{dir_escaped}</td>
-        </tr>""")
+        </tr>"""
 
-    crash_rows = []
-    for fingerprint, info in sorted_crashes:
-        fp_escaped = html.escape(fingerprint[:40] if len(fingerprint) > 40 else fingerprint)
-        instance_pct = (len(info.finding_instances) / instance_count * 100) if instance_count else 0
-        hits_pct = (info.count / max_hits) * 100 if max_hits else 0
 
-        status_label = info.status_label
-        row_class = ""
-        if status_label == "REGRESSION":
-            row_class = "regression"
-            badge = '<span class="badge regression">REGRESSION</span>'
-        elif status_label == "NOISE":
-            row_class = "noise"
-            badge = '<span class="badge noise">NOISE</span>'
-        elif status_label == "KNOWN":
-            badge = '<span class="badge known">KNOWN</span>'
-        else:
-            badge = '<span class="badge new">NEW</span>'
+def _build_crash_row(fingerprint: str, info: CrashInfo, instance_count: int, max_hits: int) -> str:
+    """Build a single HTML table row for a crash entry."""
+    status_priority = {"REGRESSION": 0, "NEW": 1, "KNOWN": 2, "NOISE": 3}
+    fp_escaped = html.escape(fingerprint[:40] if len(fingerprint) > 40 else fingerprint)
+    instance_pct = (len(info.finding_instances) / instance_count * 100) if instance_count else 0
+    hits_pct = (info.count / max_hits) * 100 if max_hits else 0
 
-        if info.issue_number:
-            issue_url = (
-                info.issue_url or f"https://github.com/python/cpython/issues/{info.issue_number}"
-            )
-            issue_html = (
-                f'<a href="{html.escape(issue_url)}" target="_blank">#{info.issue_number}</a>'
-            )
-        else:
-            issue_html = "-"
+    status_label = info.status_label
+    row_class = ""
+    if status_label == "REGRESSION":
+        row_class = "regression"
+        badge = '<span class="badge regression">REGRESSION</span>'
+    elif status_label == "NOISE":
+        row_class = "noise"
+        badge = '<span class="badge noise">NOISE</span>'
+    elif status_label == "KNOWN":
+        badge = '<span class="badge known">KNOWN</span>'
+    else:
+        badge = '<span class="badge new">NEW</span>'
 
-        crash_rows.append(f"""        <tr class="{row_class}" data-status="{status_priority.get(status_label, 1)}">
+    if info.issue_number:
+        issue_url = (
+            info.issue_url or f"https://github.com/python/cpython/issues/{info.issue_number}"
+        )
+        issue_cell = f'<a href="{html.escape(issue_url)}" target="_blank">#{info.issue_number}</a>'
+    else:
+        issue_cell = "-"
+
+    return f"""        <tr class="{row_class}" data-status="{status_priority.get(status_label, 1)}">
           <td>{badge}</td>
           <td title="{html.escape(fingerprint)}">{fp_escaped}</td>
           <td data-sort="{info.count}"><div class="bar-container"><div class="bar-fill hits" style="width:{hits_pct:.1f}%"></div><span class="bar-text">{info.count:,}</span></div></td>
           <td data-sort="{instance_pct:.1f}">{instance_pct:.1f}%</td>
-          <td>{issue_html}</td>
-        </tr>""")
+          <td>{issue_cell}</td>
+        </tr>"""
 
-    # Top strategies
-    top_strategies = aggregator.get_top_strategies(5)
-    strategies_html = (
-        ", ".join(
-            f"<span class='mutation'>{html.escape(name)}</span> ({count:,})"
-            for name, count in top_strategies
+
+def _build_crash_attribution_card(
+    fleet_crash_attribution: dict[str, Any] | None,
+) -> str:
+    """Build the HTML card for crash-productive mutators."""
+    if not fleet_crash_attribution:
+        return ""
+
+    ca = fleet_crash_attribution
+    top_mutators = ca["combined_transformer_scores"].most_common(10)
+    max_mut_score = top_mutators[0][1] if top_mutators else 1
+
+    mutator_rows_html = []
+    for name, score in top_mutators:
+        pct = (score / max_mut_score) * 100 if max_mut_score else 0
+        direct_count = ca["direct_transformer_counter"].get(name, 0)
+        lineage_count = ca["lineage_transformer_counter"].get(name, 0)
+        name_escaped = html.escape(name)
+        mutator_rows_html.append(
+            f"        <tr>\n"
+            f"          <td>{name_escaped}</td>\n"
+            f'          <td data-sort="{score}">'
+            f'<div class="bar-container">'
+            f'<div class="bar-fill speed" style="width:{pct:.1f}%"></div>'
+            f'<span class="bar-text">{score:,}</span></div></td>\n'
+            f"          <td>{direct_count}</td>\n"
+            f"          <td>{lineage_count}</td>\n"
+            f"        </tr>"
         )
-        if top_strategies
-        else "N/A"
+
+    return (
+        f'\n  <div class="summary">\n'
+        f'    <h2 style="margin-top:0;border:none;">Crash-Productive Mutators</h2>\n'
+        f"    <p><strong>Attributed Crashes:</strong> "
+        f"{ca['total_attributed_crashes']:,}</p>\n"
+        f"    <p><strong>Unique Fingerprints:</strong> "
+        f"{ca['unique_fingerprints']:,}</p>\n"
+        f"    <p><strong>Avg Lineage Depth:</strong> "
+        f"{ca['avg_lineage_depth']:.1f}</p>\n"
+        f"    <table>\n"
+        f"      <thead><tr>"
+        f"<th>Mutator</th><th>Score</th><th>Direct</th><th>Lineage</th>"
+        f"</tr></thead>\n"
+        f"      <tbody>\n" + "\n".join(mutator_rows_html) + "\n"
+        "      </tbody>\n"
+        "    </table>\n"
+        "  </div>"
     )
 
-    # Top mutators
-    top_mutators = aggregator.get_top_mutators(5)
-    mutators_html = (
-        ", ".join(
-            f"<span class='mutation'>{html.escape(name)}</span> ({count:,})"
-            for name, count in top_mutators
-        )
-        if top_mutators
-        else "N/A"
+
+def _html_badge_list(items: list[tuple[str, int]], fallback: str = "N/A") -> str:
+    """Format a list of (name, count) as HTML mutation badge spans."""
+    if not items:
+        return fallback
+    return ", ".join(
+        f"<span class='mutation'>{html.escape(name)}</span> ({count:,})" for name, count in items
     )
 
+
+def generate_html_report(aggregator: CampaignAggregator) -> str:
+    """Generate an offline HTML report with embedded CSS and JavaScript."""
+    instance_count = len(aggregator.instances)
+    total_crashes = sum(c.count for c in aggregator.global_crashes.values())
+    unique_crashes = len(aggregator.global_crashes)
+
+    max_speed = max((i.speed for i in aggregator.instances), default=1) or 1
+    max_coverage = max((i.coverage for i in aggregator.instances), default=1) or 1
+    max_hits = max((c.count for c in aggregator.global_crashes.values()), default=1) or 1
+
+    sorted_instances = sorted(aggregator.instances, key=lambda i: i.coverage, reverse=True)
+
+    status_priority = {"REGRESSION": 0, "NEW": 1, "KNOWN": 2, "NOISE": 3}
+    sorted_crashes = sorted(
+        aggregator.global_crashes.items(),
+        key=lambda x: (
+            status_priority.get(x[1].status_label, 1),
+            -len(x[1].finding_instances) / instance_count if instance_count else 0,
+            -x[1].count,
+        ),
+    )[:15]
+
+    instance_rows = [
+        _build_instance_row(inst, max_speed, max_coverage) for inst in sorted_instances
+    ]
+    crash_rows = [
+        _build_crash_row(fp, info, instance_count, max_hits) for fp, info in sorted_crashes
+    ]
+
+    strategies_html = _html_badge_list(aggregator.get_top_strategies(5))
+    mutators_html = _html_badge_list(aggregator.get_top_mutators(5))
     report_date = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
 
-    # Fleet health data
     fleet_waste_rate = aggregator.get_fleet_waste_rate()
     fleet_short_grade, fleet_long_grade = aggregator.get_fleet_health_grade()
     fleet_health_color = {
@@ -1250,27 +1452,9 @@ def generate_html_report(aggregator: CampaignAggregator) -> str:
         "BAD": "var(--accent)",
     }.get(fleet_short_grade, "var(--text-dim)")
 
-    # Fleet health section content
-    top_offenders = aggregator.get_top_offenders(5)
-    offenders_html = (
-        ", ".join(
-            f"<span class='mutation'>{html.escape(name)}</span> ({count:,})"
-            for name, count in top_offenders
-        )
-        if top_offenders
-        else "None"
-    )
-    crash_profile = aggregator.get_crash_profile(5)
-    crash_profile_html = (
-        ", ".join(
-            f"<span class='mutation'>{html.escape(reason)}</span> ({count:,})"
-            for reason, count in crash_profile
-        )
-        if crash_profile
-        else "None"
-    )
+    offenders_html = _html_badge_list(aggregator.get_top_offenders(5), "None")
+    crash_profile_html = _html_badge_list(aggregator.get_crash_profile(5), "None")
 
-    # Waste event breakdown
     waste_by_event = aggregator.global_health["by_event"]
     waste_breakdown_html = (
         ", ".join(f"{html.escape(evt)} ({count:,})" for evt, count in waste_by_event.most_common(5))
@@ -1278,49 +1462,7 @@ def generate_html_report(aggregator: CampaignAggregator) -> str:
         else "None"
     )
 
-    # Crash-Productive Mutators card
-    crash_attribution_html = ""
-    if aggregator.fleet_crash_attribution:
-        ca = aggregator.fleet_crash_attribution
-        top_mutators = ca["combined_transformer_scores"].most_common(10)
-        max_mut_score = top_mutators[0][1] if top_mutators else 1
-
-        mutator_rows_html = []
-        for name, score in top_mutators:
-            pct = (score / max_mut_score) * 100 if max_mut_score else 0
-            direct_count = ca["direct_transformer_counter"].get(name, 0)
-            lineage_count = ca["lineage_transformer_counter"].get(name, 0)
-            name_escaped = html.escape(name)
-            mutator_rows_html.append(
-                f"        <tr>\n"
-                f"          <td>{name_escaped}</td>\n"
-                f'          <td data-sort="{score}">'
-                f'<div class="bar-container">'
-                f'<div class="bar-fill speed" style="width:{pct:.1f}%"></div>'
-                f'<span class="bar-text">{score:,}</span></div></td>\n'
-                f"          <td>{direct_count}</td>\n"
-                f"          <td>{lineage_count}</td>\n"
-                f"        </tr>"
-            )
-
-        crash_attribution_html = (
-            f'\n  <div class="summary">\n'
-            f'    <h2 style="margin-top:0;border:none;">Crash-Productive Mutators</h2>\n'
-            f"    <p><strong>Attributed Crashes:</strong> "
-            f"{ca['total_attributed_crashes']:,}</p>\n"
-            f"    <p><strong>Unique Fingerprints:</strong> "
-            f"{ca['unique_fingerprints']:,}</p>\n"
-            f"    <p><strong>Avg Lineage Depth:</strong> "
-            f"{ca['avg_lineage_depth']:.1f}</p>\n"
-            f"    <table>\n"
-            f"      <thead><tr>"
-            f"<th>Mutator</th><th>Score</th><th>Direct</th><th>Lineage</th>"
-            f"</tr></thead>\n"
-            f"      <tbody>\n" + "\n".join(mutator_rows_html) + "\n"
-            "      </tbody>\n"
-            "    </table>\n"
-            "  </div>"
-        )
+    crash_attribution_html = _build_crash_attribution_card(aggregator.fleet_crash_attribution)
 
     return f"""<!DOCTYPE html>
 <html lang="en">
@@ -1329,133 +1471,7 @@ def generate_html_report(aggregator: CampaignAggregator) -> str:
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Lafleur Campaign Report</title>
   <style>
-    :root {{
-      --bg: #1a1a2e;
-      --surface: #16213e;
-      --primary: #0f3460;
-      --accent: #e94560;
-      --text: #eee;
-      --text-dim: #888;
-      --success: #4ade80;
-      --warning: #fbbf24;
-    }}
-    * {{ box-sizing: border-box; margin: 0; padding: 0; }}
-    body {{
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-      background: var(--bg);
-      color: var(--text);
-      line-height: 1.6;
-      padding: 2rem;
-    }}
-    h1 {{ color: var(--accent); margin-bottom: 0.5rem; }}
-    h2 {{ color: var(--text); margin: 2rem 0 1rem; border-bottom: 2px solid var(--primary); padding-bottom: 0.5rem; }}
-    .subtitle {{ color: var(--text-dim); margin-bottom: 2rem; }}
-    .kpi-grid {{
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-      gap: 1rem;
-      margin-bottom: 2rem;
-    }}
-    .kpi-card {{
-      background: var(--surface);
-      border-radius: 8px;
-      padding: 1.5rem;
-      border-left: 4px solid var(--accent);
-    }}
-    .kpi-card .label {{ color: var(--text-dim); font-size: 0.875rem; text-transform: uppercase; }}
-    .kpi-card .value {{ font-size: 2rem; font-weight: bold; color: var(--text); }}
-    table {{
-      width: 100%;
-      border-collapse: collapse;
-      background: var(--surface);
-      border-radius: 8px;
-      overflow: hidden;
-    }}
-    th, td {{ padding: 0.75rem 1rem; text-align: left; }}
-    th {{
-      background: var(--primary);
-      cursor: pointer;
-      user-select: none;
-      white-space: nowrap;
-    }}
-    th:hover {{ background: #1a4a7a; }}
-    th::after {{ content: " \\2195"; opacity: 0.5; }}
-    th.asc::after {{ content: " \\2191"; opacity: 1; }}
-    th.desc::after {{ content: " \\2193"; opacity: 1; }}
-    tr:nth-child(even) {{ background: rgba(255,255,255,0.02); }}
-    tr:hover {{ background: rgba(255,255,255,0.05); }}
-    .status {{
-      padding: 0.25rem 0.5rem;
-      border-radius: 4px;
-      font-size: 0.75rem;
-      font-weight: bold;
-      text-transform: uppercase;
-    }}
-    .status.running {{ background: var(--success); color: #000; }}
-    .status.stopped {{ background: var(--text-dim); color: #000; }}
-    .bar-container {{
-      position: relative;
-      background: rgba(255,255,255,0.1);
-      border-radius: 4px;
-      height: 24px;
-      min-width: 100px;
-    }}
-    .bar-fill {{
-      position: absolute;
-      top: 0;
-      left: 0;
-      height: 100%;
-      border-radius: 4px;
-      opacity: 0.7;
-    }}
-    .bar-fill.speed {{ background: linear-gradient(90deg, #4ade80, #22c55e); }}
-    .bar-fill.coverage {{ background: linear-gradient(90deg, #60a5fa, #3b82f6); }}
-    .bar-fill.hits {{ background: linear-gradient(90deg, #f87171, #ef4444); }}
-    .bar-text {{
-      position: relative;
-      z-index: 1;
-      display: block;
-      padding: 2px 8px;
-      font-size: 0.875rem;
-      font-weight: 500;
-    }}
-    .summary {{ background: var(--surface); padding: 1.5rem; border-radius: 8px; margin-top: 2rem; }}
-    .summary p {{ margin: 0.5rem 0; }}
-    .mutation {{
-      background: var(--primary);
-      padding: 0.125rem 0.5rem;
-      border-radius: 4px;
-      font-size: 0.875rem;
-    }}
-    .badge {{
-      padding: 0.25rem 0.5rem;
-      border-radius: 4px;
-      font-size: 0.7rem;
-      font-weight: bold;
-      text-transform: uppercase;
-    }}
-    .badge.regression {{ background: #dc2626; color: #fff; }}
-    .badge.noise {{ background: #6b7280; color: #fff; }}
-    .badge.known {{ background: #2563eb; color: #fff; }}
-    .badge.new {{ background: #16a34a; color: #fff; }}
-    tr.regression {{ background: rgba(220, 38, 38, 0.15) !important; }}
-    tr.regression:hover {{ background: rgba(220, 38, 38, 0.25) !important; }}
-    tr.noise {{ opacity: 0.6; }}
-    tr.noise:hover {{ opacity: 0.8; }}
-    .health-badge {{
-      padding: 0.25rem 0.5rem;
-      border-radius: 4px;
-      font-size: 0.7rem;
-      font-weight: bold;
-    }}
-    .health-ok {{ background: var(--success); color: #000; }}
-    .health-warn {{ background: var(--warning); color: #000; }}
-    .health-bad {{ background: var(--accent); color: #fff; }}
-    .timeout-high {{ color: #dc3545; font-weight: bold; }}
-    a {{ color: #60a5fa; text-decoration: none; }}
-    a:hover {{ text-decoration: underline; }}
-    footer {{ margin-top: 3rem; text-align: center; color: var(--text-dim); font-size: 0.875rem; }}
-  </style>
+{_HTML_CSS}  </style>
 </head>
 <body>
   <h1>Lafleur Campaign Report</h1>
@@ -1547,29 +1563,7 @@ def generate_html_report(aggregator: CampaignAggregator) -> str:
   <footer>Lafleur Fuzzer Campaign Analysis</footer>
 
   <script>
-    document.querySelectorAll('th').forEach(th => {{
-      th.addEventListener('click', () => {{
-        const table = th.closest('table');
-        const tbody = table.querySelector('tbody');
-        const idx = Array.from(th.parentNode.children).indexOf(th);
-        const rows = Array.from(tbody.querySelectorAll('tr'));
-        const asc = !th.classList.contains('asc');
-
-        th.parentNode.querySelectorAll('th').forEach(h => h.classList.remove('asc', 'desc'));
-        th.classList.add(asc ? 'asc' : 'desc');
-
-        rows.sort((a, b) => {{
-          const aCell = a.children[idx], bCell = b.children[idx];
-          let aVal = aCell.dataset.sort !== undefined ? aCell.dataset.sort : aCell.textContent.trim();
-          let bVal = bCell.dataset.sort !== undefined ? bCell.dataset.sort : bCell.textContent.trim();
-          const aNum = parseFloat(aVal.replace(/,/g, '')), bNum = parseFloat(bVal.replace(/,/g, ''));
-          if (!isNaN(aNum) && !isNaN(bNum)) return asc ? aNum - bNum : bNum - aNum;
-          return asc ? aVal.localeCompare(bVal) : bVal.localeCompare(aVal);
-        }});
-        rows.forEach(row => tbody.appendChild(row));
-      }});
-    }});
-  </script>
+{_HTML_SORT_JS}  </script>
 </body>
 </html>"""
 

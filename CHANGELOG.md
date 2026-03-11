@@ -67,6 +67,7 @@ All notable changes to this project should be documented in this file.
 - Added complete `lafleur-lineage` section to TOOLING.md with modes, options, example workflow, and output formats, by @devdanzin.
 - Added seed generation and management guide (`doc/dev/11_seeding.md`) covering fusil integration, seeding workflow, hand-rolled seed templates, and best practices, by @devdanzin.
 - Cross-referenced `11_seeding.md` from CLAUDE.md, architecture overview, glossary (Fusil, Seed), and getting started guide, by @devdanzin.
+- Updated CLAUDE.md CLI Entry Points with `lafleur-driver` and `lafleur-lineage`, and Project Structure with `driver.py`, `lineage.py`, `minimize.py`, `state_tool.py`, and `corpus_analysis.py`, by @devdanzin.
 - A **TimeoutLogger** structured metadata system that logs every timeout event to `timeout_events.jsonl` with type, parent ID, mutation strategy, transformers, lineage depth, execution stage, and timeout duration, by @devdanzin.
 - A `load_timeout_summary()` reader function in campaign.py that aggregates timeout metadata into counters by type, parent, strategy, transformer, and execution stage, by @devdanzin.
 - A `--no-save-timeouts` CLI flag to skip saving normal timeout artifacts (.py source + .log files) to disk while preserving all structured metadata logging to `timeout_events.jsonl`. JIT hangs and regression timeouts are always saved regardless, by @devdanzin.

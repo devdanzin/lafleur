@@ -147,6 +147,11 @@ lafleur-triage export-issues known_issues.json
   - `campaign.py` — Multi-instance campaign aggregator with HTML reports
   - `registry.py` — SQLite-based crash registry for historical tracking
   - `triage.py` — Interactive crash triage CLI
+  - `driver.py` — Session fuzzing driver for multi-script JIT state persistence
+  - `lineage.py` — Corpus lineage visualization (ancestry, descendants, forest, MRCA)
+  - `minimize.py` — Advanced session crash minimizer (script reduction + shrinkray)
+  - `state_tool.py` — CLI utility for inspecting and migrating coverage_state.pkl
+  - `corpus_analysis.py` — Corpus statistics and evolutionary history analysis
 - `tests/` — Test suite (unittest-based)
 - `doc/dev/` — Developer documentation
 - `docs/` — User-facing documentation (TOOLING.md)
@@ -412,4 +417,5 @@ Defined in `pyproject.toml` under `[project.scripts]`:
 - `lafleur-report` → `lafleur.report:main` — Single instance reporter
 - `lafleur-campaign` → `lafleur.campaign:main` — Campaign aggregator
 - `lafleur-triage` → `lafleur.triage:main` — Crash triage CLI
-  
+- `lafleur-driver` → `lafleur.driver:main` — Session fuzzing driver (multi-script JIT state persistence)
+- `lafleur-lineage` → `lafleur.lineage:main` — Corpus lineage visualization tool

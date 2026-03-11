@@ -4,7 +4,7 @@ from pathlib import Path
 import sys
 
 
-def bump_version(new_version):
+def bump_version(new_version: str) -> None:
     # Update pyproject.toml
     pyproject = Path("pyproject.toml")
     content = pyproject.read_text(encoding="utf-8")

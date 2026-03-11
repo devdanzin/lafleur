@@ -21,6 +21,7 @@ from collections import defaultdict, deque
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from statistics import mean
+from typing import Any
 
 from lafleur.types import CorpusFileMetadata
 from lafleur.utils import load_json_file
@@ -677,7 +678,7 @@ def extract_forest(
 # ---------------------------------------------------------------------------
 
 
-def scan_crashes(crashes_dir: Path) -> list[dict]:
+def scan_crashes(crashes_dir: Path) -> list[dict[str, Any]]:
     """Scan the crashes directory for crash metadata.
 
     Reads metadata.json from each crash subdirectory.
@@ -691,7 +692,7 @@ def scan_crashes(crashes_dir: Path) -> list[dict]:
     - session_roles: dict of role→corpus filename (if session crash)
     - timestamp: discovery timestamp
     """
-    results: list[dict] = []
+    results: list[dict[str, Any]] = []
 
     if not crashes_dir.is_dir():
         return results
@@ -735,7 +736,7 @@ def scan_crashes(crashes_dir: Path) -> list[dict]:
 
 def attach_crashes(
     subgraph: Subgraph,
-    crashes: list[dict],
+    crashes: list[dict[str, Any]],
     graph: LineageGraph,
 ) -> int:
     """Add crash nodes to an existing subgraph.
@@ -907,7 +908,7 @@ def compute_edge_discoveries(
     parent_id: str,
     child_id: str,
     graph: LineageGraph,
-    state: dict,
+    state: dict[str, Any],
 ) -> list[str]:
     """Compute what new coverage the child discovered relative to its parent.
 
@@ -975,7 +976,7 @@ def compute_edge_discoveries(
 
 def _build_node_label(
     node: str,
-    metadata: dict,
+    metadata: dict[str, Any],
     label_style: str,
     metrics: TreeMetrics | None = None,
     show_strahler: bool = False,
@@ -1024,7 +1025,9 @@ def _build_node_label(
     return "\\n".join(parts)
 
 
-def _success_rate_label_parts(node: str, metadata: dict, metrics: TreeMetrics) -> list[str]:
+def _success_rate_label_parts(
+    node: str, metadata: dict[str, Any], metrics: TreeMetrics
+) -> list[str]:
     """Build success rate label parts for a node."""
     if metadata.get("parent_id") is None:
         return []  # Seed — skip
@@ -1040,7 +1043,7 @@ def _success_rate_label_parts(node: str, metadata: dict, metrics: TreeMetrics) -
         return [f"rate\\u2265{total_finds}/{denom} (\\u2264{rate:.1%})"]
 
 
-def _build_tooltip(metadata: dict) -> str:
+def _build_tooltip(metadata: dict[str, Any]) -> str:
     """Build a tooltip with full metadata dump."""
     dm = metadata.get("discovery_mutation", {})
     jit_stats = dm.get("jit_stats", {})
@@ -1254,7 +1257,7 @@ def _decorate_special_node(
 
 def _decorate_corpus_node(
     node: str,
-    metadata: dict,
+    metadata: dict[str, Any],
     label_style: str,
     metrics: TreeMetrics | None,
     show_strahler: bool,

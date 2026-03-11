@@ -15,7 +15,7 @@ import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, Callable
+from typing import TYPE_CHECKING, Any, Callable
 
 from lafleur.coverage import HarnessCoverage, save_coverage_state, CoverageManager
 from lafleur.health import FILE_SIZE_WARNING_THRESHOLD
@@ -519,7 +519,7 @@ class CorpusManager:
                 build_lineage_func=orchestrator_build_lineage_func,
             )
 
-    def _get_edge_set_from_profile(self, lineage_profile: dict) -> set[int]:
+    def _get_edge_set_from_profile(self, lineage_profile: dict[str, Any]) -> set[int]:
         """A helper to extract the set of all unique edge IDs from a lineage profile."""
         all_edges = set()
         for harness_data in lineage_profile.values():

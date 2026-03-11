@@ -246,8 +246,8 @@ def get_installed_packages() -> list[dict[str, str]]:
     for dist in distributions():
         try:
             packages.append({"name": dist.metadata["Name"], "version": dist.metadata["Version"]})
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"[!] Warning: Could not read package metadata: {e}", file=sys.stderr)
     # Sort by name for consistent output
     return sorted(packages, key=lambda p: p["name"].lower())
 

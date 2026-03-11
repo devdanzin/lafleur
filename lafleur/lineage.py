@@ -152,8 +152,15 @@ class TreeMetrics:
 
 def load_coverage_state(state_path: Path) -> dict:
     """Load coverage_state.pkl and return the full state dict."""
-    with open(state_path, "rb") as f:
-        return pickle.load(f)
+    try:
+        with open(state_path, "rb") as f:
+            return pickle.load(f)
+    except (pickle.UnpicklingError, OSError, EOFError) as e:
+        print(
+            f"[!] Error: Could not load coverage state from {state_path}: {e}",
+            file=sys.stderr,
+        )
+        sys.exit(1)
 
 
 def build_adjacency_graph(per_file_coverage: dict[str, dict]) -> LineageGraph:

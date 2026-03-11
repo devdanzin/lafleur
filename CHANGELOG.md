@@ -83,6 +83,8 @@ All notable changes to this project should be documented in this file.
 - Replaced 6 naive `datetime.now()` calls with `datetime.now(timezone.utc)` in `report.py`, `campaign.py`, and `triage.py` to prevent potential timezone mixing errors, by @devdanzin.
 - `learning.py::save_state()` and `save_telemetry()` had no exception handling — a disk-full or permission error would crash the entire fuzzer mid-campaign. Now wrapped in try/except matching the `_log_crash_attribution()` pattern, by @devdanzin.
 - `corpus_manager.py::generate_new_seed()` fusil subprocess had no timeout, no return code check, and no output file verification — failures were silently ignored. Now validates all three, by @devdanzin.
+- `lineage.py::load_coverage_state()` had no exception handling on `pickle.load()` — a corrupted state file would crash `lafleur-lineage` with an opaque error. Now catches `UnpicklingError`/`EOFError`/`OSError` with a clear message, by @devdanzin.
+- `metadata.py::get_installed_packages()` bare `except Exception: pass` silently swallowed all errors during package metadata collection. Now logs warnings to stderr, by @devdanzin.
 - Fixed stat_key inconsistency: orchestrator checked `"timeout_count"` but execution.py returns `"timeouts_found"`, causing `HealthMonitor.record_timeout()` to never trigger, by @devdanzin.
 
 ### Enhanced

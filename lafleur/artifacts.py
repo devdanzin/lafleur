@@ -703,7 +703,7 @@ class ArtifactManager:
         )
         try:
             diff_path.write_text("".join(diff))
-        except IOError as e:
+        except OSError as e:
             print(f"  [!] CRITICAL: Could not save divergence diff: {e}", file=sys.stderr)
             return
 
@@ -820,7 +820,7 @@ class TelemetryManager:
         try:
             with open(self.timeseries_log_path, "a", encoding="utf-8") as f:
                 f.write(json.dumps(datapoint) + "\n")
-        except IOError as e:
+        except OSError as e:
             print(
                 f"[!] Warning: Could not write to time-series log file: {e}",
                 file=sys.stderr,

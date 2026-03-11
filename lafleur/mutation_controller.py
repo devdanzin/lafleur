@@ -157,7 +157,7 @@ class MutationController:
             parent_core_tree = cast(ast.Module, normalizer.visit(parent_core_tree))
             ast.fix_missing_locations(parent_core_tree)
 
-        except (IOError, SyntaxError) as e:
+        except (OSError, SyntaxError) as e:
             print(f"[!] Error processing parent file {parent_path.name}: {e}", file=sys.stderr)
             return None, None, None
 

@@ -71,7 +71,7 @@ def load_run_stats() -> dict[str, Any]:
                 if key != "start_time":
                     stats.setdefault(key, value)
             return stats
-    except (json.JSONDecodeError, IOError) as e:
+    except (json.JSONDecodeError, OSError) as e:
         print(
             f"Warning: Could not load run stats file. Starting fresh. Error: {e}",
             file=sys.stderr,
@@ -84,7 +84,7 @@ def save_run_stats(stats: dict[str, Any]) -> None:
     try:
         with open(RUN_STATS_FILE, "w", encoding="utf-8") as f:
             json.dump(stats, f, indent=2, sort_keys=True)
-    except (IOError, OSError) as e:
+    except OSError as e:
         print(
             f"Warning: Could not save run stats: {e}",
             file=sys.stderr,

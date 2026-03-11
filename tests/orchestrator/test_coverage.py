@@ -12,7 +12,7 @@ import io
 import unittest
 from unittest.mock import MagicMock, patch
 
-from lafleur.scoring import ScoringManager, NewCoverageInfo
+from lafleur.scoring import ScoringContext, ScoringManager, NewCoverageInfo
 
 
 class TestFindNewCoverage(unittest.TestCase):
@@ -327,18 +327,15 @@ class TestScoreAndDecideInterestingness(unittest.TestCase):
         coverage_info = NewCoverageInfo(global_uops=1)
         mutation_info = {"strategy": "seed_strategy"}
 
+        ctx = ScoringContext(
+            parent_id=None,
+            mutation_info=mutation_info,
+            parent_file_size=100,
+            parent_lineage_edge_count=50,
+            child_file_size=100,
+        )
         with patch("sys.stderr", new_callable=io.StringIO):
-            result = self.scoring_manager.score_and_decide_interestingness(
-                coverage_info,
-                parent_id=None,  # Seed
-                mutation_info=mutation_info,
-                parent_file_size=100,
-                parent_lineage_edge_count=50,
-                child_file_size=100,
-                jit_avg_time_ms=None,
-                nojit_avg_time_ms=None,
-                nojit_cv=None,
-            )
+            result = self.scoring_manager.score_and_decide_interestingness(coverage_info, ctx)
 
         self.assertTrue(result)
 
@@ -347,18 +344,15 @@ class TestScoreAndDecideInterestingness(unittest.TestCase):
         coverage_info = NewCoverageInfo()
         mutation_info = {"strategy": "other_strategy"}
 
+        ctx = ScoringContext(
+            parent_id=None,
+            mutation_info=mutation_info,
+            parent_file_size=100,
+            parent_lineage_edge_count=50,
+            child_file_size=100,
+        )
         with patch("sys.stderr", new_callable=io.StringIO) as mock_stderr:
-            result = self.scoring_manager.score_and_decide_interestingness(
-                coverage_info,
-                parent_id=None,  # Seed
-                mutation_info=mutation_info,
-                parent_file_size=100,
-                parent_lineage_edge_count=50,
-                child_file_size=100,
-                jit_avg_time_ms=None,
-                nojit_avg_time_ms=None,
-                nojit_cv=None,
-            )
+            result = self.scoring_manager.score_and_decide_interestingness(coverage_info, ctx)
 
         self.assertFalse(result)
         self.assertIn("no JIT coverage", mock_stderr.getvalue())
@@ -367,20 +361,16 @@ class TestScoreAndDecideInterestingness(unittest.TestCase):
         """Test that score >= 10 is interesting."""
         # 2 global edges = 20 points
         coverage_info = NewCoverageInfo(global_edges=2)
-        mutation_info = {"strategy": "havoc"}
+        ctx = ScoringContext(
+            parent_id="parent1",
+            mutation_info={"strategy": "havoc"},
+            parent_file_size=100,
+            parent_lineage_edge_count=50,
+            child_file_size=100,
+        )
 
         with patch("sys.stderr", new_callable=io.StringIO) as mock_stderr:
-            result = self.scoring_manager.score_and_decide_interestingness(
-                coverage_info,
-                parent_id="parent1",
-                mutation_info=mutation_info,
-                parent_file_size=100,
-                parent_lineage_edge_count=50,
-                child_file_size=100,
-                jit_avg_time_ms=None,
-                nojit_avg_time_ms=None,
-                nojit_cv=None,
-            )
+            result = self.scoring_manager.score_and_decide_interestingness(coverage_info, ctx)
 
         self.assertTrue(result)
         self.assertIn("interesting with score", mock_stderr.getvalue())
@@ -389,20 +379,16 @@ class TestScoreAndDecideInterestingness(unittest.TestCase):
         """Test that score < 10 is not interesting."""
         # 1 relative edge = 1 point
         coverage_info = NewCoverageInfo(relative_edges=1)
-        mutation_info = {"strategy": "havoc"}
+        ctx = ScoringContext(
+            parent_id="parent1",
+            mutation_info={"strategy": "havoc"},
+            parent_file_size=100,
+            parent_lineage_edge_count=50,
+            child_file_size=100,
+        )
 
         with patch("sys.stderr", new_callable=io.StringIO) as mock_stderr:
-            result = self.scoring_manager.score_and_decide_interestingness(
-                coverage_info,
-                parent_id="parent1",
-                mutation_info=mutation_info,
-                parent_file_size=100,
-                parent_lineage_edge_count=50,
-                child_file_size=100,
-                jit_avg_time_ms=None,
-                nojit_avg_time_ms=None,
-                nojit_cv=None,
-            )
+            result = self.scoring_manager.score_and_decide_interestingness(coverage_info, ctx)
 
         self.assertFalse(result)
         self.assertIn("IS NOT interesting", mock_stderr.getvalue())
@@ -411,20 +397,19 @@ class TestScoreAndDecideInterestingness(unittest.TestCase):
         """Test that timing bonus can make it interesting."""
         self.scoring_manager = ScoringManager(self.coverage_manager, timing_fuzz=True)
         coverage_info = NewCoverageInfo()
-        mutation_info = {"strategy": "havoc"}
+        ctx = ScoringContext(
+            parent_id="parent1",
+            mutation_info={"strategy": "havoc"},
+            parent_file_size=100,
+            parent_lineage_edge_count=50,
+            child_file_size=100,
+            jit_avg_time_ms=100.0,
+            nojit_avg_time_ms=10.0,
+            nojit_cv=0.1,
+        )
 
         with patch("sys.stderr", new_callable=io.StringIO) as mock_stderr:
-            result = self.scoring_manager.score_and_decide_interestingness(
-                coverage_info,
-                parent_id="parent1",
-                mutation_info=mutation_info,
-                parent_file_size=100,
-                parent_lineage_edge_count=50,
-                child_file_size=100,
-                jit_avg_time_ms=100.0,  # 10x slowdown
-                nojit_avg_time_ms=10.0,
-                nojit_cv=0.1,
-            )
+            result = self.scoring_manager.score_and_decide_interestingness(coverage_info, ctx)
 
         self.assertTrue(result)
         self.assertIn("JIT slowdown", mock_stderr.getvalue())
@@ -433,40 +418,32 @@ class TestScoreAndDecideInterestingness(unittest.TestCase):
         """Test score exactly at threshold (10.0)."""
         # 1 global edge = 10 points (exactly at threshold)
         coverage_info = NewCoverageInfo(global_edges=1)
-        mutation_info = {"strategy": "havoc"}
+        ctx = ScoringContext(
+            parent_id="parent1",
+            mutation_info={"strategy": "havoc"},
+            parent_file_size=100,
+            parent_lineage_edge_count=50,
+            child_file_size=100,
+        )
 
         with patch("sys.stderr", new_callable=io.StringIO):
-            result = self.scoring_manager.score_and_decide_interestingness(
-                coverage_info,
-                parent_id="parent1",
-                mutation_info=mutation_info,
-                parent_file_size=100,
-                parent_lineage_edge_count=50,
-                child_file_size=100,
-                jit_avg_time_ms=None,
-                nojit_avg_time_ms=None,
-                nojit_cv=None,
-            )
+            result = self.scoring_manager.score_and_decide_interestingness(coverage_info, ctx)
 
         self.assertTrue(result)
 
     def test_decide_logs_score(self):
         """Test that score is logged to stderr."""
         coverage_info = NewCoverageInfo(global_edges=1)
-        mutation_info = {"strategy": "havoc"}
+        ctx = ScoringContext(
+            parent_id="parent1",
+            mutation_info={"strategy": "havoc"},
+            parent_file_size=100,
+            parent_lineage_edge_count=50,
+            child_file_size=100,
+        )
 
         with patch("sys.stderr", new_callable=io.StringIO) as mock_stderr:
-            self.scoring_manager.score_and_decide_interestingness(
-                coverage_info,
-                parent_id="parent1",
-                mutation_info=mutation_info,
-                parent_file_size=100,
-                parent_lineage_edge_count=50,
-                child_file_size=100,
-                jit_avg_time_ms=None,
-                nojit_avg_time_ms=None,
-                nojit_cv=None,
-            )
+            self.scoring_manager.score_and_decide_interestingness(coverage_info, ctx)
 
         output = mock_stderr.getvalue()
         self.assertIn("10.00", output)  # Score should be logged
@@ -475,20 +452,19 @@ class TestScoreAndDecideInterestingness(unittest.TestCase):
         """Test that no timing bonus is given when timing_fuzz=False."""
         self.scoring_manager = ScoringManager(self.coverage_manager, timing_fuzz=False)
         coverage_info = NewCoverageInfo()
-        mutation_info = {"strategy": "havoc"}
+        ctx = ScoringContext(
+            parent_id="parent1",
+            mutation_info={"strategy": "havoc"},
+            parent_file_size=100,
+            parent_lineage_edge_count=50,
+            child_file_size=100,
+            jit_avg_time_ms=100.0,
+            nojit_avg_time_ms=10.0,
+            nojit_cv=0.1,
+        )
 
         with patch("sys.stderr", new_callable=io.StringIO):
-            result = self.scoring_manager.score_and_decide_interestingness(
-                coverage_info,
-                parent_id="parent1",
-                mutation_info=mutation_info,
-                parent_file_size=100,
-                parent_lineage_edge_count=50,
-                child_file_size=100,
-                jit_avg_time_ms=100.0,  # Would be 10x slowdown
-                nojit_avg_time_ms=10.0,
-                nojit_cv=0.1,
-            )
+            result = self.scoring_manager.score_and_decide_interestingness(coverage_info, ctx)
 
         # No timing bonus, score = 0, should not be interesting
         self.assertFalse(result)
@@ -529,17 +505,14 @@ class TestCoverageWorkflow(unittest.TestCase):
             coverage_hash = self.scoring_manager._calculate_coverage_hash(child_coverage)
 
             # Decide interestingness
-            is_interesting = self.scoring_manager.score_and_decide_interestingness(
-                info,
+            ctx = ScoringContext(
                 parent_id="parent1",
                 mutation_info={"strategy": "havoc"},
                 parent_file_size=100,
                 parent_lineage_edge_count=50,
                 child_file_size=100,
-                jit_avg_time_ms=None,
-                nojit_avg_time_ms=None,
-                nojit_cv=None,
             )
+            is_interesting = self.scoring_manager.score_and_decide_interestingness(info, ctx)
 
         # Verify workflow
         self.assertEqual(info.global_uops, 1)
@@ -568,17 +541,14 @@ class TestCoverageWorkflow(unittest.TestCase):
                 child_coverage, parent_lineage_profile, parent_id="parent1"
             )
 
-            is_interesting = self.scoring_manager.score_and_decide_interestingness(
-                info,
+            ctx = ScoringContext(
                 parent_id="parent1",
                 mutation_info={"strategy": "havoc"},
                 parent_file_size=100,
                 parent_lineage_edge_count=50,
                 child_file_size=100,
-                jit_avg_time_ms=None,
-                nojit_avg_time_ms=None,
-                nojit_cv=None,
             )
+            is_interesting = self.scoring_manager.score_and_decide_interestingness(info, ctx)
 
         # Only relative coverage
         self.assertEqual(info.global_edges, 0)

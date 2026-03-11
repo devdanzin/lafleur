@@ -38,6 +38,23 @@ if TYPE_CHECKING:
     from lafleur.corpus_manager import CorpusManager
     from lafleur.health import HealthMonitor
 
+
+@dataclass(frozen=True)
+class ScoringContext:
+    """Bundles parameters for interestingness scoring decisions."""
+
+    parent_id: str | None
+    mutation_info: MutationInfo
+    parent_file_size: int
+    parent_lineage_edge_count: int
+    child_file_size: int
+    jit_avg_time_ms: float | None = None
+    nojit_avg_time_ms: float | None = None
+    nojit_cv: float | None = None
+    jit_stats: JitStats | None = None
+    parent_jit_stats: JitStats | None = None
+
+
 # Coverage types tracked by the fuzzer
 COVERAGE_TYPES = ("uops", "edges", "rare_events")
 
@@ -472,38 +489,19 @@ class ScoringManager:
     def score_and_decide_interestingness(
         self,
         coverage_info: NewCoverageInfo,
-        parent_id: str | None,
-        mutation_info: MutationInfo,
-        parent_file_size: int,
-        parent_lineage_edge_count: int,
-        child_file_size: int,
-        jit_avg_time_ms: float | None,
-        nojit_avg_time_ms: float | None,
-        nojit_cv: float | None,
-        jit_stats: JitStats | None = None,
-        parent_jit_stats: JitStats | None = None,
+        ctx: ScoringContext,
     ) -> bool:
-        """
-        Use the scorer to decide if a child is interesting.
+        """Use the scorer to decide if a child is interesting.
 
         Args:
-            coverage_info: NewCoverageInfo with coverage counts
-            parent_id: ID of the parent file (None for seeds)
-            mutation_info: Information about the mutation applied
-            parent_file_size: Size of parent file in bytes
-            parent_lineage_edge_count: Number of edges in parent's lineage
-            child_file_size: Size of child file in bytes
-            jit_avg_time_ms: Average JIT execution time
-            nojit_avg_time_ms: Average non-JIT execution time
-            nojit_cv: Coefficient of variation for non-JIT timing
-            jit_stats: JIT statistics from child execution
-            parent_jit_stats: JIT statistics from parent
+            coverage_info: NewCoverageInfo with coverage counts.
+            ctx: ScoringContext bundling parent/child metadata and timing.
 
         Returns:
-            True if the child is considered interesting
+            True if the child is considered interesting.
         """
-        if parent_id is None:
-            is_seed = "seed" in mutation_info.get("strategy", "")
+        if ctx.parent_id is None:
+            is_seed = "seed" in ctx.mutation_info.get("strategy", "")
             if coverage_info.is_interesting() or is_seed:
                 return True
             else:
@@ -513,15 +511,15 @@ class ScoringManager:
         # For normal mutations, use the scoring logic.
         scorer = InterestingnessScorer(
             coverage_info,
-            parent_file_size,
-            parent_lineage_edge_count,
-            child_file_size,
+            ctx.parent_file_size,
+            ctx.parent_lineage_edge_count,
+            ctx.child_file_size,
             self.timing_fuzz,
-            jit_avg_time_ms,
-            nojit_avg_time_ms,
-            nojit_cv,
-            jit_stats,
-            parent_jit_stats,
+            ctx.jit_avg_time_ms,
+            ctx.nojit_avg_time_ms,
+            ctx.nojit_cv,
+            ctx.jit_stats,
+            ctx.parent_jit_stats,
         )
         score = scorer.calculate_score()
 
@@ -663,19 +661,19 @@ class ScoringManager:
             ].get(parent_id, {})
             parent_jit_stats = parent_metadata.get("discovery_mutation", {}).get("jit_stats", {})
 
-        is_interesting = self.score_and_decide_interestingness(
-            coverage_info,
-            parent_id,
-            mutation_info,
-            parent_file_size,
-            parent_lineage_edge_count,
-            exec_result.source_path.stat().st_size,
-            exec_result.jit_avg_time_ms,
-            exec_result.nojit_avg_time_ms,
-            exec_result.nojit_cv,
-            jit_stats,
-            parent_jit_stats,
+        scoring_ctx = ScoringContext(
+            parent_id=parent_id,
+            mutation_info=mutation_info,
+            parent_file_size=parent_file_size,
+            parent_lineage_edge_count=parent_lineage_edge_count,
+            child_file_size=exec_result.source_path.stat().st_size,
+            jit_avg_time_ms=exec_result.jit_avg_time_ms,
+            nojit_avg_time_ms=exec_result.nojit_avg_time_ms,
+            nojit_cv=exec_result.nojit_cv,
+            jit_stats=jit_stats,
+            parent_jit_stats=parent_jit_stats,
         )
+        is_interesting = self.score_and_decide_interestingness(coverage_info, scoring_ctx)
 
         if is_interesting:
             return self._prepare_new_coverage_result(

@@ -504,7 +504,7 @@ class ExecutionManager:
                                 selection = self.corpus_manager.select_parent()
                                 if selection:
                                     polluters.append(selection[0])
-                        except (AttributeError, IndexError):
+                        except AttributeError, IndexError:
                             # Corpus empty or select_parent not available
                             pass
 
@@ -535,7 +535,7 @@ class ExecutionManager:
                 cmd = [self.target_python, str(child_source_path)]
 
             coverage_env = self._build_env(jit=True, debug_logs=True)
-            with open(child_log_path, "w") as log_file:
+            with open(child_log_path, "w", encoding="utf-8") as log_file:
                 start_time = time.monotonic()
                 result = subprocess.run(
                     cmd,

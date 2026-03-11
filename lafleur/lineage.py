@@ -435,7 +435,7 @@ def resolve_session_scripts(
     metadata_path = crash_dir / "metadata.json"
     metadata: dict = {}
     if metadata_path.exists():
-        with open(metadata_path) as f:
+        with open(metadata_path, encoding="utf-8") as f:
             metadata = json.load(f)
 
     # Strategy 1: session_corpus_files from metadata
@@ -508,7 +508,7 @@ def extract_session_ancestry(
     metadata_path = crash_dir / "metadata.json"
     crash_meta: dict = {}
     if metadata_path.exists():
-        with open(metadata_path) as f:
+        with open(metadata_path, encoding="utf-8") as f:
             crash_meta = json.load(f)
 
     crash_node_id = f"__crash_{crash_dir.name}"
@@ -707,9 +707,9 @@ def scan_crashes(crashes_dir: Path) -> list[dict]:
             continue
 
         try:
-            with open(metadata_path) as f:
+            with open(metadata_path, encoding="utf-8") as f:
                 meta = json.load(f)
-        except (json.JSONDecodeError, OSError):
+        except json.JSONDecodeError, OSError:
             continue
 
         crash_info: dict = {
@@ -1661,7 +1661,7 @@ def render_ancestry_svg(
             timeout=60,
         )
         return result.stdout if result.returncode == 0 else None
-    except (subprocess.TimeoutExpired, OSError):
+    except subprocess.TimeoutExpired, OSError:
         return None
 
 

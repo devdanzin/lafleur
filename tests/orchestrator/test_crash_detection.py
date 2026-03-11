@@ -454,20 +454,20 @@ class TestSaveDivergence(unittest.TestCase):
             session_fuzz=False,
         )
 
-    def test_increments_divergences_counter(self):
-        """Test that divergences_found counter is incremented by orchestrator."""
-        # Note: The ArtifactManager no longer increments stats.
-        # This test now just verifies the method runs without error.
+    def test_save_divergence_prints_detection_message(self):
+        """Test that save_divergence prints detection message to stderr."""
         source_path = Path("/tmp/child_test.py")
 
         with patch("pathlib.Path.mkdir"):
             with patch("shutil.copy"):
                 with patch("pathlib.Path.write_text"):
-                    with patch("sys.stderr", new_callable=io.StringIO):
-                        # Method should not raise
+                    with patch("sys.stderr", new_callable=io.StringIO) as mock_stderr:
                         self.artifact_manager.save_divergence(
                             source_path, "jit out", "nojit out", "exit_code_mismatch"
                         )
+
+                        self.assertIn("JIT DIVERGENCE DETECTED", mock_stderr.getvalue())
+                        self.assertIn("exit_code_mismatch", mock_stderr.getvalue())
 
     def test_creates_subdirectory_for_reason(self):
         """Test that divergence subdirectory is created for the reason."""
@@ -553,17 +553,16 @@ class TestSaveRegression(unittest.TestCase):
             session_fuzz=False,
         )
 
-    def test_increments_regressions_counter(self):
-        """Test that regressions_found counter is incremented by orchestrator."""
-        # Note: The ArtifactManager no longer increments stats.
-        # This test now just verifies the method runs without error.
+    def test_save_regression_prints_detection_message(self):
+        """Test that save_regression prints detection message to stderr."""
         source_path = Path("/tmp/child_test.py")
 
         with patch("pathlib.Path.mkdir"):
             with patch("shutil.copy"):
-                with patch("sys.stderr", new_callable=io.StringIO):
-                    # Method should not raise
+                with patch("sys.stderr", new_callable=io.StringIO) as mock_stderr:
                     self.artifact_manager.save_regression(source_path, 100.5, 10.2)
+
+                    self.assertIn("REGRESSION DETECTED", mock_stderr.getvalue())
 
     def test_saves_with_timing_in_filename(self):
         """Test that filename includes JIT and non-JIT timings."""
@@ -579,15 +578,18 @@ class TestSaveRegression(unittest.TestCase):
                     self.assertIn("regression_jit_151ms", dest_path)
                     self.assertIn("nojit_25ms", dest_path)
 
-    def test_creates_regressions_directory(self):
-        """Test that regressions/ directory is created."""
-        # The directory is created in __init__, not in save_regression
-        # So we just verify the method works
+    def test_save_regression_calls_safe_copy(self):
+        """Test that save_regression copies the source file to regressions dir."""
         source_path = Path("/tmp/child_test.py")
 
-        with patch("shutil.copy"):
+        with patch("shutil.copy") as mock_copy:
             with patch("sys.stderr", new_callable=io.StringIO):
                 self.artifact_manager.save_regression(source_path, 100.0, 10.0)
+
+                mock_copy.assert_called_once()
+                dest = str(mock_copy.call_args[0][1])
+                self.assertIn("regressions", dest)
+                self.assertIn("regression_jit_100ms", dest)
 
     def test_handles_io_error(self):
         """Test that IOError during copy is handled."""

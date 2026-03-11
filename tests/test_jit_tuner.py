@@ -23,9 +23,16 @@ class TestApplyJitTweaks(unittest.TestCase):
         self.temp_dir.cleanup()
 
     def test_skips_nonexistent_directory(self):
-        """Test that invalid directory is handled gracefully."""
-        # Should not raise, just print error
-        apply_jit_tweaks(Path("/nonexistent/cpython"), dry_run=True)
+        """Test that invalid directory prints error and returns early."""
+        from io import StringIO
+
+        captured = StringIO()
+        with patch("sys.stdout", captured):
+            apply_jit_tweaks(Path("/nonexistent/cpython"), dry_run=True)
+
+        output = captured.getvalue()
+        self.assertIn("[!] Error", output)
+        self.assertIn("/nonexistent/cpython", output)
 
     def test_skips_disabled_files(self):
         """Test that disabled files are skipped."""
@@ -100,36 +107,56 @@ class TestApplyJitTweaks(unittest.TestCase):
         self.assertEqual(content, original_content)
 
     def test_handles_missing_files_gracefully(self):
-        """Test that missing files are skipped gracefully."""
+        """Test that missing files print warnings and are skipped."""
+        from io import StringIO
+
         # Create only the directory structure but not the files
         header_dir = self.cpython_path / "Include" / "internal"
         header_dir.mkdir(parents=True)
 
-        # Should not raise, just print warnings
-        apply_jit_tweaks(self.cpython_path, dry_run=True)
+        captured = StringIO()
+        with patch("sys.stdout", captured):
+            apply_jit_tweaks(self.cpython_path, dry_run=True)
+
+        output = captured.getvalue()
+        self.assertIn("Warning: File not found", output)
 
     def test_handles_file_read_error(self):
-        """Test handling of file read errors."""
+        """Test that file read errors print error message and continue."""
+        from io import StringIO
+
         header_dir = self.cpython_path / "Include" / "internal"
         header_dir.mkdir(parents=True)
         header_file = header_dir / "pycore_backoff.h"
         header_file.write_text("#define TEST 1\n")
 
-        # Make file unreadable
+        captured = StringIO()
         with patch.object(Path, "read_text", side_effect=PermissionError("denied")):
-            # Should not raise
-            apply_jit_tweaks(self.cpython_path, dry_run=True)
+            with patch("sys.stdout", captured):
+                apply_jit_tweaks(self.cpython_path, dry_run=True)
+
+        output = captured.getvalue()
+        self.assertIn("[!] Error processing", output)
+        self.assertIn("denied", output)
 
     def test_handles_pattern_not_found(self):
-        """Test handling when pattern is not found in file."""
+        """Test that missing patterns print warnings and file is unchanged."""
+        from io import StringIO
+
         header_dir = self.cpython_path / "Include" / "internal"
         header_dir.mkdir(parents=True)
         header_file = header_dir / "pycore_backoff.h"
-        # Write content without the expected patterns
-        header_file.write_text("#define SOME_OTHER_VALUE 123\n")
+        original = "#define SOME_OTHER_VALUE 123\n"
+        header_file.write_text(original)
 
-        # Should not raise, just print warnings
-        apply_jit_tweaks(self.cpython_path, dry_run=True)
+        captured = StringIO()
+        with patch("sys.stdout", captured):
+            apply_jit_tweaks(self.cpython_path, dry_run=False)
+
+        output = captured.getvalue()
+        self.assertIn("Could not find and replace", output)
+        # File should be unchanged since no patterns matched
+        self.assertEqual(header_file.read_text(), original)
 
     def test_processes_optimizer_c(self):
         """Test processing Python/optimizer.c file."""

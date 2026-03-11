@@ -1239,7 +1239,7 @@ class BloomFilterSaturator(ast.NodeTransformer):
         "multi_phase_attack",
     ]
 
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__()
         self.module_vars_added = False
 
@@ -1630,7 +1630,7 @@ class AbstractInterpreterConfusionMutator(ast.NodeTransformer):
     JIT correctly handles exceptions from within index conversion and unwinds properly.
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__()
         self.chameleon_class_injected = False
 
@@ -2070,7 +2070,7 @@ class UnpackingChaosMutator(ast.NodeTransformer):
 
     HELPER_CLASS_NAME = "_JitChaosIterator"
 
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__()
         self.helper_injected = False
 

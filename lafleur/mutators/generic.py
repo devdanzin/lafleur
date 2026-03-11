@@ -173,7 +173,7 @@ class LiteralTypeSwapMutator(ast.NodeTransformer):
             # Try converting to int (may fail for inf/nan)
             try:
                 replacements.append(int(val))
-            except (ValueError, OverflowError):
+            except ValueError, OverflowError:
                 pass
             replacements.append(str(val))
 
@@ -334,7 +334,7 @@ class BoundaryValuesMutator(ast.NodeTransformer):
             try:
                 new_node = ast.parse(new_value_str, mode="eval").body
                 return new_node
-            except (SyntaxError, ValueError):
+            except SyntaxError, ValueError:
                 return node
         return node
 
@@ -413,7 +413,7 @@ class VariableSwapper(ast.NodeTransformer):
 
     PROTECTED_NAMES = _static_protected_names.union(_exception_names)
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.var_map = {}
 
     def visit_FunctionDef(self, node: ast.FunctionDef) -> ast.FunctionDef:
@@ -463,7 +463,7 @@ class VariableRenamer(ast.NodeTransformer):
     with a recipient's setup code.
     """
 
-    def __init__(self, remapping_dict: dict[str, str]):
+    def __init__(self, remapping_dict: dict[str, str]) -> None:
         self.remapping_dict = remapping_dict
 
     def visit_Name(self, node: ast.Name) -> ast.Name:
@@ -1607,7 +1607,7 @@ class ImportPrunerMutator(ast.NodeTransformer):
     imports and try/except-wrapped imports).
     """
 
-    def __init__(self, removal_probability: float = 0.5):
+    def __init__(self, removal_probability: float = 0.5) -> None:
         """
         Initialize the pruner.
 

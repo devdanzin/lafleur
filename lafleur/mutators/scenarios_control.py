@@ -998,24 +998,6 @@ class PatternMatchingChaosMutator(ast.NodeTransformer):
         """)
         return ast.parse(class_code).body
 
-    def _create_guard_side_effect_function(self, prefix: str) -> list[ast.stmt]:
-        """Create a function that mutates its argument when called in a guard."""
-        func_code = dedent(f"""
-            def _jit_mutate_subject_{prefix}(subject):
-                '''Guard function that mutates the subject during matching.'''
-                if isinstance(subject, list):
-                    if len(subject) > 0:
-                        subject.append(None)  # Grow list during match
-                    return True
-                elif isinstance(subject, dict):
-                    subject['_mutated'] = True  # Add key during match
-                    return True
-                elif hasattr(subject, '__dict__'):
-                    subject.__dict__['_chaos'] = 42  # Mutate object
-                return True
-        """)
-        return ast.parse(func_code).body
-
     def _create_type_switching_subject(self, prefix: str) -> list[ast.stmt]:
         """Create a subject class that changes type behavior after warmup."""
         class_code = dedent(f"""
@@ -1264,7 +1246,7 @@ class PatternMatchingChaosMutator(ast.NodeTransformer):
             ast.fix_missing_locations(match_node)
             return match_node
 
-        except (AttributeError, IndexError):
+        except AttributeError, IndexError:
             return None
 
     def visit_For(self, node: ast.For) -> ast.stmt:
@@ -1327,7 +1309,7 @@ class PatternMatchingChaosMutator(ast.NodeTransformer):
             ast.fix_missing_locations(new_for)
             return new_for
 
-        except (AttributeError, IndexError):
+        except AttributeError, IndexError:
             return None
 
     def visit_FunctionDef(self, node: ast.FunctionDef) -> ast.FunctionDef:

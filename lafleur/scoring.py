@@ -170,45 +170,46 @@ class InterestingnessScorer:
         self.parent_jit_stats = parent_jit_stats or {}
 
     def calculate_score(self) -> float:
-        """
-        Calculate a score based on new coverage, richness, density, and performance.
-        """
+        """Calculate a score based on new coverage, richness, density, and performance."""
+        score = self._score_timing() + self._score_jit_vitals() + self._score_coverage()
+        return score
+
+    def _score_timing(self) -> float:
+        """Score based on JIT-vs-non-JIT slowdown ratio."""
+        if not (self.is_timing_mode and self.jit_avg_time_ms and self.nojit_avg_time_ms):
+            return 0.0
+        if self.nojit_avg_time_ms <= 0:
+            return 0.0
+
+        slowdown_ratio = self.jit_avg_time_ms / self.nojit_avg_time_ms
+        nojit_cv = self.nojit_cv if self.nojit_cv is not None else 0.0
+        dynamic_threshold = 1.0 + (self.TIMING_CV_MULTIPLIER * nojit_cv)
+
+        print(
+            f"  [~] Timing slowdown ratio (JIT/non-JIT) is {slowdown_ratio:.3f} "
+            f"(minimum: {dynamic_threshold:.3f}).",
+            file=sys.stderr,
+        )
+
+        if slowdown_ratio > dynamic_threshold:
+            return (slowdown_ratio - 1.0) * self.TIMING_BONUS_MULTIPLIER
+        return 0.0
+
+    def _score_jit_vitals(self) -> float:
+        """Score based on JIT tachycardia, zombie traces, chain depth, and stubs."""
         score = 0.0
 
-        if self.is_timing_mode and self.jit_avg_time_ms and self.nojit_avg_time_ms:
-            # Avoid division by zero for extremely fast non-JIT runs
-            if self.nojit_avg_time_ms > 0:
-                slowdown_ratio = self.jit_avg_time_ms / self.nojit_avg_time_ms
-
-                # Only reward if the slowdown is statistically significant
-                # relative to the noise of the baseline measurement.
-                # We require the slowdown to be at least 3x the noise.
-                nojit_cv = self.nojit_cv if self.nojit_cv is not None else 0.0
-                dynamic_threshold = 1.0 + (self.TIMING_CV_MULTIPLIER * nojit_cv)
-
-                print(
-                    f"  [~] Timing slowdown ratio (JIT/non-JIT) is {slowdown_ratio:.3f} (minimum: {dynamic_threshold:.3f}).",
-                    file=sys.stderr,
-                )
-
-                if slowdown_ratio > dynamic_threshold:
-                    performance_bonus = (slowdown_ratio - 1.0) * self.TIMING_BONUS_MULTIPLIER
-                    score += performance_bonus
-
-        # --- JIT Vitals Scoring ---
         zombie_traces = self.jit_stats.get("zombie_traces") or 0
         max_chain_depth = self.jit_stats.get("max_chain_depth") or 0
         min_code_size = self.jit_stats.get("min_code_size") or 0
 
-        # --- Tachycardia scoring ---
-        # Prefer delta metrics (child-isolated) when available from session mode.
-        # Fall back to absolute metrics for non-session runs or old data.
+        # Tachycardia: prefer delta metrics (child-isolated) when available from
+        # session mode, fall back to absolute metrics for non-session runs.
         child_delta_density = self.jit_stats.get("child_delta_max_exit_density") or 0.0
         child_delta_exits = self.jit_stats.get("child_delta_total_exits") or 0
 
         if child_delta_density > 0 or child_delta_exits > 0:
-            # Delta metrics available — use child-isolated measurement.
-            # Both thresholds are parent-relative to prevent coasting.
+            # Delta metrics available — child-isolated measurement.
             parent_delta_density = self.parent_jit_stats.get("child_delta_max_exit_density") or 0.0
             density_threshold = max(
                 self.TACHYCARDIA_DELTA_DENSITY_THRESHOLD,
@@ -219,10 +220,7 @@ class InterestingnessScorer:
                 self.TACHYCARDIA_DELTA_EXITS_THRESHOLD,
                 parent_delta_exits * self.TACHYCARDIA_PARENT_MULTIPLIER,
             )
-            tachycardia_triggered = (
-                child_delta_density > density_threshold or child_delta_exits > exits_threshold
-            )
-            if tachycardia_triggered:
+            if child_delta_density > density_threshold or child_delta_exits > exits_threshold:
                 print(
                     f"  [+] JIT Tachycardia (delta): density={child_delta_density:.2f} "
                     f"(threshold={density_threshold:.2f}), "
@@ -257,22 +255,28 @@ class InterestingnessScorer:
         if 0 < min_code_size < self.STUB_SIZE_THRESHOLD:
             score += self.STUB_BONUS
 
-        # 1. Heavily reward new global discoveries.
+        return score
+
+    def _score_coverage(self) -> float:
+        """Score based on new coverage discoveries, richness, and density."""
+        score = 0.0
+
+        # Heavily reward new global discoveries.
         score += self.info.global_edges * self.GLOBAL_EDGE_WEIGHT
         score += self.info.global_uops * self.GLOBAL_UOP_WEIGHT
         score += self.info.global_rare_events * self.GLOBAL_RARE_EVENT_WEIGHT
 
-        # 2. Add smaller rewards for new relative discoveries.
+        # Smaller rewards for new relative discoveries.
         score += self.info.relative_edges * self.RELATIVE_EDGE_WEIGHT
         score += self.info.relative_uops * self.RELATIVE_UOP_WEIGHT
 
-        # 3. Reward for richness (% increase in total coverage).
+        # Reward for richness (% increase in total coverage).
         if self.parent_lineage_edge_count > 0:
             percent_increase = (self.info.total_child_edges / self.parent_lineage_edge_count) - 1.0
             if percent_increase > self.RICHNESS_THRESHOLD:
                 score += percent_increase * self.RICHNESS_BONUS_WEIGHT
 
-        # 4. Penalize for low coverage density (large size increase for little gain).
+        # Penalize for low coverage density (large size increase for little gain).
         if self.info.global_edges == 0 and self.info.relative_edges > 0:
             size_increase_ratio = (self.child_file_size / (self.parent_file_size + 1)) - 1.0
             if size_increase_ratio > self.DENSITY_PENALTY_THRESHOLD:

@@ -1157,7 +1157,10 @@ class TestGenerateNewSeed(unittest.TestCase):
         mock_analyze = Mock(return_value={"status": "NO_NEW_COVERAGE"})
         mock_lineage = Mock()
 
-        with patch("builtins.open", mock_open()):
+        with patch("builtins.open", mock_open()), patch(
+            "lafleur.corpus_manager.TMP_DIR"
+        ) as mock_tmp:
+            mock_tmp.__truediv__ = Mock(side_effect=lambda name: Mock(exists=Mock(return_value=True)))
             self.corpus_manager.generate_new_seed(mock_analyze, mock_lineage)
 
         # Verify analyze was called with execution_time_ms=250 (not zero)

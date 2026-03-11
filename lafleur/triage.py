@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from lafleur.registry import CrashRegistry
-from lafleur.utils import load_json_file
+from lafleur.utils import load_json_file, save_json_file
 
 
 def get_revision_date(revision: str) -> int | None:
@@ -97,8 +97,7 @@ def do_export_issues(registry: CrashRegistry, output_path: Path) -> int:
         OSError: If the file cannot be written.
     """
     issues = registry.get_all_reported_issues()
-    with open(output_path, "w", encoding="utf-8") as f:
-        json.dump(issues, f, indent=2, sort_keys=True)
+    save_json_file(output_path, issues)
     return len(issues)
 
 

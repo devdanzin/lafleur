@@ -36,6 +36,40 @@ def load_json_file(path: Path) -> dict[str, Any] | None:
         return None
 
 
+def save_json_file(
+    path: Path,
+    data: Any,
+    *,
+    sort_keys: bool = True,
+    default: Any = None,
+) -> None:
+    """Save data as a JSON file with consistent formatting.
+
+    Uses indent=2, UTF-8 encoding, and sorted keys by default.
+    Errors are printed to stderr but do not propagate.
+    """
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2, sort_keys=sort_keys, default=default)
+    except OSError as e:
+        print(f"[!] Warning: Could not write {path}: {e}", file=sys.stderr)
+
+
+def append_jsonl(path: Path, record: dict[str, Any]) -> None:
+    """Append a single JSON record to a JSONL file.
+
+    Creates parent directories if needed. Errors are printed to stderr
+    but do not propagate.
+    """
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(record, default=str) + "\n")
+    except OSError as e:
+        print(f"[!] Warning: Could not append to {path}: {e}", file=sys.stderr)
+
+
 def _default_run_stats() -> dict[str, Any]:
     """Return the canonical default run statistics structure."""
     return {
@@ -81,14 +115,7 @@ def load_run_stats() -> dict[str, Any]:
 
 def save_run_stats(stats: dict[str, Any]) -> None:
     """Save the updated run statistics to the JSON file."""
-    try:
-        with open(RUN_STATS_FILE, "w", encoding="utf-8") as f:
-            json.dump(stats, f, indent=2, sort_keys=True)
-    except OSError as e:
-        print(
-            f"Warning: Could not save run stats: {e}",
-            file=sys.stderr,
-        )
+    save_json_file(RUN_STATS_FILE, stats)
 
 
 class TeeLogger:

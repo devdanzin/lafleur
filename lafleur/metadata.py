@@ -21,6 +21,8 @@ from pathlib import Path
 
 import psutil
 
+from lafleur.utils import save_json_file
+
 # Docker-style name components for generating instance names
 ADJECTIVES = [
     "admiring",
@@ -234,7 +236,7 @@ def get_git_info() -> dict[str, str | bool]:
         is_dirty = bool(result.stdout.strip()) if result.returncode == 0 else False
 
         return {"commit": commit_hash, "dirty": is_dirty}
-    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+    except subprocess.TimeoutExpired, FileNotFoundError, OSError:
         return {"commit": "unknown", "dirty": False}
 
 
@@ -439,7 +441,6 @@ def generate_run_metadata(output_dir: Path, args: argparse.Namespace) -> dict:
     metadata["mutator_filter"] = getattr(args, "mutators", None)
     metadata["forced_strategy"] = getattr(args, "strategy", None)
 
-    with open(metadata_path, "w", encoding="utf-8") as f:
-        json.dump(metadata, f, indent=2, default=str)
+    save_json_file(metadata_path, metadata, sort_keys=False, default=str)
 
     return metadata

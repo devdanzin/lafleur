@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any, cast
 
 from lafleur.types import CorpusFileMetadata
+from lafleur.utils import save_json_file
 
 
 def migrate_state_to_integers(old_state: dict[str, Any]) -> dict[str, Any]:
@@ -126,8 +127,7 @@ def main() -> None:
         print(json.dumps(migrated_state, indent=2, default=set_to_list))
 
     elif args.output_file.suffix == ".json":
-        with open(args.output_file, "w", encoding="utf-8") as json_f:
-            json.dump(migrated_state, json_f, indent=2, default=set_to_list)
+        save_json_file(args.output_file, migrated_state, default=set_to_list)
         print(f"State saved as JSON to {args.output_file}")
 
     elif args.output_file.suffix == ".pkl":

@@ -40,7 +40,7 @@ class TestHealthMonitorWriteEvent(unittest.TestCase):
         self.assertEqual(len(lines), 1)
 
         record = json.loads(lines[0])
-        self.assertIn("ts", record)
+        self.assertIn("timestamp", record)
         self.assertEqual(record["cat"], "test_cat")
         self.assertEqual(record["event"], "test_event")
         self.assertEqual(record["key1"], "val1")

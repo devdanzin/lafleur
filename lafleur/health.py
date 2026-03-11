@@ -6,10 +6,11 @@ The HealthMonitor is designed to be non-intrusive: it never raises
 exceptions and adds negligible overhead to the fuzzing loop.
 """
 
-import json
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+from lafleur.utils import append_jsonl
 
 
 # Threshold for consecutive timeout warnings
@@ -87,17 +88,13 @@ class HealthMonitor:
             event: Event type name.
             **kwargs: Additional event-specific fields.
         """
-        try:
-            record: dict[str, Any] = {
-                "ts": datetime.now(timezone.utc).isoformat(),
-                "cat": category,
-                "event": event,
-            }
-            record.update(kwargs)
-            with open(self.log_path, "a", encoding="utf-8") as f:
-                f.write(json.dumps(record, default=str) + "\n")
-        except OSError:
-            pass  # Never crash the fuzzer for a health event
+        record: dict[str, Any] = {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "cat": category,
+            "event": event,
+        }
+        record.update(kwargs)
+        append_jsonl(self.log_path, record)
 
         # Update in-memory counter
         counter_key = f"{category}.{event}"

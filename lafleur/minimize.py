@@ -67,6 +67,7 @@ def measure_execution_time(cmd: list[str], timeout: int) -> float:
         print(
             f"  [!] Warning: Baseline measurement timed out after {elapsed:.1f}s. "
             f"Using {timeout}s as baseline.",
+            file=sys.stderr,
         )
         return float(timeout)
     return time.monotonic() - start_time
@@ -141,14 +142,20 @@ def _load_and_validate_metadata(crash_dir: Path) -> tuple[dict, str, list[Path]]
     """
     metadata = load_json_file(crash_dir / "metadata.json")
     if metadata is None:
-        print("[!] Error: metadata.json not found or invalid. Cannot minimize.")
+        print("[!] Error: metadata.json not found or invalid. Cannot minimize.", file=sys.stderr)
         sys.exit(1)
 
     # Validate that we have a non-zero crash return code
     target_returncode = metadata.get("returncode")
     if target_returncode is None or target_returncode == 0:
-        print("[!] Error: metadata.json has no crash return code (returncode is missing or 0).")
-        print("    Cannot determine crash reproduction without a non-zero exit code.")
+        print(
+            "[!] Error: metadata.json has no crash return code (returncode is missing or 0).",
+            file=sys.stderr,
+        )
+        print(
+            "    Cannot determine crash reproduction without a non-zero exit code.",
+            file=sys.stderr,
+        )
         sys.exit(1)
 
     grep_pattern = extract_grep_pattern(metadata)
@@ -157,7 +164,7 @@ def _load_and_validate_metadata(crash_dir: Path) -> tuple[dict, str, list[Path]]
 
     script_files = sorted([f for f in crash_dir.glob("*.py") if f.name != "combined_repro.py"])
     if not script_files:
-        print("[!] No script files found in bundle.")
+        print("[!] No script files found in bundle.", file=sys.stderr)
         sys.exit(1)
 
     return metadata, grep_pattern, script_files
@@ -222,15 +229,19 @@ def _concatenate_scripts(
         if existing_size < current_size:
             print(
                 f"[!] Warning: Existing combined_repro.py is smaller "
-                f"({existing_size} < {current_size})."
+                f"({existing_size} < {current_size}).",
+                file=sys.stderr,
             )
-            print("    Use --force-overwrite to replace it.")
+            print("    Use --force-overwrite to replace it.", file=sys.stderr)
             target_file = combined_path
             if check_reproduction([combined_path], metadata, grep_pattern, target_python):
                 print("    Existing file reproduces crash. Using it.")
                 use_concatenation = True
             else:
-                print("    Existing file FAILED reproduction. Overwriting with new candidate.")
+                print(
+                    "    Existing file FAILED reproduction. Overwriting with new candidate.",
+                    file=sys.stderr,
+                )
                 combined_path.write_text(combined_content, encoding="utf-8")
                 target_file = None
         else:
@@ -248,8 +259,11 @@ def _concatenate_scripts(
             target_file = combined_path
             use_concatenation = True
         else:
-            print("FAILED (Concatenation broke the crash)")
-            print("[!] Warning: Falling back to minimizing the LAST script in the chain.")
+            print("FAILED (Concatenation broke the crash)", file=sys.stderr)
+            print(
+                "[!] Warning: Falling back to minimizing the LAST script in the chain.",
+                file=sys.stderr,
+            )
             target_file = necessary_scripts[-1]
             use_concatenation = False
 
@@ -373,7 +387,7 @@ def _run_shrinkray(check_script: Path, target_file: Path, dynamic_timeout: int) 
         subprocess.run(shrinkray_cmd, check=False, env=_make_repro_env())
         print("[*] ShrinkRay finished.")
     except Exception as e:
-        print(f"[!] ShrinkRay failed: {e}")
+        print(f"[!] ShrinkRay failed: {e}", file=sys.stderr)
 
 
 def minimize_session(crash_dir: Path, target_python: str, force_overwrite: bool) -> None:
@@ -389,8 +403,14 @@ def minimize_session(crash_dir: Path, target_python: str, force_overwrite: bool)
     # Initial Reproduction Check
     print("[*] Verifying initial crash reproduction...")
     if not check_reproduction(script_files, metadata, grep_pattern, target_python):
-        print(f"[!] Error: Crash does NOT reproduce with the provided python ({target_python}).")
-        print("    Check that you are using the correct JIT-enabled build.")
+        print(
+            f"[!] Error: Crash does NOT reproduce with the provided python ({target_python}).",
+            file=sys.stderr,
+        )
+        print(
+            "    Check that you are using the correct JIT-enabled build.",
+            file=sys.stderr,
+        )
         sys.exit(1)
 
     # Stage 1: Script Minimization
@@ -412,7 +432,7 @@ def minimize_session(crash_dir: Path, target_python: str, force_overwrite: bool)
     # Stage 3: ShrinkRay
     shrinkray_path = shutil.which("shrinkray")
     if not shrinkray_path:
-        print("[!] 'shrinkray' not found in PATH. Skipping code minimization.")
+        print("[!] 'shrinkray' not found in PATH. Skipping code minimization.", file=sys.stderr)
         print(f"[*] Final reproduction script(s): {[str(s.name) for s in necessary_scripts]}")
         if use_concatenation:
             print(f"[*] Combined reproduction: {target_file}")
@@ -458,7 +478,7 @@ def main() -> None:
     args = parser.parse_args()
 
     if not args.crash_dir.exists():
-        print(f"Error: Directory {args.crash_dir} does not exist.")
+        print(f"Error: Directory {args.crash_dir} does not exist.", file=sys.stderr)
         sys.exit(1)
 
     minimize_session(args.crash_dir, args.target_python, args.force_overwrite)

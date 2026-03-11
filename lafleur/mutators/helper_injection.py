@@ -60,7 +60,7 @@ class HelperFunctionInjector(ast.NodeTransformer):
         """),
     ]
 
-    def __init__(self, probability: float = 0.3):
+    def __init__(self, probability: float = 0.3) -> None:
         """
         Initialize the helper injector.
 

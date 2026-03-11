@@ -375,7 +375,7 @@ def get_jit_stats(namespace: dict, baseline: dict[tuple[int, int], int] | None =
 
     m = _JitMetrics()
 
-    def inspect_executor(executor, code_id: int, offset: int):
+    def inspect_executor(executor, code_id: int, offset: int) -> None:
         try:
             executor_ptr = ctypes.cast(id(executor), ctypes.POINTER(PyExecutorObject))
 

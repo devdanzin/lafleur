@@ -22,6 +22,8 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from statistics import mean
 
+from lafleur.utils import load_json_file
+
 # ---------------------------------------------------------------------------
 # Data structures
 # ---------------------------------------------------------------------------
@@ -432,11 +434,7 @@ def resolve_session_scripts(
     result: dict[str, str | None] = {}
 
     # Read metadata
-    metadata_path = crash_dir / "metadata.json"
-    metadata: dict = {}
-    if metadata_path.exists():
-        with open(metadata_path, encoding="utf-8") as f:
-            metadata = json.load(f)
+    metadata: dict = load_json_file(crash_dir / "metadata.json") or {}
 
     # Strategy 1: session_corpus_files from metadata
     corpus_files = metadata.get("session_corpus_files", {})
@@ -505,11 +503,7 @@ def extract_session_ancestry(
     role_to_file = resolve_session_scripts(crash_dir, per_file_coverage)
 
     # Read crash metadata for the crash node label
-    metadata_path = crash_dir / "metadata.json"
-    crash_meta: dict = {}
-    if metadata_path.exists():
-        with open(metadata_path, encoding="utf-8") as f:
-            crash_meta = json.load(f)
+    crash_meta: dict = load_json_file(crash_dir / "metadata.json") or {}
 
     crash_node_id = f"__crash_{crash_dir.name}"
 
@@ -706,10 +700,8 @@ def scan_crashes(crashes_dir: Path) -> list[dict]:
         if not metadata_path.exists():
             continue
 
-        try:
-            with open(metadata_path, encoding="utf-8") as f:
-                meta = json.load(f)
-        except json.JSONDecodeError, OSError:
+        meta = load_json_file(metadata_path)
+        if meta is None:
             continue
 
         crash_info: dict = {

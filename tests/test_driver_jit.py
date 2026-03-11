@@ -59,7 +59,7 @@ class TestJITIntrospection(unittest.TestCase):
             # Verify the type cast target
             # args[1] should be a pointer type to PyExecutorObject
             # Since we patched driver.ctypes, POINTER is also a mock.
-            # So args[1] is the result of driver.ctypes.POINTER(driver.PyExecutorObject)
+            # So args[1] is the result of driver.ctypes.POINTER(driver._PyExecutorObject)
 
     def test_introspection_exception_handling(self):
         """Test that get_jit_stats handles ctypes exceptions gracefully."""

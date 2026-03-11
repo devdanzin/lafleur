@@ -63,7 +63,7 @@ BLOOM_WORDS = 8  # _Py_BLOOM_WORDS (uint32 words in filter)
 # Source: Include/internal/pycore_optimizer.h
 #
 # If introspection produces unexpected values after a CPython update,
-# compare ctypes.sizeof(PyExecutorObject) against the C struct size
+# compare ctypes.sizeof(_PyExecutorObject) against the C struct size
 # and update these definitions accordingly.
 # ---------------------------------------------------------------------------
 
@@ -83,7 +83,7 @@ _PyExecutorLinkListNode._fields_ = [
 ]
 
 
-class PyVMData(ctypes.Structure):
+class _PyVMData(ctypes.Structure):
     # Matches _PyVMData in pycore_optimizer.h
     _fields_ = [
         ("opcode", ctypes.c_uint8),
@@ -99,14 +99,14 @@ class PyVMData(ctypes.Structure):
     ]
 
 
-class PyExecutorObject(ctypes.Structure):
+class _PyExecutorObject(ctypes.Structure):
     # Matches _PyExecutorObject in pycore_optimizer.h
     _fields_ = [
         ("ob_refcnt", ctypes.c_ssize_t),
         ("ob_type", ctypes.c_void_p),
         ("ob_size", ctypes.c_ssize_t),
         ("trace", ctypes.c_void_p),
-        ("vm_data", PyVMData),  # Nested structure
+        ("vm_data", _PyVMData),  # Nested structure
         ("exit_count", ctypes.c_uint32),
         ("code_size", ctypes.c_uint32),
         ("jit_size", ctypes.c_size_t),
@@ -135,7 +135,7 @@ def check_bloom(bloom_filter: _PyBloomFilter, obj_address: int) -> bool:
 
 
 def scan_watched_variables(
-    executor_ptr: ctypes.POINTER(PyExecutorObject),  # type: ignore[valid-type]
+    executor_ptr: ctypes.POINTER(_PyExecutorObject),  # type: ignore[valid-type]
     namespace: dict[str, Any],
 ) -> list[str]:
     """Identify which globals/builtins are watched by this executor."""
@@ -272,7 +272,7 @@ def snapshot_executor_state(namespace: dict[str, Any]) -> dict[tuple[int, int], 
                         executor = _opcode.get_executor(code, offset)
                         if executor:
                             executor_ptr = ctypes.cast(
-                                id(executor), ctypes.POINTER(PyExecutorObject)
+                                id(executor), ctypes.POINTER(_PyExecutorObject)
                             )
                             snapshot[(id(code), offset)] = executor_ptr.contents.exit_count
                     except ValueError, TypeError:
@@ -380,7 +380,7 @@ def get_jit_stats(
 
     def inspect_executor(executor, code_id: int, offset: int) -> None:
         try:
-            executor_ptr = ctypes.cast(id(executor), ctypes.POINTER(PyExecutorObject))
+            executor_ptr = ctypes.cast(id(executor), ctypes.POINTER(_PyExecutorObject))
 
             if executor_ptr.contents.vm_data.pending_deletion:
                 m.zombie_traces += 1
@@ -610,7 +610,7 @@ def run_session(files: list[str], *, no_ekg: bool = False) -> int:
     return 1 if errors_occurred else 0
 
 
-def main() -> int:
+def main() -> None:
     """Main entry point for the session fuzzing driver."""
     parser = argparse.ArgumentParser(
         description="Session fuzzing driver - executes scripts in a shared process."
@@ -638,7 +638,7 @@ def main() -> int:
         print(f"[DRIVER:INFO] JIT introspection available: {HAS_OPCODE}", flush=True)
         print(f"[DRIVER:INFO] Scripts to execute: {args.files}", flush=True)
 
-    return run_session(args.files, no_ekg=args.no_ekg)
+    sys.exit(run_session(args.files, no_ekg=args.no_ekg))
 
 
 if __name__ == "__main__":

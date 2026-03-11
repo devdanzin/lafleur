@@ -93,6 +93,7 @@ All notable changes to this project should be documented in this file.
 
 ### Enhanced
 
+- Guarded `psutil.Process().memory_info()` call in telemetry (`artifacts.py`) with try/except to prevent crashes on edge-case process states, by @devdanzin.
 - Standardized CLI path arguments to `type=Path` in `orchestrator.py`, `jit_tuner.py`, `triage.py`, and `report.py`, removing redundant `Path()` wrapping at call sites, by @devdanzin.
 - Sent all error/warning output in `minimize.py` to stderr instead of stdout, by @devdanzin.
 - Narrowed `_compose_session` except clause from `AttributeError, IndexError` to just `IndexError` in `execution.py`, by @devdanzin.

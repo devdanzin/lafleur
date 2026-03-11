@@ -1642,9 +1642,12 @@ Examples:
     # Generate HTML report if requested
     if args.html:
         html_report = generate_html_report(aggregator)
-        with open(args.html, "w", encoding="utf-8") as f:
-            f.write(html_report)
-        print(f"[+] HTML report saved to {args.html}", file=sys.stderr)
+        try:
+            with open(args.html, "w", encoding="utf-8") as f:
+                f.write(html_report)
+            print(f"[+] HTML report saved to {args.html}", file=sys.stderr)
+        except OSError as e:
+            print(f"[!] Failed to write HTML report to {args.html}: {e}", file=sys.stderr)
 
 
 if __name__ == "__main__":

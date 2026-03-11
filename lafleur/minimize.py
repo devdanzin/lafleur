@@ -353,7 +353,10 @@ fi
 exit 0
 """
     check_script_path.write_text(check_script_content, encoding="utf-8")
-    check_script_path.chmod(0o755)
+    try:
+        check_script_path.chmod(0o755)
+    except OSError:
+        pass  # chmod may fail on restricted filesystems
 
     # Generate reproduce_minimized.sh
     repro_script_path = crash_dir / "reproduce_minimized.sh"
@@ -366,7 +369,10 @@ export ASAN_OPTIONS=detect_leaks=0
 {repro_cmd_display}
 """
     repro_script_path.write_text(repro_script_content, encoding="utf-8")
-    repro_script_path.chmod(0o755)
+    try:
+        repro_script_path.chmod(0o755)
+    except OSError:
+        pass  # chmod may fail on restricted filesystems
 
     return check_script_path
 

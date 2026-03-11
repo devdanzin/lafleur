@@ -91,6 +91,7 @@ All notable changes to this project should be documented in this file.
 - `lineage.py::load_coverage_state()` had no exception handling on `pickle.load()` — a corrupted state file would crash `lafleur-lineage` with an opaque error. Now catches `UnpicklingError`/`EOFError`/`OSError` with a clear message, by @devdanzin.
 - `metadata.py::get_installed_packages()` bare `except Exception: pass` silently swallowed all errors during package metadata collection. Now logs warnings to stderr, by @devdanzin.
 - Fixed stat_key inconsistency: orchestrator checked `"timeout_count"` but execution.py returns `"timeouts_found"`, causing `HealthMonitor.record_timeout()` to never trigger, by @devdanzin.
+- Guarded `.chmod()` calls in `artifacts.py` and `minimize.py` and HTML report write in `campaign.py` against `OSError` on restricted filesystems or disk-full conditions, by @devdanzin.
 
 ### Enhanced
 

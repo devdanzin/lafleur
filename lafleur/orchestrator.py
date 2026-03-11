@@ -787,27 +787,13 @@ class LafleurOrchestrator:
 
                 # Record structured timeout metadata
                 if stat_key in TIMEOUT_STAT_KEYS:
-                    self.timeouts_since_last_telemetry += 1
-                    timeout_type, execution_stage = TIMEOUT_STAT_KEYS[stat_key]
-                    self.timeout_logger.record(
-                        {
-                            "type": timeout_type,
-                            "parent_id": ctx.parent_id,
-                            "mutation_seed": mutation_seed,
-                            "strategy": (
-                                mutation_info.get("strategy", "unknown")
-                                if mutation_info
-                                else "unknown"
-                            ),
-                            "transformers": (
-                                mutation_info.get("transformers", []) if mutation_info else []
-                            ),
-                            "session_id": session_id,
-                            "mutation_index": mutation_index,
-                            "lineage_depth": ctx.parent_metadata.get("lineage_depth", 0),
-                            "execution_stage": execution_stage,
-                            "timeout_seconds": self.execution_timeout,
-                        }
+                    self._record_timeout_metadata(
+                        stat_key,
+                        ctx,
+                        mutation_seed,
+                        mutation_info,
+                        session_id,
+                        mutation_index,
                     )
 
                 if not exec_result:
@@ -835,21 +821,7 @@ class LafleurOrchestrator:
                 if flow_control in (FlowControl.BREAK, FlowControl.CONTINUE):
                     if isinstance(analysis_data, NewCoverageResult):
                         found_new_coverage = True
-
-                        # --- Update stats on every find ---
-                        self.run_stats["new_coverage_finds"] = (
-                            self.run_stats.get("new_coverage_finds", 0) + 1
-                        )
-                        self.run_stats["sum_of_mutations_per_find"] = (
-                            self.run_stats.get("sum_of_mutations_per_find", 0)
-                            + self.mutations_since_last_find
-                        )
-                        self.mutations_since_last_find = 0
-                        ctx.parent_metadata["total_finds"] = (
-                            ctx.parent_metadata.get("total_finds", 0) + 1
-                        )
-                        ctx.parent_metadata["mutations_since_last_find"] = 0
-
+                        self._record_new_find(ctx)
                         new_child_filename = returned_filename
                     break  # Break inner multi-run loop
             finally:
@@ -862,6 +834,45 @@ class LafleurOrchestrator:
             found_new_coverage=found_new_coverage,
             new_child_filename=new_child_filename,
         )
+
+    def _record_timeout_metadata(
+        self,
+        stat_key: str,
+        ctx: ParentContext,
+        mutation_seed: int,
+        mutation_info: MutationInfo,
+        session_id: int,
+        mutation_index: int,
+    ) -> None:
+        """Record structured timeout metadata to the timeout logger."""
+        self.timeouts_since_last_telemetry += 1
+        timeout_type, execution_stage = TIMEOUT_STAT_KEYS[stat_key]
+        self.timeout_logger.record(
+            {
+                "type": timeout_type,
+                "parent_id": ctx.parent_id,
+                "mutation_seed": mutation_seed,
+                "strategy": (
+                    mutation_info.get("strategy", "unknown") if mutation_info else "unknown"
+                ),
+                "transformers": (mutation_info.get("transformers", []) if mutation_info else []),
+                "session_id": session_id,
+                "mutation_index": mutation_index,
+                "lineage_depth": ctx.parent_metadata.get("lineage_depth", 0),
+                "execution_stage": execution_stage,
+                "timeout_seconds": self.execution_timeout,
+            }
+        )
+
+    def _record_new_find(self, ctx: ParentContext) -> None:
+        """Update run_stats and parent metadata when new coverage is found."""
+        self.run_stats["new_coverage_finds"] = self.run_stats.get("new_coverage_finds", 0) + 1
+        self.run_stats["sum_of_mutations_per_find"] = (
+            self.run_stats.get("sum_of_mutations_per_find", 0) + self.mutations_since_last_find
+        )
+        self.mutations_since_last_find = 0
+        ctx.parent_metadata["total_finds"] = ctx.parent_metadata.get("total_finds", 0) + 1
+        ctx.parent_metadata["mutations_since_last_find"] = 0
 
     def execute_mutation_and_analysis_cycle(
         self,

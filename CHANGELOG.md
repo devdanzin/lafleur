@@ -79,6 +79,10 @@ All notable changes to this project should be documented in this file.
 
 - Fixed stat_key inconsistency: orchestrator checked `"timeout_count"` but execution.py returns `"timeouts_found"`, causing `HealthMonitor.record_timeout()` to never trigger, by @devdanzin.
 
+### Refactored
+
+- Extracted `_record_timeout_metadata()` and `_record_new_find()` from `_execute_single_mutation` in `orchestrator.py`, reducing the inner mutation loop to its essential logic, by @devdanzin.
+
 ### Enhanced
 
 - `SniperMutator` with two new attack vectors: `executor_assassinate` (uses `_testinternalcapi.invalidate_executors()` to rip JIT executors out from under active traces, targeting GH-143604) and `globals_detach` (uses `types.FunctionType(func.__code__, new_globals)` to execute JIT-compiled code with detached globals, targeting GH-138378), for both helper functions and builtins, by @devdanzin.

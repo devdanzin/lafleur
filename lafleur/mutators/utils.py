@@ -282,7 +282,7 @@ def is_simple_statement(node: ast.stmt) -> bool:
 # ==============================================================================
 
 
-def genLyingEqualityObject(var_name: str) -> str:
+def gen_lying_equality_object(var_name: str) -> str:
     """
     Generate a class that lies about equality.
     __eq__ and __ne__ both always return True after a while.
@@ -309,7 +309,7 @@ def genLyingEqualityObject(var_name: str) -> str:
     return setup_code
 
 
-def genStatefulLenObject(var_name: str) -> str:
+def gen_stateful_len_object(var_name: str) -> str:
     """Generate the source code for a class whose `__len__` is stateful."""
     class_name = f"StatefulLen_{var_name}"
     setup_code = dedent(f"""
@@ -327,7 +327,7 @@ def genStatefulLenObject(var_name: str) -> str:
     return setup_code
 
 
-def genUnstableHashObject(var_name: str) -> str:
+def gen_unstable_hash_object(var_name: str) -> str:
     """Generate the source code for a class whose `__hash__` is not constant."""
     class_name = f"UnstableHash_{var_name}"
     setup_code = dedent(f"""
@@ -345,7 +345,7 @@ def genUnstableHashObject(var_name: str) -> str:
     return setup_code
 
 
-def genStatefulStrReprObject(var_name: str) -> str:
+def gen_stateful_str_repr_object(var_name: str) -> str:
     """
     Generate a class with stateful __str__ and __repr__ methods.
     __repr__ will eventually return a non-string type to cause a TypeError.
@@ -378,7 +378,7 @@ def genStatefulStrReprObject(var_name: str) -> str:
     return setup_code
 
 
-def genStatefulGetitemObject(var_name: str) -> str:
+def gen_stateful_getitem_object(var_name: str) -> str:
     """Generate a class whose ``__getitem__`` returns different types based on call count."""
     class_name = f"StatefulGetitem_{var_name}"
     setup_code = dedent(f"""
@@ -399,7 +399,7 @@ def genStatefulGetitemObject(var_name: str) -> str:
     return setup_code
 
 
-def genStatefulGetattrObject(var_name: str) -> str:
+def gen_stateful_getattr_object(var_name: str) -> str:
     """
     Generate a class whose __getattr__ returns different values based on call count.
     """
@@ -422,7 +422,7 @@ def genStatefulGetattrObject(var_name: str) -> str:
     return setup_code
 
 
-def genStatefulBoolObject(var_name: str) -> str:
+def gen_stateful_bool_object(var_name: str) -> str:
     """
     Generate a class whose __bool__ result flips after a few calls.
     """
@@ -445,7 +445,7 @@ def genStatefulBoolObject(var_name: str) -> str:
     return setup_code
 
 
-def genStatefulIterObject(var_name: str) -> str:
+def gen_stateful_iter_object(var_name: str) -> str:
     """
     Generate a class whose __iter__ returns different iterators.
     """
@@ -467,7 +467,7 @@ def genStatefulIterObject(var_name: str) -> str:
     return setup_code
 
 
-def genStatefulIndexObject(var_name: str) -> str:
+def gen_stateful_index_object(var_name: str) -> str:
     """
     Generate a class whose __index__ returns different integer values.
     """
@@ -490,7 +490,7 @@ def genStatefulIndexObject(var_name: str) -> str:
     return setup_code
 
 
-def genSimpleObject(var_name: str) -> str:
+def gen_simple_object(var_name: str) -> str:
     class_name = f"C_{var_name}"  # We can use var_name because it will be unique
     setup_code = dedent(f"""
         class {class_name}:

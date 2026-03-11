@@ -153,10 +153,10 @@ To support the advanced JIT-specific mutators, `lafleur/mutators/utils.py` conta
 
 Key generators include:
 
-* **`genStatefulLenObject`**: Generates a class whose `__len__` method returns different values on subsequent calls.
-* **`genUnstableHashObject`**: Generates a class whose `__hash__` method is not constant, violating a core requirement for dictionary keys.
-* **`genStatefulIterObject`**: Generates a class whose `__iter__` method returns iterators that change the type of yielded items mid-iteration.
-* **`genStatefulBoolObject`**: Generates a class whose `__bool__` method alternates between `True` and `False`.
-* **`genStatefulIndexObject`**: Generates a class whose `__index__` method returns different integers on each call.
+* **`gen_stateful_len_object`**: Generates a class whose `__len__` method returns different values on subsequent calls.
+* **`gen_unstable_hash_object`**: Generates a class whose `__hash__` method is not constant, violating a core requirement for dictionary keys.
+* **`gen_stateful_iter_object`**: Generates a class whose `__iter__` method returns iterators that change the type of yielded items mid-iteration.
+* **`gen_stateful_bool_object`**: Generates a class whose `__bool__` method alternates between `True` and `False`.
+* **`gen_stateful_index_object`**: Generates a class whose `__index__` method returns different integers on each call.
 
 These generators are used by mutators like `MagicMethodMutator` and `IterableMutator` to create objects that appear normal during the JIT's tracing phase but misbehave once optimized code runs.

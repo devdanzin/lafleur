@@ -35,7 +35,7 @@ This document contains important context for continuing work on the lafleur proj
   - `ArtifactManager` in `lafleur/artifacts.py` ("The Librarian")
   - `ScoringManager` in `lafleur/scoring.py` ("The Judge")
   - `ExecutionManager` in `lafleur/execution.py` ("The Muscle")
-  - `MutationController` in `lafleur/mutation_controller.py` ("The Strategist")
+  - `MutationController` in `lafleur/mutation_controller.py` ("The Alchemist")
 
 **PR #331**: Re-enable mypy - **MERGED**
 
@@ -72,7 +72,7 @@ lafleur/
 ├── artifacts.py           # "The Librarian" - log processing, crash saving
 ├── scoring.py             # "The Judge" - coverage analysis, interestingness
 ├── execution.py           # "The Muscle" - subprocess execution
-├── mutation_controller.py # "The Strategist" - mutation strategy
+├── mutation_controller.py # "The Alchemist" - mutation strategy
 ├── corpus_manager.py      # Corpus management and scheduling
 ├── coverage.py            # Coverage tracking and persistence
 ├── mutators/

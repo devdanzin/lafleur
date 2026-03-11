@@ -12,6 +12,8 @@ import signal
 
 
 class CrashType(str, Enum):
+    """Classification of crash root causes for triage and deduplication."""
+
     ASAN_VIOLATION = "ASAN_VIOLATION"
     C_ASSERTION = "C_ASSERTION"
     PYTHON_PANIC = "PYTHON_PANIC"
@@ -23,6 +25,11 @@ class CrashType(str, Enum):
 
 @dataclass
 class CrashSignature:
+    """Structured fingerprint for a single crash occurrence.
+
+    Used for deduplication, registry lookups, and metadata.json serialization.
+    """
+
     category: str  # High-level category (ASAN, ASSERT, etc)
     crash_type: CrashType  # Enum for programmatic handling
     returncode: int
@@ -30,6 +37,11 @@ class CrashSignature:
     fingerprint: str  # Unique string for minimization matching
 
     def to_dict(self) -> dict:
+        """Serialize to a dict suitable for metadata.json.
+
+        Renames ``category`` to ``type`` for backward compatibility with
+        existing crash metadata files.
+        """
         d = asdict(self)
         # Backward compat: serialized metadata.json uses "type" key
         d["type"] = d.pop("category")

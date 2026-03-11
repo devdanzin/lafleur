@@ -130,7 +130,7 @@ lafleur-triage export-issues known_issues.json
   - `artifacts.py` — Log processing and findings management ("The Librarian")
   - `scoring.py` — Coverage analysis and interestingness scoring ("The Judge")
   - `execution.py` — Subprocess execution and timeout handling ("The Muscle")
-  - `mutation_controller.py` — Mutation strategy and source assembly ("The Strategist")
+  - `mutation_controller.py` — Mutation strategy and source assembly ("The Alchemist")
   - `mutators/` — AST-based mutation strategies
     - `engine.py` — ASTMutator class, registers all transformers
     - `generic.py` — General-purpose mutators (OperatorSwapper, ConstantPerturbator, etc.)
@@ -181,7 +181,7 @@ lafleur-triage export-issues known_issues.json
 - `ExecutionManager` runs test cases with JIT enabled and handles timeouts
 - Methods: `execute_child`, `run_timed_trial`, `verify_target_capabilities`
 
-**lafleur/mutation_controller.py** - Mutation strategy ("The Strategist")
+**lafleur/mutation_controller.py** - Mutation strategy ("The Alchemist")
 - `MutationController` decides mutation approach and assembles source code
 - Implements stages: deterministic, havoc, spam, splicing, sniper, helper_sniper
 

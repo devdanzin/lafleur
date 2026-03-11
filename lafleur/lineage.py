@@ -585,6 +585,43 @@ def extract_session_ancestry(
 # ---------------------------------------------------------------------------
 
 
+def _prune_by_strahler(sub: Subgraph, graph: LineageGraph, min_strahler: int) -> None:
+    """Remove low-Strahler subtrees from a subgraph, replacing them with collapsed nodes."""
+    strahler = compute_strahler(graph, sub)
+
+    sub_children: dict[str, list[str]] = defaultdict(list)
+    for p, c in sub.edges:
+        sub_children[p].append(c)
+
+    pruned_nodes: set[str] = set()
+    strahler_collapsed: dict[str, int] = {}
+
+    def _collect_subtree(node: str) -> set[str]:
+        result_nodes = {node}
+        for child in sub_children.get(node, []):
+            result_nodes.update(_collect_subtree(child))
+        return result_nodes
+
+    for node in list(sub.nodes):
+        if node in pruned_nodes or node.startswith("__"):
+            continue
+        for child in sub_children.get(node, []):
+            if child in pruned_nodes:
+                continue
+            if strahler.get(child, 1) < min_strahler:
+                subtree = _collect_subtree(child)
+                pruned_nodes.update(subtree)
+                summary_id = f"__strahler_pruned_{node}_{len(subtree)}"
+                strahler_collapsed[summary_id] = len(subtree)
+                sub.special_nodes[summary_id] = "collapsed"
+                sub.nodes.add(summary_id)
+                sub.edges.append((node, summary_id))
+
+    sub.nodes -= pruned_nodes
+    sub.edges = [(p, c) for p, c in sub.edges if p not in pruned_nodes and c not in pruned_nodes]
+    sub.collapsed.update(strahler_collapsed)
+
+
 def extract_forest(
     graph: LineageGraph,
     max_depth: int = 10,
@@ -618,49 +655,8 @@ def extract_forest(
             graph, root, max_depth=max_depth, collapse_sterile=collapse_sterile
         )
 
-        # Strahler-based pruning
         if min_strahler > 0:
-            strahler = compute_strahler(graph, sub)
-
-            # Build children map within subgraph
-            sub_children: dict[str, list[str]] = defaultdict(list)
-            for p, c in sub.edges:
-                sub_children[p].append(c)
-
-            # Walk top-down and prune low-Strahler subtrees
-            pruned_nodes: set[str] = set()
-            strahler_collapsed: dict[str, int] = {}
-
-            def _prune_subtree(node: str) -> set[str]:
-                """Collect all nodes in subtree rooted at node."""
-                result_nodes = {node}
-                for child in sub_children.get(node, []):
-                    result_nodes.update(_prune_subtree(child))
-                return result_nodes
-
-            for node in list(sub.nodes):
-                if node in pruned_nodes or node.startswith("__"):
-                    continue
-                children = sub_children.get(node, [])
-                for child in children:
-                    if child in pruned_nodes:
-                        continue
-                    child_strahler = strahler.get(child, 1)
-                    if child_strahler < min_strahler:
-                        subtree = _prune_subtree(child)
-                        pruned_nodes.update(subtree)
-                        summary_id = f"__strahler_pruned_{node}_{len(subtree)}"
-                        strahler_collapsed[summary_id] = len(subtree)
-                        sub.special_nodes[summary_id] = "collapsed"
-                        sub.nodes.add(summary_id)
-                        sub.edges.append((node, summary_id))
-
-            # Remove pruned nodes and their edges
-            sub.nodes -= pruned_nodes
-            sub.edges = [
-                (p, c) for p, c in sub.edges if p not in pruned_nodes and c not in pruned_nodes
-            ]
-            sub.collapsed.update(strahler_collapsed)
+            _prune_by_strahler(sub, graph, min_strahler)
 
         all_nodes.update(sub.nodes)
         for edge in sub.edges:
@@ -1086,81 +1082,23 @@ def decorate(
     edge_list: list[tuple[str, str, EdgeStyle]] = []
 
     for node in subgraph.nodes:
-        ns = NodeStyle()
-
-        # Priority 1: special nodes
         if node in subgraph.special_nodes:
             role = subgraph.special_nodes[node]
-            if role == "ghost":
-                ns.shape = "box"
-                ns.style = "dotted"
-                ns.fillcolor = COLOR_GHOST
-                ns.fontcolor = "gray"
-                ns.label = f"{node}\\n[pruned]"
-                ns.tooltip = ""
-            elif role == "crash":
-                ns.shape = "octagon"
-                ns.fillcolor = COLOR_CRASH
-                ns.fontcolor = "white"
-                crash_meta = graph.metadata.get(node, {})
-                fingerprint = crash_meta.get("fingerprint", "")
-                crash_type = crash_meta.get("crash_type", "")
-                signal_name = crash_meta.get("signal_name", "")
-                crash_label_parts = [node.replace("__crash_", "")]
-                if crash_type:
-                    crash_label_parts.append(crash_type)
-                if fingerprint:
-                    truncated = fingerprint[:40] + ("..." if len(fingerprint) > 40 else "")
-                    crash_label_parts.append(truncated)
-                elif signal_name:
-                    crash_label_parts.append(signal_name)
-                ns.label = "\\n".join(crash_label_parts)
-                # Tooltip with full details
-                tooltip_parts: list[str] = []
-                if fingerprint:
-                    tooltip_parts.append(f"Fingerprint: {fingerprint}")
-                if crash_type:
-                    tooltip_parts.append(f"Type: {crash_type}")
-                if signal_name:
-                    tooltip_parts.append(f"Signal: {signal_name}")
-                parent_id = crash_meta.get("parent_id", "")
-                if parent_id:
-                    tooltip_parts.append(f"Parent: {parent_id}")
-                timestamp = crash_meta.get("timestamp", "")
-                if timestamp:
-                    tooltip_parts.append(f"Time: {timestamp}")
-                ns.tooltip = "\\n".join(tooltip_parts)
-            elif role == "collapsed":
-                count = subgraph.collapsed.get(node, 0)
-                ns.shape = "note"
-                ns.fillcolor = COLOR_COLLAPSED
-                ns.label = f"{count} sterile leaves"
-                ns.tooltip = ""
-            elif role == "unresolved":
-                ns.shape = "box"
-                ns.style = "filled,dashed"
-                ns.fillcolor = COLOR_UNRESOLVED
-                ns.fontcolor = "black"
-                ns.label = node.replace("__unresolved_", "") + "\\n[unresolved]"
-                ns.tooltip = ""
-            elif role == "mrca":
-                # MRCA gets normal node styling plus blue border overlay
-                metadata = graph.metadata.get(node, {})
-                ns = _decorate_corpus_node(
-                    node, metadata, label_style, metrics, show_strahler, show_success_rate
-                )
-                ns.color = BORDER_MRCA
-                ns.penwidth = 3.0
-                node_styles[node] = ns
-                continue
-            node_styles[node] = ns
-            continue
-
-        # Priority 2: normal corpus nodes
-        metadata = graph.metadata.get(node, {})
-        ns = _decorate_corpus_node(
-            node, metadata, label_style, metrics, show_strahler, show_success_rate
-        )
+            ns = _decorate_special_node(
+                node,
+                role,
+                subgraph,
+                graph,
+                label_style,
+                metrics,
+                show_strahler,
+                show_success_rate,
+            )
+        else:
+            metadata = graph.metadata.get(node, {})
+            ns = _decorate_corpus_node(
+                node, metadata, label_style, metrics, show_strahler, show_success_rate
+            )
         node_styles[node] = ns
 
     # Edge decoration
@@ -1238,6 +1176,81 @@ def decorate(
     }
 
     return DecoratedGraph(nodes=node_styles, edges=edge_list, graph_attrs=graph_attrs)
+
+
+def _decorate_special_node(
+    node: str,
+    role: str,
+    subgraph: Subgraph,
+    graph: LineageGraph,
+    label_style: str,
+    metrics: TreeMetrics | None,
+    show_strahler: bool,
+    show_success_rate: bool,
+) -> NodeStyle:
+    """Build a NodeStyle for a special (non-corpus) node based on its role."""
+    ns = NodeStyle()
+
+    if role == "ghost":
+        ns.shape = "box"
+        ns.style = "dotted"
+        ns.fillcolor = COLOR_GHOST
+        ns.fontcolor = "gray"
+        ns.label = f"{node}\\n[pruned]"
+        ns.tooltip = ""
+    elif role == "crash":
+        ns.shape = "octagon"
+        ns.fillcolor = COLOR_CRASH
+        ns.fontcolor = "white"
+        crash_meta = graph.metadata.get(node, {})
+        fingerprint = crash_meta.get("fingerprint", "")
+        crash_type = crash_meta.get("crash_type", "")
+        signal_name = crash_meta.get("signal_name", "")
+        crash_label_parts = [node.replace("__crash_", "")]
+        if crash_type:
+            crash_label_parts.append(crash_type)
+        if fingerprint:
+            truncated = fingerprint[:40] + ("..." if len(fingerprint) > 40 else "")
+            crash_label_parts.append(truncated)
+        elif signal_name:
+            crash_label_parts.append(signal_name)
+        ns.label = "\\n".join(crash_label_parts)
+        tooltip_parts: list[str] = []
+        if fingerprint:
+            tooltip_parts.append(f"Fingerprint: {fingerprint}")
+        if crash_type:
+            tooltip_parts.append(f"Type: {crash_type}")
+        if signal_name:
+            tooltip_parts.append(f"Signal: {signal_name}")
+        parent_id = crash_meta.get("parent_id", "")
+        if parent_id:
+            tooltip_parts.append(f"Parent: {parent_id}")
+        timestamp = crash_meta.get("timestamp", "")
+        if timestamp:
+            tooltip_parts.append(f"Time: {timestamp}")
+        ns.tooltip = "\\n".join(tooltip_parts)
+    elif role == "collapsed":
+        count = subgraph.collapsed.get(node, 0)
+        ns.shape = "note"
+        ns.fillcolor = COLOR_COLLAPSED
+        ns.label = f"{count} sterile leaves"
+        ns.tooltip = ""
+    elif role == "unresolved":
+        ns.shape = "box"
+        ns.style = "filled,dashed"
+        ns.fillcolor = COLOR_UNRESOLVED
+        ns.fontcolor = "black"
+        ns.label = node.replace("__unresolved_", "") + "\\n[unresolved]"
+        ns.tooltip = ""
+    elif role == "mrca":
+        metadata = graph.metadata.get(node, {})
+        ns = _decorate_corpus_node(
+            node, metadata, label_style, metrics, show_strahler, show_success_rate
+        )
+        ns.color = BORDER_MRCA
+        ns.penwidth = 3.0
+
+    return ns
 
 
 def _decorate_corpus_node(

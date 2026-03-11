@@ -117,7 +117,7 @@ def main() -> None:
         migrated_state = migrate_state_to_integers(state)
 
     # Convert sets to lists for JSON serialization
-    def set_to_list(obj):
+    def set_to_list(obj: object) -> list:
         if isinstance(obj, set):
             return sorted(list(obj))
         raise TypeError

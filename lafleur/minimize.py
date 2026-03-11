@@ -19,6 +19,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from typing import Any
 
 from lafleur.utils import FUZZING_ENV, load_json_file
 
@@ -34,7 +35,7 @@ def _make_repro_env() -> dict[str, str]:
     return env
 
 
-def extract_grep_pattern(metadata: dict) -> str:
+def extract_grep_pattern(metadata: dict[str, Any]) -> str:
     """Extract a grep pattern from the crash fingerprint metadata."""
     fingerprint = metadata.get("fingerprint", "")
 
@@ -106,7 +107,7 @@ def run_session(scripts: list[Path], target_python: str, timeout: int = 10) -> t
 
 
 def check_reproduction(
-    scripts: list[Path], metadata: dict, grep_pattern: str, target_python: str
+    scripts: list[Path], metadata: dict[str, Any], grep_pattern: str, target_python: str
 ) -> bool:
     """Check if the crash reproduces with the given scripts."""
     target_code = metadata.get("returncode", 0)
@@ -134,7 +135,7 @@ def check_reproduction(
     return code_match and grep_match
 
 
-def _load_and_validate_metadata(crash_dir: Path) -> tuple[dict, str, list[Path]]:
+def _load_and_validate_metadata(crash_dir: Path) -> tuple[dict[str, Any], str, list[Path]]:
     """Load metadata, validate returncode, extract grep pattern, and find scripts.
 
     Returns (metadata, grep_pattern, script_files).
@@ -171,7 +172,7 @@ def _load_and_validate_metadata(crash_dir: Path) -> tuple[dict, str, list[Path]]
 
 
 def _minimize_scripts(
-    script_files: list[Path], metadata: dict, grep_pattern: str, target_python: str
+    script_files: list[Path], metadata: dict[str, Any], grep_pattern: str, target_python: str
 ) -> list[Path]:
     """Stage 1: Identify which scripts are necessary for reproduction.
 
@@ -201,7 +202,7 @@ def _minimize_scripts(
 def _concatenate_scripts(
     necessary_scripts: list[Path],
     crash_dir: Path,
-    metadata: dict,
+    metadata: dict[str, Any],
     grep_pattern: str,
     target_python: str,
     force_overwrite: bool,
@@ -274,7 +275,7 @@ def _generate_bash_scripts(
     crash_dir: Path,
     target_file: Path,
     necessary_scripts: list[Path],
-    metadata: dict,
+    metadata: dict[str, Any],
     grep_pattern: str,
     target_python: str,
     use_concatenation: bool,

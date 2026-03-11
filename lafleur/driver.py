@@ -25,6 +25,7 @@ import sys
 import traceback
 from pathlib import Path
 from types import CodeType, FunctionType, MethodType, ModuleType
+from typing import Any
 
 # Try to import JIT introspection modules
 try:
@@ -135,7 +136,7 @@ def check_bloom(bloom_filter: _PyBloomFilter, obj_address: int) -> bool:
 
 def scan_watched_variables(
     executor_ptr: ctypes.POINTER(PyExecutorObject),  # type: ignore[valid-type]
-    namespace: dict,
+    namespace: dict[str, Any],
 ) -> list[str]:
     """Identify which globals/builtins are watched by this executor."""
     watched = []
@@ -172,7 +173,7 @@ def scan_watched_variables(
     return watched
 
 
-def _emit_stats(stats: dict) -> None:
+def _emit_stats(stats: dict[str, Any]) -> None:
     """Safely emit a [DRIVER:STATS] JSON line to stdout.
 
     Handles serialization failures gracefully by:
@@ -229,7 +230,7 @@ def walk_code_objects(
             yield from walk_code_objects(const, visited)
 
 
-def snapshot_executor_state(namespace: dict) -> dict[tuple[int, int], int]:
+def snapshot_executor_state(namespace: dict[str, Any]) -> dict[tuple[int, int], int]:
     """Record exit_count for all JIT executors currently in the namespace.
 
     Walks the shared namespace and records the current exit_count for every
@@ -341,7 +342,9 @@ class _JitMetrics:
         return result
 
 
-def get_jit_stats(namespace: dict, baseline: dict[tuple[int, int], int] | None = None) -> dict:
+def get_jit_stats(
+    namespace: dict[str, Any], baseline: dict[tuple[int, int], int] | None = None
+) -> dict[str, Any]:
     """Scan a namespace for functions and count active JIT executors.
 
     Uses _opcode.get_executor() to check if functions have been JIT-compiled.

@@ -14,7 +14,7 @@ import hashlib
 import json
 import sys
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Callable
+from typing import TYPE_CHECKING, Any, Callable
 
 from lafleur.coverage import (
     CoverageManager,
@@ -200,12 +200,13 @@ class InterestingnessScorer:
         """Score based on JIT tachycardia, zombie traces, chain depth, and stubs."""
         score = 0.0
 
-        zombie_traces = self.jit_stats.get("zombie_traces") or 0
-        max_chain_depth = self.jit_stats.get("max_chain_depth") or 0
-        min_code_size = self.jit_stats.get("min_code_size") or 0
+        zombie_traces = self.jit_stats.get("zombie_traces", 0)
+        max_chain_depth = self.jit_stats.get("max_chain_depth", 0)
+        min_code_size = self.jit_stats.get("min_code_size", 0)
 
         # Tachycardia: prefer delta metrics (child-isolated) when available from
         # session mode, fall back to absolute metrics for non-session runs.
+        # Delta fields may be None in old pickle data, so use `or` fallback.
         child_delta_density = self.jit_stats.get("child_delta_max_exit_density") or 0.0
         child_delta_exits = self.jit_stats.get("child_delta_total_exits") or 0
 
@@ -326,8 +327,8 @@ class ScoringManager:
 
     def find_new_coverage(
         self,
-        child_coverage: dict,
-        parent_lineage_profile: dict,
+        child_coverage: dict[str, Any],
+        parent_lineage_profile: dict[str, Any],
         parent_id: str | None,
     ) -> NewCoverageInfo:
         """
@@ -424,6 +425,7 @@ class ScoringManager:
                     json_str = line.split("[DRIVER:STATS]", 1)[1].strip()
                     stats = json.loads(json_str)
 
+                    # Driver may emit None for any field, so use `or` fallback.
                     aggregated_stats["max_exit_count"] = max(
                         aggregated_stats["max_exit_count"],
                         stats.get("max_exit_count") or 0,
@@ -445,7 +447,8 @@ class ScoringManager:
                     if code_size > 0:
                         min_code_sizes.append(code_size)
 
-                    # Delta metrics: overwrite each time (we want the LAST line = child)
+                    # Delta metrics: overwrite each time (we want the LAST line = child).
+                    # Use `or` fallback because driver may emit None for these fields.
                     if "delta_max_exit_density" in stats:
                         aggregated_stats["child_delta_max_exit_density"] = (
                             stats.get("delta_max_exit_density") or 0.0
@@ -550,11 +553,11 @@ class ScoringManager:
         print(f"  [+] Child IS NOT interesting with score: {score:.2f}", file=sys.stderr)
         return False
 
-    def _update_global_coverage(self, child_coverage: dict) -> None:
+    def _update_global_coverage(self, child_coverage: dict[str, Any]) -> None:
         """Commit the coverage from a new, interesting child to the global state."""
         merge_coverage_into_global(self.coverage_manager.state, child_coverage)
 
-    def _calculate_coverage_hash(self, coverage_profile: dict) -> str:
+    def _calculate_coverage_hash(self, coverage_profile: dict[str, Any]) -> str:
         """Create a deterministic SHA256 hash of a coverage profile's edges."""
         all_edges = []
         # We only hash the edges, as they provide the most significant signal.
@@ -568,7 +571,7 @@ class ScoringManager:
         return hashlib.sha256(canonical_string.encode("utf-8")).hexdigest()
 
     def _build_lineage_profile(
-        self, parent_lineage_profile: dict, child_baseline_profile: dict
+        self, parent_lineage_profile: dict[str, Any], child_baseline_profile: dict
     ) -> dict:
         """
         Create a new lineage profile by taking the union of a parent's
@@ -604,7 +607,7 @@ class ScoringManager:
     def analyze_run(
         self,
         exec_result: ExecutionResult,
-        parent_lineage_profile: dict,
+        parent_lineage_profile: dict[str, Any],
         parent_id: str | None,
         mutation_info: MutationInfo,
         mutation_seed: int,
@@ -696,7 +699,7 @@ class ScoringManager:
     def _prepare_new_coverage_result(
         self,
         exec_result: ExecutionResult,
-        child_coverage: dict,
+        child_coverage: dict[str, Any],
         jit_stats: JitStats,
         parent_jit_stats: JitStats,
         parent_id: str | None,

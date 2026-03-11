@@ -418,6 +418,49 @@ class ExecutionManager:
 
         return (jit_avg_ms, nojit_avg_ms, nojit_cv), None
 
+    def _compose_session(
+        self, child_source_path: Path, parent_path: Path
+    ) -> tuple[list[Path], list[str] | None]:
+        """Build session file list and polluter IDs for session fuzzing mode.
+
+        Returns a tuple of (session_files, polluter_ids). Session types:
+        - Solo: child only (cold JIT, ~15% probability)
+        - Standard: parent + child (warm JIT)
+        - Mixer: polluters + parent + child (hot/polluted JIT, ~30% probability)
+        """
+        if random.random() < SOLO_SESSION_PROBABILITY:
+            print(
+                "[SESSION] Solo mode: child-only execution (cold JIT).",
+                file=sys.stderr,
+            )
+            return [child_source_path], None
+
+        print(
+            "[SESSION] Using session driver for warm JIT fuzzing.",
+            file=sys.stderr,
+        )
+
+        if random.random() < MIXER_PROBABILITY:
+            num_polluters = random.randint(1, 3)
+            polluters: list[Path] = []
+            try:
+                for _ in range(num_polluters):
+                    selection = self.corpus_manager.select_parent()
+                    if selection:
+                        polluters.append(selection[0])
+            except AttributeError, IndexError:
+                pass
+
+            if polluters:
+                polluter_ids = [p.name for p in polluters]
+                print(
+                    f"  [MIXER] Active: Added {len(polluters)} polluter(s) to session.",
+                    file=sys.stderr,
+                )
+                return polluters + [parent_path, child_source_path], polluter_ids
+
+        return [parent_path, child_source_path], None
+
     def execute_child(
         self,
         source_code: str,
@@ -475,63 +518,15 @@ class ExecutionManager:
             child_source_path.write_text(source_code, encoding="utf-8")
 
             # Build the command based on session fuzzing mode
-            session_files: list[Path] | None = None
-            polluter_ids: list[str] | None = None
             if self.session_fuzz:
-                if random.random() < SOLO_SESSION_PROBABILITY:
-                    # Solo session: child only, cold JIT
-                    print(
-                        "[SESSION] Solo mode: child-only execution (cold JIT).",
-                        file=sys.stderr,
-                    )
-                    session_files = [child_source_path]
-                else:
-                    # Normal session: parent warmup + optional mixer
-                    print(
-                        "[SESSION] Using session driver for warm JIT fuzzing.",
-                        file=sys.stderr,
-                    )
-
-                    # The Mixer: Prepend random corpus files to pollute JIT state
-                    if random.random() < MIXER_PROBABILITY:
-                        # Select 1-3 random polluter scripts from corpus
-                        num_polluters = random.randint(1, 3)
-                        polluters: list[Path] = []
-
-                        # Try to get polluters from corpus (handle empty corpus gracefully)
-                        try:
-                            for _ in range(num_polluters):
-                                selection = self.corpus_manager.select_parent()
-                                if selection:
-                                    polluters.append(selection[0])
-                        except AttributeError, IndexError:
-                            # Corpus empty or select_parent not available
-                            pass
-
-                        if polluters:
-                            polluter_ids = [p.name for p in polluters]
-                            session_files = polluters + [parent_path, child_source_path]
-                            print(
-                                f"  [MIXER] Active: Added {len(polluters)} polluter(s) to session.",
-                                file=sys.stderr,
-                            )
-                        else:
-                            # Fallback to standard session
-                            session_files = [parent_path, child_source_path]
-                    else:
-                        # Standard session mode
-                        session_files = [parent_path, child_source_path]
-
-                cmd = [
-                    self.target_python,
-                    "-m",
-                    "lafleur.driver",
-                ]
+                session_files, polluter_ids = self._compose_session(child_source_path, parent_path)
+                cmd = [self.target_python, "-m", "lafleur.driver"]
                 if self.no_ekg:
                     cmd.append("--no-ekg")
                 cmd += [str(f) for f in session_files]
             else:
-                # Normal mode: run child in fresh process
+                session_files = None
+                polluter_ids = None
                 cmd = [self.target_python, str(child_source_path)]
 
             coverage_env = self._build_env(jit=True, debug_logs=True)

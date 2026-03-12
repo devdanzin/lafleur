@@ -1,4 +1,5 @@
 import unittest
+
 from lafleur.scoring import InterestingnessScorer, NewCoverageInfo
 
 

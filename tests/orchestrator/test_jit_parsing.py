@@ -1,7 +1,8 @@
 import io
-import unittest
 import json
+import unittest
 from unittest.mock import patch
+
 from lafleur.orchestrator import LafleurOrchestrator
 
 

@@ -19,19 +19,22 @@ import shutil
 import socket
 import sys
 import time
-
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import Enum, auto
 from pathlib import Path
 from textwrap import dedent
 
-from lafleur.corpus_manager import CORPUS_DIR, TMP_DIR, CorpusManager
-from lafleur.health import HealthMonitor
-from lafleur.coverage import CoverageManager, load_coverage_state
 from lafleur.analysis import CrashFingerprinter
 from lafleur.artifacts import ArtifactManager, TelemetryManager, TimeoutLogger
+from lafleur.corpus_manager import CORPUS_DIR, TMP_DIR, CorpusManager
+from lafleur.coverage import CoverageManager, load_coverage_state
 from lafleur.execution import ExecutionManager
+from lafleur.health import HealthMonitor
+from lafleur.learning import MutatorScoreTracker
+from lafleur.metadata import generate_run_metadata
+from lafleur.mutation_controller import MutationController
+from lafleur.mutators import ASTMutator
 from lafleur.scoring import ScoringManager
 from lafleur.types import (
     AnalysisResult,
@@ -42,10 +45,6 @@ from lafleur.types import (
     NewCoverageResult,
     RunStats,
 )
-from lafleur.learning import MutatorScoreTracker
-from lafleur.mutation_controller import MutationController
-from lafleur.mutators import ASTMutator
-from lafleur.metadata import generate_run_metadata
 from lafleur.utils import TeeLogger, load_run_stats
 
 

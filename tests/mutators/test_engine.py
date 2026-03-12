@@ -29,9 +29,9 @@ from lafleur.mutators.generic import (
     OperatorSwapper,
     StatementDuplicator,
 )
-from lafleur.mutators.utils import RedundantStatementSanitizer
 from lafleur.mutators.utils import (
     FuzzerSetupNormalizer,
+    RedundantStatementSanitizer,
     gen_stateful_bool_object,
     gen_stateful_index_object,
 )
@@ -894,7 +894,7 @@ class TestUnparseDiagnostics(unittest.TestCase):
 
     def test_records_transformers_used(self):
         """Test that transformer names are recorded in info.txt."""
-        from lafleur.mutators.generic import OperatorSwapper, ConstantPerturbator
+        from lafleur.mutators.generic import ConstantPerturbator, OperatorSwapper
 
         tree = ast.parse("a = 1")
         error = AttributeError("test transformers")

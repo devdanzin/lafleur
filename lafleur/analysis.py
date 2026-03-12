@@ -5,10 +5,10 @@ fingerprints (ASAN violations, C assertions, Python panics, signals)
 and extracting structured signatures for deduplication.
 """
 
-from dataclasses import dataclass, asdict
-from enum import Enum
 import re
 import signal
+from dataclasses import asdict, dataclass
+from enum import Enum
 
 
 class CrashType(str, Enum):

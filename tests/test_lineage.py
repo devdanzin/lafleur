@@ -1,13 +1,12 @@
 """Tests for lafleur.lineage — corpus lineage visualization tool."""
 
+import hashlib
 import json
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
-
-import hashlib
-import tempfile
 
 from lafleur.lineage import (
     BORDER_MRCA,
@@ -45,7 +44,6 @@ from lafleur.lineage import (
     resolve_target,
     scan_crashes,
 )
-
 
 # ---------------------------------------------------------------------------
 # Test fixtures
@@ -1695,7 +1693,6 @@ class TestCLIMrca(unittest.TestCase):
 
 # Need Subgraph import for stats tests
 from lafleur.lineage import Subgraph  # noqa: E402
-
 
 # ---------------------------------------------------------------------------
 # Session crash directory fixture

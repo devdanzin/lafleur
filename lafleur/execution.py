@@ -19,8 +19,8 @@ from pathlib import Path
 from textwrap import dedent, indent
 from typing import TYPE_CHECKING
 
-from lafleur.coverage import PROTO_TRACE_REGEX, OPTIMIZED_TRACE_REGEX
-from lafleur.utils import ExecutionResult, FUZZING_ENV
+from lafleur.coverage import OPTIMIZED_TRACE_REGEX, PROTO_TRACE_REGEX
+from lafleur.utils import FUZZING_ENV, ExecutionResult
 
 if TYPE_CHECKING:
     from lafleur.artifacts import ArtifactManager

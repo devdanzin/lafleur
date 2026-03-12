@@ -8,13 +8,13 @@ for easy access by the orchestrator.
 """
 
 from lafleur.mutators.engine import ASTMutator, SlicingMutator, _dump_unparse_diagnostics
+from lafleur.mutators.generic import ImportPrunerMutator, StatementDuplicator, VariableRenamer
 from lafleur.mutators.utils import (
-    FuzzerSetupNormalizer,
     EmptyBodySanitizer,
+    FuzzerSetupNormalizer,
     HarnessInstrumentor,
     RedundantStatementSanitizer,
 )
-from lafleur.mutators.generic import ImportPrunerMutator, StatementDuplicator, VariableRenamer
 
 __all__ = [
     "ASTMutator",
@@ -26,4 +26,5 @@ __all__ = [
     "RedundantStatementSanitizer",
     "StatementDuplicator",
     "VariableRenamer",
+    "_dump_unparse_diagnostics",
 ]

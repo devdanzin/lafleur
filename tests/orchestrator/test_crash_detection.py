@@ -12,9 +12,10 @@ import signal
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch, mock_open
-from lafleur.artifacts import ArtifactManager, TimeoutLogger
+from unittest.mock import mock_open, patch
+
 from lafleur.analysis import CrashFingerprinter, CrashSignature, CrashType
+from lafleur.artifacts import ArtifactManager, TimeoutLogger
 from lafleur.execution import ExecutionManager
 
 

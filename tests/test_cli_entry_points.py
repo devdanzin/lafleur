@@ -15,6 +15,8 @@ from unittest.mock import patch
 from lafleur.coverage import (
     load_coverage_state,
     save_coverage_state,
+)
+from lafleur.coverage import (
     main as coverage_main,
 )
 

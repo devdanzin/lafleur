@@ -6,18 +6,18 @@ corpus, including selecting parent test cases, adding new files, generating
 initial seeds, and synchronizing the fuzzer's state with the files on disk.
 """
 
-from collections import defaultdict
 import hashlib
 import os
 import random
 import subprocess
 import sys
 import time
+from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable
 
-from lafleur.coverage import save_coverage_state, CoverageManager
+from lafleur.coverage import CoverageManager, save_coverage_state
 from lafleur.health import FILE_SIZE_WARNING_THRESHOLD
 from lafleur.types import (
     CorpusFileMetadata,
@@ -26,7 +26,7 @@ from lafleur.types import (
     NewCoverageResult,
     RunStats,
 )
-from lafleur.utils import ExecutionResult, FUZZING_ENV
+from lafleur.utils import FUZZING_ENV, ExecutionResult
 
 if TYPE_CHECKING:
     from lafleur.health import HealthMonitor

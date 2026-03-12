@@ -15,8 +15,6 @@ Output Protocol:
     [DRIVER:ERROR] <script_path>   - Emitted when a script raises an exception
 """
 
-from __future__ import annotations
-
 import argparse
 import collections.abc
 import ctypes

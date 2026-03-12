@@ -5,8 +5,6 @@ This module provides a command-line interface for importing crashes from
 fuzzing campaigns and linking them to GitHub issues.
 """
 
-from __future__ import annotations
-
 import argparse
 import json
 import subprocess

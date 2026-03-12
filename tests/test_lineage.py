@@ -1,7 +1,5 @@
 """Tests for lafleur.lineage — corpus lineage visualization tool."""
 
-from __future__ import annotations
-
 import json
 import sys
 import unittest

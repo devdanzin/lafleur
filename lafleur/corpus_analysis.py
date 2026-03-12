@@ -6,8 +6,6 @@ of the fuzzing corpus, computing statistics about file sizes, execution
 times, lineage depths, and mutation effectiveness.
 """
 
-from __future__ import annotations
-
 import statistics
 from collections import Counter
 from collections.abc import Sequence

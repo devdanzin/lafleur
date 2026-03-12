@@ -8,8 +8,6 @@ call sites to stress inline caches, confusing attribute lookup mechanisms, and
 modifying class hierarchies (MRO) at runtime.
 """
 
-from __future__ import annotations
-
 import ast
 import random
 import sys

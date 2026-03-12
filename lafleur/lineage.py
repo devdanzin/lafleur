@@ -7,8 +7,6 @@ file back to its seed) and descendants (show what a file produced) modes.
 Output formats: Graphviz DOT (default), JSON, or rendered images (PNG/SVG/PDF).
 """
 
-from __future__ import annotations
-
 import argparse
 import hashlib
 import json

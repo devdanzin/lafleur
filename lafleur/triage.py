@@ -285,7 +285,9 @@ def import_campaign(args: argparse.Namespace) -> None:
             # Convert "20260109_221500" format to ISO8601
             if timestamp_str and "_" in timestamp_str:
                 try:
-                    dt = datetime.strptime(timestamp_str, "%Y%m%d_%H%M%S")
+                    dt = datetime.strptime(timestamp_str, "%Y%m%d_%H%M%S").replace(
+                        tzinfo=timezone.utc
+                    )
                     timestamp_str = dt.isoformat()
                 except ValueError:
                     pass

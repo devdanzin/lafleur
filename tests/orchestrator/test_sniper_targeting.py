@@ -2,6 +2,7 @@ import ast
 import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
+
 from lafleur.orchestrator import LafleurOrchestrator
 from lafleur.utils import RUN_STATS_FILE
 

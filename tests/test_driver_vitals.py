@@ -1,5 +1,6 @@
 import unittest
 from unittest.mock import MagicMock, patch
+
 from lafleur.driver import get_jit_stats
 
 

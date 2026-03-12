@@ -40,6 +40,7 @@ from lafleur.mutators.generic import (
     UnpackingMutator,
     VariableSwapper,
 )
+from lafleur.mutators.helper_injection import HelperFunctionInjector
 from lafleur.mutators.scenarios_control import (
     ContextManagerInjector,
     CoroutineStateCorruptor,
@@ -105,7 +106,7 @@ from lafleur.mutators.scenarios_types import (
     TypeIntrospectionMutator,
     TypeVersionInvalidator,
 )
-from lafleur.mutators.helper_injection import HelperFunctionInjector
+
 # Note: SniperMutator is NOT imported here - it's only used in orchestrator._run_sniper_stage
 # because it requires watched_keys parameter from Bloom introspection
 

@@ -27,9 +27,8 @@ from lafleur.mutators import (
     _dump_unparse_diagnostics,
 )
 from lafleur.mutators.generic import ImportChaosMutator, ImportPrunerMutator, StatementDuplicator
-from lafleur.mutators.sniper import SniperMutator
 from lafleur.mutators.helper_injection import HelperFunctionInjector
-
+from lafleur.mutators.sniper import SniperMutator
 from lafleur.types import MutationInfo
 
 if TYPE_CHECKING:

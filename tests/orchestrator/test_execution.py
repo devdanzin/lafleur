@@ -15,10 +15,10 @@ from pathlib import Path
 from textwrap import dedent
 from unittest.mock import MagicMock, patch
 
+from lafleur.analysis import CrashFingerprinter
+from lafleur.artifacts import ArtifactManager
 from lafleur.execution import ExecutionManager
 from lafleur.mutation_controller import MutationController
-from lafleur.artifacts import ArtifactManager
-from lafleur.analysis import CrashFingerprinter
 from lafleur.utils import ExecutionResult
 
 
@@ -1041,8 +1041,8 @@ class TestSoloSessionProbability(unittest.TestCase):
 
     def test_solo_session_crash_bundle_single_file(self):
         """Crash during solo session passes single-element session_files to check_for_crash."""
-        from lafleur.artifacts import ArtifactManager
         from lafleur.analysis import CrashFingerprinter
+        from lafleur.artifacts import ArtifactManager
 
         artifact_mgr = ArtifactManager(
             crashes_dir=Path("/tmp/crashes"),

@@ -12,7 +12,6 @@ from typing import Any
 
 from lafleur.utils import append_jsonl
 
-
 # Threshold for consecutive timeout warnings
 CONSECUTIVE_TIMEOUT_THRESHOLD = 5
 

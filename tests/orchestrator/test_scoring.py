@@ -8,7 +8,7 @@ classes that determine which mutations are worth keeping.
 import unittest
 from unittest.mock import MagicMock, Mock, patch
 
-from lafleur.scoring import NewCoverageInfo, InterestingnessScorer, ScoringManager
+from lafleur.scoring import InterestingnessScorer, NewCoverageInfo, ScoringManager
 from lafleur.types import NewCoverageResult
 
 

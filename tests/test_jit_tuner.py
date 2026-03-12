@@ -9,7 +9,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from lafleur.jit_tuner import apply_jit_tweaks, main, JIT_TWEAKS
+from lafleur.jit_tuner import JIT_TWEAKS, apply_jit_tweaks, main
 
 
 class TestApplyJitTweaks(unittest.TestCase):

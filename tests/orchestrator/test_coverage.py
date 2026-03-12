@@ -11,7 +11,7 @@ import io
 import unittest
 from unittest.mock import MagicMock, patch
 
-from lafleur.scoring import ScoringContext, ScoringManager, NewCoverageInfo
+from lafleur.scoring import NewCoverageInfo, ScoringContext, ScoringManager
 
 
 class TestFindNewCoverage(unittest.TestCase):

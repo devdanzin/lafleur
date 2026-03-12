@@ -8,11 +8,11 @@ import json
 import pickle
 import tempfile
 import unittest
+from io import StringIO
 from pathlib import Path
 from unittest.mock import patch
-from io import StringIO
 
-from lafleur.state_tool import migrate_state_to_integers, main
+from lafleur.state_tool import main, migrate_state_to_integers
 
 
 class TestMigrateStateToIntegers(unittest.TestCase):

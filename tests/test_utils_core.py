@@ -13,11 +13,11 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from lafleur.utils import (
+    ExecutionResult,
+    TeeLogger,
     _default_run_stats,
     load_run_stats,
     save_run_stats,
-    TeeLogger,
-    ExecutionResult,
 )
 
 

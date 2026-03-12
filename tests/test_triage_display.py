@@ -15,10 +15,10 @@ from unittest.mock import patch
 
 from lafleur.registry import CrashRegistry
 from lafleur.triage import (
+    import_campaign,
     list_crashes,
     show_crash,
     show_status,
-    import_campaign,
 )
 
 

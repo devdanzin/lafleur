@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 Tests for crash detection and artifact saving in lafleur.
 

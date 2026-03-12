@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 A standalone command-line utility for inspecting and migrating lafleur's
 binary state file (`coverage_state.pkl`).

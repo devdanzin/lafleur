@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 This module provides utilities for parsing CPython JIT trace logs.
 

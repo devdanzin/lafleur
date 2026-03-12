@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 Tests for main evolutionary loop in lafleur/orchestrator.py.
 

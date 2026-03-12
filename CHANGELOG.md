@@ -83,6 +83,7 @@ All notable changes to this project should be documented in this file.
 
 ### Fixed
 
+- `triage.py` timestamp parsing now produces UTC-aware datetimes instead of naive ones, consistent with the rest of the codebase, by @devdanzin.
 - Added module docstring to `analysis.py` describing crash fingerprinting and classification, by @devdanzin.
 - Added missing `REPORTED` and `FIXED` choices to `lafleur-triage list --status`, matching the full set of valid triage statuses, by @devdanzin.
 - Added explicit `encoding="utf-8"` to 10 text-mode `open()` calls missing it across 6 modules, matching the majority convention, by @devdanzin.
@@ -99,6 +100,7 @@ All notable changes to this project should be documented in this file.
 
 - Removed redundant `from __future__ import annotations` from 18 files (Python 3.14+ doesn't need it), by @devdanzin.
 - Removed unnecessary shebangs from 23 package and test files, by @devdanzin.
+
 - Extracted `_record_timeout_metadata()` and `_record_new_find()` from `_execute_single_mutation` in `orchestrator.py`, reducing the inner mutation loop to its essential logic, by @devdanzin.
 
 ### Enhanced

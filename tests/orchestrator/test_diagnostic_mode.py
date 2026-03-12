@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 End-to-end integration tests for diagnostic mode.
 

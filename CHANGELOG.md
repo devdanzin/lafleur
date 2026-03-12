@@ -95,6 +95,10 @@ All notable changes to this project should be documented in this file.
 - Fixed stat_key inconsistency: orchestrator checked `"timeout_count"` but execution.py returns `"timeouts_found"`, causing `HealthMonitor.record_timeout()` to never trigger, by @devdanzin.
 - Guarded `.chmod()` calls in `artifacts.py` and `minimize.py` and HTML report write in `campaign.py` against `OSError` on restricted filesystems or disk-full conditions, by @devdanzin.
 
+### Refactored
+
+- Extracted `_record_timeout_metadata()` and `_record_new_find()` from `_execute_single_mutation` in `orchestrator.py`, reducing the inner mutation loop to its essential logic, by @devdanzin.
+
 ### Enhanced
 
 - Updated CLAUDE.md: renamed stale `coverage_parser.py` reference to `coverage.py`, added 6 missing modules (`analysis.py`, `health.py`, `learning.py`, `metadata.py`, `types.py`, `uop_names.py`) to the project structure, by @devdanzin.

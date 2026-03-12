@@ -97,6 +97,7 @@ All notable changes to this project should be documented in this file.
 
 ### Refactored
 
+- Removed redundant `from __future__ import annotations` from 18 files (Python 3.14+ doesn't need it), by @devdanzin.
 - Extracted `_record_timeout_metadata()` and `_record_new_find()` from `_execute_single_mutation` in `orchestrator.py`, reducing the inner mutation loop to its essential logic, by @devdanzin.
 
 ### Enhanced

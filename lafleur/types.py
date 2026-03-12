@@ -12,8 +12,6 @@ untyped dict returned by analyze_run(), enabling isinstance()-based
 dispatch and preventing accidental mutation.
 """
 
-from __future__ import annotations
-
 from collections import Counter
 from dataclasses import dataclass
 from typing import TypedDict

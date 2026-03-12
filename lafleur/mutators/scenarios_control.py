@@ -8,8 +8,6 @@ to break traces, and generating loops with many side-exits to stress the JIT's
 guard emission and bailout mechanisms.
 """
 
-from __future__ import annotations
-
 import ast
 import random
 import sys

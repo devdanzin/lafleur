@@ -4,8 +4,6 @@ This module contains generic, reusable helper functions and classes for the lafl
 It includes utilities for logging, managing run statistics, and structuring data.
 """
 
-from __future__ import annotations
-
 import json
 import os
 import sys

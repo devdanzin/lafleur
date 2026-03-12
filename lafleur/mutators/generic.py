@@ -7,8 +7,6 @@ perturbing constants, changing container types, and injecting basic control
 flow structures like loops and guards.
 """
 
-from __future__ import annotations
-
 import ast
 import builtins
 import copy

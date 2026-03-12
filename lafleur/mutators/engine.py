@@ -7,8 +7,6 @@ the `SlicingMutator`, a meta-mutator designed to efficiently fuzz very large
 functions by operating on small, random slices of their body.
 """
 
-from __future__ import annotations
-
 import ast
 import pickle
 import random

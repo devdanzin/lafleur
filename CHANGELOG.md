@@ -101,6 +101,7 @@ All notable changes to this project should be documented in this file.
 - Removed redundant `from __future__ import annotations` from 18 files (Python 3.14+ doesn't need it), by @devdanzin.
 - Removed unnecessary shebangs from 23 package and test files, by @devdanzin.
 - Enabled ruff isort rule (`I`) and auto-sorted imports across 41 files; added `_dump_unparse_diagnostics` to `mutators/__init__.py` `__all__`, by @devdanzin.
+- Extracted per-mode handlers (`_handle_ancestry`, `_handle_descendants`, `_handle_mrca`, `_handle_forest`) and `_print_mode_stats` from `lineage.py main()`, by @devdanzin.
 - Extracted `_record_timeout_metadata()` and `_record_new_find()` from `_execute_single_mutation` in `orchestrator.py`, reducing the inner mutation loop to its essential logic, by @devdanzin.
 
 ### Enhanced

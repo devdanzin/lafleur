@@ -6,6 +6,7 @@ All notable changes to this project should be documented in this file.
 
 ### Added
 
+- Native JIT seed generation (`lafleur/jit_seeds.py`): `CorpusManager.generate_new_seed` now synthesizes uop-targeted hot-loop seeds in-process — porting fusil's `UOP_RECIPES` table plus a trimmed simple-value generator, and reusing lafleur's own evil-object generators (`mutators.utils.gen_*`) — instead of shelling out to the classic fusil executable. This removes the fragile external dependency for seeding, fixes the silent degradation to plain values (fusil's `lafleur.mutator` import had bit-rotted), and produces richer seeds, by @devdanzin.
 - Targeted testing CLI options: `--mutators` to filter the mutator pool and `--strategy` to force a specific mutation strategy, by @devdanzin.
 - Diagnostic introspection CLI options: `--keep-children` to retain all generated scripts, `--dry-run` for mutation-only mode, and `--list-mutators` to discover available mutators, by @devdanzin.
 - Diagnostic bounded-run CLI options: `--max-sessions`, `--max-mutations-per-session`, `--seed`, and `--workdir` for reproducible smoke tests and CI verification, by @devdanzin.

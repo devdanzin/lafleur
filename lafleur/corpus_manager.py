@@ -19,6 +19,8 @@ from typing import TYPE_CHECKING, Any, Callable
 
 from lafleur.coverage import CoverageManager, save_coverage_state
 from lafleur.health import FILE_SIZE_WARNING_THRESHOLD
+from lafleur.jit_seeds import generate_jit_seed
+from lafleur.mutation_controller import BOILERPLATE_END_MARKER, BOILERPLATE_START_MARKER
 from lafleur.types import (
     CorpusFileMetadata,
     HarnessCoverage,
@@ -431,51 +433,43 @@ class CorpusManager:
     def generate_new_seed(
         self, orchestrator_analyze_run_func: Callable, orchestrator_build_lineage_func: Callable
     ) -> None:
-        """Run a single generative session to create a new seed file."""
+        """Run a single generative session to create a new seed file.
+
+        The seed is generated natively (see :mod:`lafleur.jit_seeds`) rather than by
+        shelling out to the classic fusil executable. Only the JIT "core" is
+        synthesized here; it is wrapped with lafleur's boilerplate (which supplies the
+        ``sys`` import and the ``fuzzer_rng`` the evil objects reference), bracketed by
+        the standard ``FUSIL_BOILERPLATE`` markers so downstream analysis can strip it
+        back to the core. The generation RNG seed is drawn from the (optionally seeded)
+        global RNG and recorded as ``mutation_seed`` so the seed is reproducible.
+        """
         tmp_source = TMP_DIR / "gen_run.py"
         tmp_log = TMP_DIR / "gen_run.log"
 
-        python_executable = sys.executable
-        # Use fusil to generate a new file
-        command = [
-            python_executable,
-            self.fusil_path,
-            "--jit-fuzz",
-            "--jit-target-uop=ALL",
-            f"--source-output-path={tmp_source}",
-            "--classes-number=0",
-            "--functions-number=1",
-            "--methods-number=0",
-            "--objects-number=0",
-            "--sessions=1",
-            f"--python={self.target_python}",
-            "--no-jit-external-references",
-            "--no-threads",
-            "--no-async",
-            "--jit-loop-iterations=300",
-            "--no-numpy",
-            "--modules=encodings.ascii",
-            "--only-generate",
-            # "--keep-sessions",
-        ]
-        print(f"[*] Generating new seed with command: {' '.join(command)}")
+        seed_int = random.randrange(2**31)
         try:
-            result = subprocess.run(command, capture_output=True, env=FUZZING_ENV, timeout=120)
-            if result.returncode != 0:
-                print(
-                    f"[!] Seed generation failed (exit {result.returncode})",
-                    file=sys.stderr,
-                )
-                return
-        except subprocess.TimeoutExpired:
-            print("[!] Seed generation timed out after 120s", file=sys.stderr)
-            return
-        except OSError as e:
-            print(f"[!] Seed generation failed: {e}", file=sys.stderr)
+            core_code = generate_jit_seed(random.Random(seed_int), loop_iterations=300)
+        except Exception as e:  # generation is pure-Python; never let it abort the run
+            print(f"[!] Native seed generation failed: {e}", file=sys.stderr)
             return
 
-        if not tmp_source.exists():
-            print("[!] Seed generation produced no output file", file=sys.stderr)
+        boilerplate = self.get_boilerplate().rstrip()
+        if not boilerplate:
+            # Minimal self-contained boilerplate for a cold start (empty corpus): the
+            # native core only needs `sys` and `fuzzer_rng`.
+            boilerplate = f"{BOILERPLATE_START_MARKER}\nimport sys"
+        full_source = (
+            f"{boilerplate}\n"
+            f"import random\n"
+            f"fuzzer_rng = random.Random({seed_int})\n"
+            f"{BOILERPLATE_END_MARKER}\n"
+            f"{core_code}\n"
+        )
+        print(f"[*] Generating new seed natively (uop-targeted, seed={seed_int})")
+        try:
+            tmp_source.write_text(full_source, encoding="utf-8")
+        except OSError as e:
+            print(f"[!] Could not write generated seed: {e}", file=sys.stderr)
             return
 
         # Execute it to get a log (also using the configurable timeout)
@@ -508,7 +502,7 @@ class CorpusManager:
             parent_lineage_profile={},
             parent_id=None,
             mutation_info={"strategy": "generative_seed"},
-            mutation_seed=0,
+            mutation_seed=seed_int,
             parent_file_size=0,
             parent_lineage_edge_count=0,
         )

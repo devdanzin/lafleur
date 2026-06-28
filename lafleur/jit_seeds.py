@@ -38,6 +38,7 @@ NOT in scope for this MVP (later "better seeds" work): fusil's ``BUG_PATTERNS``
 
 from __future__ import annotations
 
+import ast
 import random
 from textwrap import dedent, indent
 from typing import Callable
@@ -626,8 +627,168 @@ def generate_bug_pattern_seed(
     )
 
 
+# ==============================================================================
+# Synthesize seed family (a compact, self-contained AST grammar)
+# ==============================================================================
+# Inspired by fusil's ``ASTPatternGenerator.generate_pattern`` but self-contained:
+# fusil's grammar emits calls into the fuzzed target module (which lafleur seeds
+# don't have), so this re-implements an equivalent grammar natively. Built with
+# ``ast`` so the output is guaranteed valid Python. Operands are int-only seeded
+# variables + the loop variable, so runs stay clean (the uop/bug-pattern families
+# already cover type chaos); the JIT value here is structural / data-flow variety.
+
+_SYNTH_BINOPS = (ast.Add, ast.Sub, ast.Mult, ast.BitAnd, ast.BitOr, ast.BitXor, ast.LShift)
+_SYNTH_CMPOPS = (ast.Lt, ast.Gt, ast.Eq, ast.NotEq, ast.LtE, ast.GtE)
+_SYNTH_CONSTS = (0, 1, 2, 3, 7, 255, -1, 1000)
+_SYNTH_MAX_DEPTH = 3
+
+
+class _SynthCtx:
+    """Mutable state for one synthesized pattern: rng, in-scope names, name counter."""
+
+    def __init__(self, rng: random.Random, names: list[str], prefix: str) -> None:
+        self.rng = rng
+        self.names = names
+        self.prefix = prefix
+        self._counter = 0
+
+    def fresh(self) -> str:
+        """Mint a new in-scope variable name."""
+        self._counter += 1
+        name = f"sv{self._counter}_{self.prefix}"
+        self.names.append(name)
+        return name
+
+
+def _synth_expr(ctx: _SynthCtx, depth: int = 0) -> ast.expr:
+    """A nested int arithmetic/bitwise expression over in-scope names + constants."""
+    if depth >= _SYNTH_MAX_DEPTH or ctx.rng.random() < 0.45:
+        if ctx.rng.random() < 0.7:
+            return ast.Name(id=ctx.rng.choice(ctx.names), ctx=ast.Load())
+        return ast.Constant(value=ctx.rng.choice(_SYNTH_CONSTS))
+    return ast.BinOp(
+        left=_synth_expr(ctx, depth + 1),
+        op=ctx.rng.choice(_SYNTH_BINOPS)(),
+        right=_synth_expr(ctx, depth + 1),
+    )
+
+
+def _synth_compare(ctx: _SynthCtx) -> ast.expr:
+    """A comparison expression, e.g. for an ``if`` test."""
+    return ast.Compare(
+        left=_synth_expr(ctx, 1),
+        ops=[ctx.rng.choice(_SYNTH_CMPOPS)()],
+        comparators=[_synth_expr(ctx, 1)],
+    )
+
+
+def _synth_block(ctx: _SynthCtx, depth: int, n: int) -> list[ast.stmt]:
+    """A non-empty list of ``n`` statements."""
+    stmts: list[ast.stmt] = []
+    for _ in range(n):
+        stmts.extend(_synth_stmt(ctx, depth))
+    return stmts or [ast.Pass()]
+
+
+def _synth_stmt(ctx: _SynthCtx, depth: int = 0) -> list[ast.stmt]:
+    """One synthesized statement (assignment / aug-assign / if / for / bare expr)."""
+    r = ctx.rng.random()
+    if depth < 2 and r < 0.18:  # if
+        return [
+            ast.If(
+                test=_synth_compare(ctx),
+                body=_synth_block(ctx, depth + 1, ctx.rng.randint(1, 2)),
+                orelse=[],
+            )
+        ]
+    if depth < 2 and r < 0.32:  # for over range(...)
+        loop = ctx.fresh()
+        rng_call = ast.Call(
+            func=ast.Name(id="range", ctx=ast.Load()),
+            args=[ast.Constant(value=ctx.rng.randint(2, 8))],
+            keywords=[],
+        )
+        return [
+            ast.For(
+                target=ast.Name(id=loop, ctx=ast.Store()),
+                iter=rng_call,
+                body=_synth_block(ctx, depth + 1, ctx.rng.randint(1, 2)),
+                orelse=[],
+            )
+        ]
+    if r < 0.55:  # augmented assignment to an existing name
+        return [
+            ast.AugAssign(
+                target=ast.Name(id=ctx.rng.choice(ctx.names), ctx=ast.Store()),
+                op=ctx.rng.choice(_SYNTH_BINOPS)(),
+                value=_synth_expr(ctx),
+            )
+        ]
+    if r < 0.85:  # assignment (reuse an existing name or mint a fresh one)
+        target = ctx.fresh() if ctx.rng.random() < 0.4 else ctx.rng.choice(ctx.names)
+        return [ast.Assign(targets=[ast.Name(id=target, ctx=ast.Store())], value=_synth_expr(ctx))]
+    return [ast.Expr(value=_synth_expr(ctx))]  # bare expression
+
+
+def generate_synthesize_seed(
+    rng: random.Random,
+    *,
+    loop_iterations: int = 300,
+    prefix: str = "s1",
+) -> str:
+    """Generate a structurally-diverse synthesized seed (the ``core_code``).
+
+    A handful of int variables are seeded, then a randomized block of
+    assignments / aug-assignments / comparisons / ``if`` / ``for`` statements runs
+    in a JIT-warming hot loop inside a harness function (called once).
+    """
+    seed_names = [f"seed{i}_{prefix}" for i in range(rng.randint(3, 5))]
+    loop_var = f"i_{prefix}"
+    ctx = _SynthCtx(rng, [*seed_names, loop_var], prefix)
+
+    body = _synth_block(ctx, depth=0, n=rng.randint(4, 9))
+    try_node = ast.Try(
+        body=body,
+        handlers=[
+            ast.ExceptHandler(
+                type=ast.Name(id="Exception", ctx=ast.Load()), name=None, body=[ast.Pass()]
+            )
+        ],
+        orelse=[],
+        finalbody=[],
+    )
+    for_node = ast.For(
+        target=ast.Name(id=loop_var, ctx=ast.Store()),
+        iter=ast.Call(
+            func=ast.Name(id="range", ctx=ast.Load()),
+            args=[ast.Constant(value=loop_iterations)],
+            keywords=[],
+        ),
+        body=[try_node],
+        orelse=[],
+    )
+    seed_assigns = [
+        ast.Assign(
+            targets=[ast.Name(id=name, ctx=ast.Store())],
+            value=ast.Constant(value=rng.choice(_SYNTH_CONSTS)),
+        )
+        for name in seed_names
+    ]
+    module = ast.Module(body=[*seed_assigns, for_node], type_ignores=[])
+    ast.fix_missing_locations(module)
+    code = ast.unparse(module)  # guaranteed-valid top-level statements
+
+    harness = f"synth_harness_{prefix}"
+    return (
+        f"# JIT seed: synthesized pattern\n"
+        f"def {harness}():\n"
+        f"{indent(code, '    ')}\n\n"
+        f"{harness}()\n"
+    )
+
+
 #: relative weights for the default family dispatch in ``generate_jit_seed``.
-_FAMILY_WEIGHTS = {"uop": 3, "bug_pattern": 2}
+_FAMILY_WEIGHTS = {"uop": 3, "bug_pattern": 2, "synthesize": 2}
 
 
 def generate_jit_seed(
@@ -658,6 +819,8 @@ def generate_jit_seed(
         return generate_bug_pattern_seed(
             rng, loop_iterations=loop_iterations, prefix=prefix or "p1"
         )
+    if family == "synthesize":
+        return generate_synthesize_seed(rng, loop_iterations=loop_iterations, prefix=prefix or "s1")
     raise ValueError(f"unknown seed family: {family!r}")
 
 
@@ -669,7 +832,10 @@ def main() -> None:
     parser.add_argument("--seed", type=int, default=None, help="RNG seed for reproducibility")
     parser.add_argument("--loop-iterations", type=int, default=300)
     parser.add_argument(
-        "--family", choices=("uop", "bug_pattern"), default=None, help="Force a seed family"
+        "--family",
+        choices=("uop", "bug_pattern", "synthesize"),
+        default=None,
+        help="Force a seed family",
     )
     args = parser.parse_args()
     rng = random.Random(args.seed)

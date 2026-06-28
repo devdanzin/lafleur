@@ -15,6 +15,7 @@ from lafleur.jit_seeds import (
     UOP_RECIPES,
     generate_bug_pattern_seed,
     generate_jit_seed,
+    generate_synthesize_seed,
     generate_uop_targeted_pattern,
 )
 
@@ -175,22 +176,61 @@ class TestBugPatternSeeds(unittest.TestCase):
             self.assertTrue(header.startswith("# JIT seed: bug pattern "))
 
 
+class TestSynthesizeSeeds(unittest.TestCase):
+    """The synthesize seed family renders to valid, deterministic Python."""
+
+    def test_generated_seeds_parse(self):
+        for s in range(30):
+            with self.subTest(seed=s):
+                ast.parse(generate_synthesize_seed(random.Random(s)))
+
+    def test_assembled_with_boilerplate_parses(self):
+        for s in range(10):
+            core = generate_synthesize_seed(random.Random(s))
+            full = f"import sys\nimport random\nfuzzer_rng = random.Random({s})\n{core}\n"
+            with self.subTest(seed=s):
+                ast.parse(full)
+
+    def test_harness_and_hot_loop(self):
+        code = generate_synthesize_seed(random.Random(2), loop_iterations=321, prefix="s1")
+        self.assertIn("def synth_harness_s1():", code)
+        self.assertIn("range(321)", code)
+        self.assertIn("synth_harness_s1()", code)
+
+    def test_deterministic_for_same_rng_seed(self):
+        a = generate_synthesize_seed(random.Random(99))
+        b = generate_synthesize_seed(random.Random(99))
+        self.assertEqual(a, b)
+
+
 class TestFamilyDispatch(unittest.TestCase):
     """generate_jit_seed dispatches across families and always yields valid Python."""
 
+    _HARNESS_MARKER = {
+        "uop_harness_": "uop",
+        "jit_harness_": "bug_pattern",
+        "synth_harness_": "synthesize",
+    }
+
+    def _family_of(self, code: str) -> str:
+        for marker, family in self._HARNESS_MARKER.items():
+            if marker in code:
+                return family
+        raise AssertionError(f"no known harness marker in seed:\n{code[:200]}")
+
     def test_explicit_families_parse(self):
-        for family in ("uop", "bug_pattern"):
+        for family in ("uop", "bug_pattern", "synthesize"):
             for s in range(8):
                 with self.subTest(family=family, seed=s):
                     ast.parse(generate_jit_seed(random.Random(s), family=family))
 
-    def test_default_dispatch_covers_both_families(self):
+    def test_default_dispatch_covers_all_families(self):
         seen = set()
-        for s in range(60):
+        for s in range(120):
             code = generate_jit_seed(random.Random(s))
             ast.parse(code)
-            seen.add("bug_pattern" if "jit_harness_" in code else "uop")
-        self.assertEqual(seen, {"uop", "bug_pattern"})
+            seen.add(self._family_of(code))
+        self.assertEqual(seen, {"uop", "bug_pattern", "synthesize"})
 
 
 if __name__ == "__main__":

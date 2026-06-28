@@ -29,6 +29,29 @@ FUZZING_ENV.update(
     }
 )
 
+# Repo root that contains the ``lafleur`` package (this file is ``lafleur/utils.py``).
+# Used to put lafleur on a target interpreter's PYTHONPATH so it can run
+# ``-m lafleur.driver`` even when lafleur isn't installed for that interpreter.
+LAFLEUR_PACKAGE_ROOT = str(Path(__file__).resolve().parent.parent)
+
+
+def ensure_lafleur_importable(env: dict[str, str]) -> dict[str, str]:
+    """Return a copy of ``env`` with the lafleur package root prepended to PYTHONPATH.
+
+    Session fuzzing and minimization run the persistent driver *in the target
+    interpreter* via ``-m lafleur.driver``. If that interpreter doesn't have lafleur
+    installed — e.g. a raw CPython build whose ``sys.path`` doesn't include the venv
+    where lafleur lives — the import fails and the session produces no coverage, so
+    every child silently scores 0.0. Prepending our own location makes the driver
+    importable regardless of how the target is set up. lafleur is pure Python, so this
+    is safe across interpreters of the same Python version family.
+    """
+    result = dict(env)
+    existing = result.get("PYTHONPATH", "")
+    parts = [LAFLEUR_PACKAGE_ROOT] + ([existing] if existing else [])
+    result["PYTHONPATH"] = os.pathsep.join(parts)
+    return result
+
 
 def load_json_file(path: Path) -> dict[str, Any] | None:
     """Load a JSON file, returning None if it doesn't exist or is invalid."""

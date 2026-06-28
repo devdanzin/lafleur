@@ -20,18 +20,20 @@ import time
 from pathlib import Path
 from typing import Any
 
-from lafleur.utils import FUZZING_ENV, load_json_file
+from lafleur.utils import FUZZING_ENV, ensure_lafleur_importable, load_json_file
 
 
 def _make_repro_env() -> dict[str, str]:
     """Create environment for crash reproduction.
 
-    Based on FUZZING_ENV but with verbose logging disabled for speed.
+    Based on FUZZING_ENV but with verbose logging disabled for speed. lafleur's
+    package root is added to PYTHONPATH so a target interpreter without lafleur
+    installed can still run the session driver (`-m lafleur.driver`); see #871.
     """
     env = FUZZING_ENV.copy()
     env["PYTHON_LLTRACE"] = "0"
     env["PYTHON_OPT_DEBUG"] = "0"
-    return env
+    return ensure_lafleur_importable(env)
 
 
 def extract_grep_pattern(metadata: dict[str, Any]) -> str:

@@ -6,6 +6,7 @@ TeeLogger, and ExecutionResult.
 """
 
 import json
+import os
 import tempfile
 import unittest
 from io import StringIO
@@ -13,9 +14,11 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from lafleur.utils import (
+    LAFLEUR_PACKAGE_ROOT,
     ExecutionResult,
     TeeLogger,
     _default_run_stats,
+    ensure_lafleur_importable,
     load_run_stats,
     save_run_stats,
 )
@@ -924,6 +927,32 @@ class TestExecutionResult(unittest.TestCase):
 
         self.assertEqual(result.parent_path, Path("/corpus/parent.py"))
         self.assertEqual(len(result.session_files), 2)
+
+
+class TestEnsureLafleurImportable(unittest.TestCase):
+    """ensure_lafleur_importable puts lafleur on a target's PYTHONPATH (#871)."""
+
+    def test_package_root_contains_lafleur(self):
+        # Sanity: the advertised root actually holds the lafleur package.
+        self.assertTrue((Path(LAFLEUR_PACKAGE_ROOT) / "lafleur" / "__init__.py").is_file())
+
+    def test_prepends_to_empty_pythonpath(self):
+        result = ensure_lafleur_importable({"PYTHON_JIT": "1"})
+        self.assertEqual(result["PYTHONPATH"], LAFLEUR_PACKAGE_ROOT)
+        # Other keys are preserved.
+        self.assertEqual(result["PYTHON_JIT"], "1")
+
+    def test_prepends_preserving_existing_pythonpath(self):
+        result = ensure_lafleur_importable({"PYTHONPATH": "/some/existing/path"})
+        self.assertEqual(
+            result["PYTHONPATH"],
+            LAFLEUR_PACKAGE_ROOT + os.pathsep + "/some/existing/path",
+        )
+
+    def test_does_not_mutate_input(self):
+        original = {"PYTHONPATH": "/x"}
+        ensure_lafleur_importable(original)
+        self.assertEqual(original, {"PYTHONPATH": "/x"})
 
 
 if __name__ == "__main__":

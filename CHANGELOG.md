@@ -86,6 +86,7 @@ All notable changes to this project should be documented in this file.
 
 ### Fixed
 
+- Mutated children are now assembled with a valid boilerplate that imports `sys` (plus `gc`/`collect`), so they no longer crash on the `[fN]` marker (`print(..., file=sys.stderr)`) before the harness runs. Corpus files are stored core-only, so `_extract_and_cache_boilerplate` cached an empty boilerplate and every child raised `NameError: name 'sys' is not defined` on its first line — producing 0 attributed coverage and a 0.0 score for *every* mutated child. `get_boilerplate()` now falls back to a shared `DEFAULT_BOILERPLATE`, and children also emit the `# FUSIL_BOILERPLATE_END` marker so an interesting child's core extracts cleanly, by @devdanzin.
 - Native JIT seeds now emit a `[fN]` harness marker so coverage is recorded: `parse_log_for_edge_coverage` ignores every uop until a marker sets the current harness id, so without it generated seeds (and all their children) showed 0 edges/UOPs and were judged uninteresting, by @devdanzin.
 - The `synthesize` seed family no longer emits `Mult`/`LShift`, which under feedback (`x *= x`, `x <<= x`) grew ints to multiple GB and made seeds extremely slow; `Add`/`Sub`/bitwise keep values bounded, by @devdanzin.
 - `analyze_run` no longer adds runs killed by SIGKILL/SIGTERM (`-9`/`-15`, i.e. timeout/OOM artifacts) to the corpus — it returns `NoChangeResult` instead of parsing the truncated log and keeping the seed, by @devdanzin.

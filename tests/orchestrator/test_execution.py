@@ -8,6 +8,7 @@ This module contains unit tests for:
 
 import ast
 import io
+import os
 import random
 import subprocess
 import unittest
@@ -673,6 +674,8 @@ class TestVerifyTargetCapabilities(unittest.TestCase):
         """Set up minimal ExecutionManager instance."""
         self.execution_manager = ExecutionManager.__new__(ExecutionManager)
         self.execution_manager.target_python = "/usr/bin/python3"
+        # The non-session verify path skips the session-driver preflight (#871).
+        self.execution_manager.session_fuzz = False
 
     def test_succeeds_with_jit_traces(self):
         """Test that verification succeeds when JIT traces are detected."""
@@ -730,6 +733,22 @@ class TestVerifyTargetCapabilities(unittest.TestCase):
                 self.assertEqual(env["PYTHON_LLTRACE"], "2")
                 self.assertEqual(env["PYTHON_OPT_DEBUG"], "4")
                 self.assertEqual(env["ASAN_OPTIONS"], "detect_leaks=0")
+
+    def test_session_fuzz_runs_driver_preflight(self):
+        """With --session-fuzz, verify also checks the target can import the driver."""
+        # Same mock satisfies both calls: JIT stimulus sees trace output in stderr,
+        # and the driver import check sees returncode 0.
+        self.execution_manager.session_fuzz = True
+        mock_result = subprocess.CompletedProcess(
+            args=[], returncode=0, stdout="", stderr="Optimized trace (length 7):"
+        )
+        with patch("subprocess.run", return_value=mock_result) as mock_run:
+            with patch("sys.stderr", new_callable=io.StringIO) as mock_stderr:
+                self.execution_manager.verify_target_capabilities()
+        # Two subprocesses: the JIT stimulus and the driver-import check.
+        self.assertEqual(mock_run.call_count, 2)
+        self.assertIn("import lafleur.driver", mock_run.call_args_list[1][0][0])
+        self.assertIn("Session driver import verified", mock_stderr.getvalue())
 
 
 class TestMakeDivergenceResult(unittest.TestCase):
@@ -1164,6 +1183,55 @@ class TestNoEkgFlag(unittest.TestCase):
 
                     cmd = mock_run.call_args[0][0]
                     self.assertNotIn("--no-ekg", cmd)
+
+
+class TestVerifySessionDriverImportable(unittest.TestCase):
+    """Preflight that the target can import lafleur.driver for --session-fuzz (#871)."""
+
+    def _manager(self) -> ExecutionManager:
+        return ExecutionManager(
+            target_python="/usr/bin/python3",
+            timeout=10,
+            artifact_manager=MagicMock(),
+            corpus_manager=MagicMock(),
+            session_fuzz=True,
+        )
+
+    def test_passes_when_import_succeeds(self):
+        manager = self._manager()
+        with patch("subprocess.run", return_value=MagicMock(returncode=0, stderr="", stdout="")):
+            manager._verify_session_driver_importable()  # must not raise
+
+    def test_injects_lafleur_onto_pythonpath(self):
+        from lafleur.utils import LAFLEUR_PACKAGE_ROOT
+
+        manager = self._manager()
+        with patch(
+            "subprocess.run", return_value=MagicMock(returncode=0, stderr="", stdout="")
+        ) as mock_run:
+            manager._verify_session_driver_importable()
+        env = mock_run.call_args.kwargs["env"]
+        self.assertIn(LAFLEUR_PACKAGE_ROOT, env["PYTHONPATH"].split(os.pathsep))
+        # And it actually checks the driver import.
+        self.assertIn("import lafleur.driver", mock_run.call_args[0][0])
+
+    def test_raises_clear_error_when_import_fails(self):
+        manager = self._manager()
+        fail = MagicMock(
+            returncode=1, stderr="ModuleNotFoundError: No module named 'lafleur'", stdout=""
+        )
+        with patch("subprocess.run", return_value=fail):
+            with self.assertRaises(RuntimeError) as ctx:
+                manager._verify_session_driver_importable()
+        msg = str(ctx.exception)
+        self.assertIn("session-fuzz", msg)
+        self.assertIn("lafleur.driver", msg)
+
+    def test_raises_on_timeout(self):
+        manager = self._manager()
+        with patch("subprocess.run", side_effect=subprocess.TimeoutExpired("cmd", 30)):
+            with self.assertRaises(RuntimeError):
+                manager._verify_session_driver_importable()
 
 
 if __name__ == "__main__":

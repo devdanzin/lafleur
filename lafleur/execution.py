@@ -20,7 +20,7 @@ from textwrap import dedent, indent
 from typing import TYPE_CHECKING
 
 from lafleur.coverage import OPTIMIZED_TRACE_REGEX, PROTO_TRACE_REGEX
-from lafleur.utils import FUZZING_ENV, ExecutionResult
+from lafleur.utils import FUZZING_ENV, ExecutionResult, ensure_lafleur_importable
 
 if TYPE_CHECKING:
     from lafleur.artifacts import ArtifactManager
@@ -530,6 +530,12 @@ class ExecutionManager:
                 cmd = [self.target_python, str(child_source_path)]
 
             coverage_env = self._build_env(jit=True, debug_logs=True)
+            if self.session_fuzz:
+                # The session driver runs `-m lafleur.driver` in the target interpreter;
+                # make sure that interpreter can import lafleur even if it isn't installed
+                # for it (e.g. a raw CPython build). Otherwise the import fails and every
+                # child silently scores 0.0 (#871).
+                coverage_env = ensure_lafleur_importable(coverage_env)
             with open(child_log_path, "w", encoding="utf-8") as log_file:
                 start_time = time.monotonic()
                 result = subprocess.run(
@@ -642,6 +648,9 @@ class ExecutionManager:
                 file=sys.stderr,
             )
 
+            if self.session_fuzz:
+                self._verify_session_driver_importable()
+
         except subprocess.TimeoutExpired:
             raise RuntimeError(
                 f"Target interpreter '{self.target_python}' timed out during verification check."
@@ -649,3 +658,46 @@ class ExecutionManager:
         except RuntimeError as e:
             print(e)
             sys.exit(1)
+
+    def _verify_session_driver_importable(self) -> None:
+        """Verify the target interpreter can import the session driver (#871).
+
+        Session fuzzing runs ``-m lafleur.driver`` in the target interpreter. We
+        prepend lafleur's location to PYTHONPATH so this normally just works, but if
+        the import still fails (e.g. a fundamentally incompatible interpreter) we abort
+        loudly here rather than letting every child silently score 0.0.
+        """
+        env = ensure_lafleur_importable(self._build_env(jit=True))
+        try:
+            result = subprocess.run(
+                [self.target_python, "-c", "import lafleur.driver"],
+                capture_output=True,
+                text=True,
+                env=env,
+                timeout=30,
+            )
+        except subprocess.TimeoutExpired:
+            raise RuntimeError(
+                f"Target interpreter '{self.target_python}' timed out importing "
+                "lafleur.driver (required for --session-fuzz)."
+            )
+
+        if result.returncode != 0:
+            error_msg = dedent(f"""
+                [!] CRITICAL: The target interpreter '{self.target_python}' cannot import
+                lafleur.driver, which --session-fuzz requires (it runs the persistent driver
+                in the target via `-m lafleur.driver`). Without it, every session child
+                produces no coverage and silently scores 0.0.
+
+                Troubleshooting:
+                1. Point --target-python at an interpreter that can import lafleur (e.g. the
+                   venv where lafleur is installed), or
+                2. Install lafleur for the target interpreter, or
+                3. Run without --session-fuzz.
+
+                Import error from the target:
+                {indent((result.stderr or result.stdout).strip()[-500:], "    ")}
+            """)
+            raise RuntimeError(error_msg)
+
+        print("  [+] Session driver import verified.", file=sys.stderr)

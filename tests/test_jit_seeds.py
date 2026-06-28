@@ -7,10 +7,13 @@ import random
 import unittest
 
 from lafleur import jit_seeds
+from lafleur.jit_bug_patterns import BUG_PATTERNS
 from lafleur.jit_seeds import (
     HAS_OBJECTS,
+    SELECTABLE_BUG_PATTERNS,
     SELECTABLE_UOPS,
     UOP_RECIPES,
+    generate_bug_pattern_seed,
     generate_jit_seed,
     generate_uop_targeted_pattern,
 )
@@ -87,19 +90,23 @@ class TestSeedGeneration(unittest.TestCase):
         self.assertNotEqual(a, b)
 
     def test_contains_harness_and_hot_loop(self):
-        code = generate_jit_seed(random.Random(7), loop_iterations=300, prefix="f1")
+        code = generate_jit_seed(random.Random(7), family="uop", loop_iterations=300, prefix="f1")
         self.assertIn("def uop_harness_f1():", code)
         self.assertIn("range(300)", code)
 
     def test_loop_iterations_respected(self):
-        code = generate_jit_seed(random.Random(0), loop_iterations=123)
+        code = generate_jit_seed(random.Random(0), family="uop", loop_iterations=123)
         self.assertIn("range(123)", code)
 
     def test_num_uops_bounds(self):
         # The header line records the selected uops; count them.
-        code = generate_jit_seed(random.Random(3), num_uops=(2, 2))
+        code = generate_jit_seed(random.Random(3), family="uop", num_uops=(2, 2))
         header = code.splitlines()[0]
         self.assertTrue(header.startswith("# JIT seed: targeted uops "))
+
+    def test_unknown_family_raises(self):
+        with self.assertRaises(ValueError):
+            generate_jit_seed(random.Random(0), family="nonsense")
 
 
 class TestObjectGeneratorWiring(unittest.TestCase):
@@ -121,6 +128,69 @@ class TestObjectGeneratorWiring(unittest.TestCase):
         # The unknown-recipe path and "any"/object fallback must still yield valid code.
         setup, body = generate_uop_targeted_pattern(["_BINARY_OP_ADD_INT"], random.Random(0))
         ast.parse(f"{setup}\n{body}")
+
+
+class TestBugPatternSeeds(unittest.TestCase):
+    """The curated bug-pattern seed family renders to valid, deterministic Python."""
+
+    _MODULE_COUPLED = {"generator_method_call", "evil_deep_calls_correctness"}
+
+    def test_module_coupled_patterns_excluded(self):
+        # Patterns that call into a fuzzed target module must not be selectable.
+        for name in self._MODULE_COUPLED:
+            self.assertIn(name, BUG_PATTERNS)
+            self.assertNotIn(name, SELECTABLE_BUG_PATTERNS)
+        self.assertEqual(set(SELECTABLE_BUG_PATTERNS), set(BUG_PATTERNS) - self._MODULE_COUPLED)
+
+    def test_every_selectable_pattern_renders_and_parses(self):
+        # The key risk: a template must fill + wrap into valid Python.
+        for name in SELECTABLE_BUG_PATTERNS:
+            for s in range(4):
+                with self.subTest(pattern=name, seed=s):
+                    code = generate_bug_pattern_seed(random.Random(s), name=name)
+                    ast.parse(code)
+
+    def test_assembled_pattern_with_boilerplate_parses(self):
+        # Patterns reference sys / fuzzer_rng from boilerplate; assembled form parses.
+        for name in SELECTABLE_BUG_PATTERNS:
+            core = generate_bug_pattern_seed(random.Random(0), name=name)
+            full = f"import sys\nimport random\nfuzzer_rng = random.Random(0)\n{core}\n"
+            with self.subTest(pattern=name):
+                ast.parse(full)
+
+    def test_harness_wrapped_and_called(self):
+        code = generate_bug_pattern_seed(random.Random(1), name="decref_escapes", prefix="p1")
+        self.assertIn("def jit_harness_p1():", code)
+        self.assertIn("jit_harness_p1()", code)
+
+    def test_deterministic_for_same_rng_seed(self):
+        a = generate_bug_pattern_seed(random.Random(5), name="isinstance_patch")
+        b = generate_bug_pattern_seed(random.Random(5), name="isinstance_patch")
+        self.assertEqual(a, b)
+
+    def test_random_pattern_selection_only_uses_selectable(self):
+        for s in range(30):
+            code = generate_bug_pattern_seed(random.Random(s))
+            header = code.splitlines()[0]
+            self.assertTrue(header.startswith("# JIT seed: bug pattern "))
+
+
+class TestFamilyDispatch(unittest.TestCase):
+    """generate_jit_seed dispatches across families and always yields valid Python."""
+
+    def test_explicit_families_parse(self):
+        for family in ("uop", "bug_pattern"):
+            for s in range(8):
+                with self.subTest(family=family, seed=s):
+                    ast.parse(generate_jit_seed(random.Random(s), family=family))
+
+    def test_default_dispatch_covers_both_families(self):
+        seen = set()
+        for s in range(60):
+            code = generate_jit_seed(random.Random(s))
+            ast.parse(code)
+            seen.add("bug_pattern" if "jit_harness_" in code else "uop")
+        self.assertEqual(seen, {"uop", "bug_pattern"})
 
 
 if __name__ == "__main__":

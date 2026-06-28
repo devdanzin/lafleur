@@ -42,6 +42,8 @@ import random
 from textwrap import dedent, indent
 from typing import Callable
 
+from lafleur.jit_bug_patterns import BUG_PATTERNS
+
 # The object/"evil" generators already live in lafleur. Map each object "kind" to
 # the lafleur generator that realizes it; the object_with_* variants all use the
 # generic simple object (it has .x, .get_value, and __getitem__). When this module
@@ -294,6 +296,13 @@ UOP_RECIPES: dict[str, dict] = {
 #: uops safe to drop into a plain hot-loop harness (see _YIELD_VALUE note above).
 SELECTABLE_UOPS: tuple[str, ...] = tuple(k for k in UOP_RECIPES if k != "_YIELD_VALUE")
 
+# Two curated patterns call into a fuzzed target module that lafleur seeds don't have.
+_MODULE_COUPLED_PATTERNS = frozenset({"generator_method_call", "evil_deep_calls_correctness"})
+#: bug patterns usable as self-contained seeds (module-coupled ones excluded).
+SELECTABLE_BUG_PATTERNS: tuple[str, ...] = tuple(
+    name for name in BUG_PATTERNS if name not in _MODULE_COUPLED_PATTERNS
+)
+
 # Concrete kinds that "any" can expand to.
 _ANY_SIMPLE = ("int", "float", "str", "list", "tuple", "dict", "bool", "none")
 _ANY_KINDS = _ANY_SIMPLE + tuple(_OBJECT_GENERATORS)
@@ -503,20 +512,14 @@ def generate_uop_targeted_pattern(uop_names: list[str], rng: random.Random) -> t
     return setup_code, body_code
 
 
-def generate_jit_seed(
-    rng: random.Random | None = None,
+def generate_uop_seed(
+    rng: random.Random,
     *,
     num_uops: tuple[int, int] = (3, 7),
     loop_iterations: int = 300,
     prefix: str = "f1",
 ) -> str:
-    """
-    Generate one JIT seed (the corpus ``core_code``).
-
-    The result assumes lafleur's boilerplate is prepended at run time (it provides
-    ``import sys`` and ``fuzzer_rng``). Deterministic for a given ``rng`` seed.
-    """
-    rng = rng or random.Random()
+    """Generate a uop-targeted hot-loop seed (the ``core_code``)."""
     uops = rng.choices(SELECTABLE_UOPS, k=rng.randint(*num_uops))
     setup_code, body_code = generate_uop_targeted_pattern(uops, rng)
 
@@ -535,6 +538,129 @@ def generate_jit_seed(
     )
 
 
+# Tricky "corruption payloads" (flip a variable's type/value mid-loop) and numeric
+# interesting values + simple expressions used to fill the bug-pattern templates.
+_CORRUPTION_PAYLOADS = (
+    "None",
+    "b'corrupt'",
+    "'corrupt'",
+    "3.14",
+    "[]",
+    "()",
+    "object()",
+    "float('nan')",
+)
+_NUMERIC_INTERESTING = (
+    "0",
+    "1",
+    "-1",
+    "2",
+    "255",
+    "2**31",
+    "2**63",
+    "10**18",
+    "1.5",
+    "-1.5",
+    "float('inf')",
+)
+_BUG_EXPRESSIONS = ("{v} + 1", "{v} * 2", "{v} - 3", "{v} % 7", "{v} & 255", "{v} ^ 1")
+
+
+def _fill_bug_pattern(name: str, rng: random.Random, loop_iterations: int, prefix: str) -> dict:
+    """Build the placeholder substitution dict for a bug-pattern template.
+
+    Supplies the union of placeholders used by the selectable patterns with
+    self-contained values; ``str.format`` ignores any extra keys.
+    """
+    loop_var = f"i_{prefix}"
+    sub: dict[str, object] = {
+        "prefix": prefix,
+        "loop_var": loop_var,
+        "loop_iterations": loop_iterations,
+        "trigger_iteration": rng.randint(loop_iterations // 3, max(2, loop_iterations - 2)),
+        "corruption_payload": rng.choice(_CORRUPTION_PAYLOADS),
+        "expression": rng.choice(_BUG_EXPRESSIONS).format(v=loop_var),
+        "inheritance_depth": rng.randint(5, 50),
+        "str_d": _gen_str(rng),
+        "val_a": rng.choice(_NUMERIC_INTERESTING),
+        "val_b": rng.choice(_NUMERIC_INTERESTING),
+        "val_c": rng.choice(_NUMERIC_INTERESTING),
+    }
+    if name == "many_vars_base":
+        n = 260
+        sub["var_definitions"] = "\n".join(f"var_{i}_{prefix} = {i}" for i in range(n))
+        sub["expression"] = f"var_0_{prefix} + var_{n - 1}_{prefix}"
+    return sub
+
+
+def generate_bug_pattern_seed(
+    rng: random.Random,
+    *,
+    name: str | None = None,
+    loop_iterations: int = 300,
+    prefix: str = "p1",
+) -> str:
+    """Generate a seed from a curated JIT bug pattern (the ``core_code``).
+
+    The template's ``setup_code`` + ``body_code`` contain ``return`` and their own
+    hot loop, so they are wrapped in a harness function that is called once.
+    """
+    name = name or rng.choice(SELECTABLE_BUG_PATTERNS)
+    pattern = BUG_PATTERNS[name]
+    sub = _fill_bug_pattern(name, rng, loop_iterations, prefix)
+
+    # Templates have inconsistent base indentation; dedent each before wrapping.
+    setup_code = dedent(pattern.get("setup_code", "")).format(**sub)
+    body_code = dedent(pattern.get("body_code", "")).format(**sub)
+    inner = f"{setup_code}\n{body_code}".strip("\n")
+
+    harness = f"jit_harness_{prefix}"
+    return (
+        f"# JIT seed: bug pattern {name!r}\n"
+        f"def {harness}():\n"
+        f"    try:\n"
+        f"{indent(inner, '        ')}\n"
+        f"    except Exception:\n"
+        f"        pass\n\n"
+        f"{harness}()\n"
+    )
+
+
+#: relative weights for the default family dispatch in ``generate_jit_seed``.
+_FAMILY_WEIGHTS = {"uop": 3, "bug_pattern": 2}
+
+
+def generate_jit_seed(
+    rng: random.Random | None = None,
+    *,
+    family: str | None = None,
+    num_uops: tuple[int, int] = (3, 7),
+    loop_iterations: int = 300,
+    prefix: str | None = None,
+) -> str:
+    """
+    Generate one JIT seed (the corpus ``core_code``).
+
+    ``family`` selects the seed family (``"uop"`` or ``"bug_pattern"``); when
+    ``None`` one is chosen at random (weighted by ``_FAMILY_WEIGHTS``). The result
+    assumes lafleur's boilerplate is prepended at run time (it provides ``import
+    sys`` and ``fuzzer_rng``). Deterministic for a given ``rng`` seed.
+    """
+    rng = rng or random.Random()
+    if family is None:
+        families = list(_FAMILY_WEIGHTS)
+        family = rng.choices(families, weights=[_FAMILY_WEIGHTS[f] for f in families])[0]
+    if family == "uop":
+        return generate_uop_seed(
+            rng, num_uops=num_uops, loop_iterations=loop_iterations, prefix=prefix or "f1"
+        )
+    if family == "bug_pattern":
+        return generate_bug_pattern_seed(
+            rng, loop_iterations=loop_iterations, prefix=prefix or "p1"
+        )
+    raise ValueError(f"unknown seed family: {family!r}")
+
+
 def main() -> None:
     """CLI demo: print one seed (optionally seeded for reproducibility)."""
     import argparse
@@ -542,9 +668,12 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Generate a JIT corpus seed.")
     parser.add_argument("--seed", type=int, default=None, help="RNG seed for reproducibility")
     parser.add_argument("--loop-iterations", type=int, default=300)
+    parser.add_argument(
+        "--family", choices=("uop", "bug_pattern"), default=None, help="Force a seed family"
+    )
     args = parser.parse_args()
     rng = random.Random(args.seed)
-    print(generate_jit_seed(rng, loop_iterations=args.loop_iterations))
+    print(generate_jit_seed(rng, family=args.family, loop_iterations=args.loop_iterations))
 
 
 if __name__ == "__main__":

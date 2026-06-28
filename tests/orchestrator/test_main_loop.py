@@ -230,8 +230,8 @@ class TestRunEvolutionaryLoop(unittest.TestCase):
                         self.orchestrator.corpus_manager.generate_new_seed.call_count, 3
                     )
 
-    def test_warns_when_fusil_path_invalid(self):
-        """Test that warning is printed when fusil path is invalid."""
+    def test_bootstraps_natively_when_fusil_path_invalid(self):
+        """An invalid/absent --fusil-path no longer blocks seeding: bootstrap is native."""
         self.orchestrator.coverage_manager.state = {"per_file_coverage": {}}
         self.orchestrator.corpus_manager.fusil_path_is_valid = False
         self.orchestrator.fusil_path = "/invalid/path/to/fusil"
@@ -241,13 +241,16 @@ class TestRunEvolutionaryLoop(unittest.TestCase):
             with patch("sys.exit") as mock_exit:
                 self.orchestrator.run_evolutionary_loop()
 
-                stderr_output = mock_stderr.getvalue()
-                self.assertIn("WARNING: Cannot generate new seed files", stderr_output)
-                self.assertIn("/invalid/path/to/fusil", stderr_output)
-                mock_exit.assert_called_once_with(1)
+        # Native bootstrap runs regardless of the fusil path; no warning, no halt.
+        self.assertEqual(
+            self.orchestrator.corpus_manager.generate_new_seed.call_count,
+            self.orchestrator.min_corpus_files,
+        )
+        mock_exit.assert_not_called()
+        self.assertNotIn("Cannot generate new seed files", mock_stderr.getvalue())
 
-    def test_exits_when_corpus_empty_and_no_seeder(self):
-        """Test that sys.exit is called when corpus is empty with no seeder."""
+    def test_no_halt_when_corpus_empty_and_no_fusil(self):
+        """An empty corpus with no fusil path bootstraps natively instead of halting."""
         self.orchestrator.coverage_manager.state = {"per_file_coverage": {}}
         self.orchestrator.corpus_manager.fusil_path_is_valid = False
         self.orchestrator.corpus_manager.select_parent = MagicMock(return_value=None)
@@ -256,9 +259,12 @@ class TestRunEvolutionaryLoop(unittest.TestCase):
             with patch("sys.exit") as mock_exit:
                 self.orchestrator.run_evolutionary_loop()
 
-                stderr_output = mock_stderr.getvalue()
-                self.assertIn("CRITICAL: The corpus is empty", stderr_output)
-                mock_exit.assert_called_once_with(1)
+        mock_exit.assert_not_called()
+        self.assertNotIn("CRITICAL: The corpus is empty", mock_stderr.getvalue())
+        self.assertEqual(
+            self.orchestrator.corpus_manager.generate_new_seed.call_count,
+            self.orchestrator.min_corpus_files,
+        )
 
     # def test_proceeds_with_existing_files_when_seeder_unavailable(self):
     #     """Test that loop proceeds when corpus has files but below minimum."""

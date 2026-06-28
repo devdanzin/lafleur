@@ -345,15 +345,12 @@ class TestCorpusBootstrappingIntegration(unittest.TestCase):
         os.chdir(self.original_cwd)
         shutil.rmtree(self.test_dir)
 
-    def test_bootstraps_empty_corpus_with_seeder(self):
-        """Orchestrator bootstraps empty corpus using fusil seeder."""
+    def test_bootstraps_empty_corpus_natively(self):
+        """Orchestrator bootstraps an empty corpus via native seeding (no fusil needed)."""
         # Clear corpus and coverage state
         for f in Path("corpus").glob("*.py"):
             f.unlink()
         self.orchestrator.coverage_manager.state["per_file_coverage"] = {}
-
-        # Mark fusil path as valid
-        self.orchestrator.corpus_manager.fusil_path_is_valid = True
 
         iterations = 0
 
@@ -381,22 +378,23 @@ class TestCorpusBootstrappingIntegration(unittest.TestCase):
             # Verify generate_new_seed was called 5 times (min_corpus_files)
             self.assertEqual(mock_generate.call_count, 5)
 
-    def test_warns_when_corpus_empty_and_no_seeder(self):
-        """Orchestrator warns and exits when corpus empty and no seeder available."""
-        # Ensure corpus is empty
+    def test_bootstrap_does_not_halt_without_fusil(self):
+        """Empty corpus + no fusil path bootstraps natively instead of halting."""
+        # Ensure corpus is empty; the fixture's orchestrator has fusil_path=None.
         for f in Path("corpus").glob("*.py"):
             f.unlink()
+        self.orchestrator.coverage_manager.state["per_file_coverage"] = {}
 
-        with patch("sys.stdout"):
+        with patch.object(
+            self.orchestrator.corpus_manager, "generate_new_seed", return_value=None
+        ) as mock_generate:
             with patch("sys.exit") as mock_exit:
-                # Set select_parent to return None to trigger empty corpus path
-                self.orchestrator.corpus_manager.select_parent = MagicMock(return_value=None)
-                try:
-                    self.orchestrator.run_evolutionary_loop()
-                except SystemExit:
-                    pass
+                # The mocked seeder adds no files, so the loop returns once the corpus
+                # is found empty (select_parent -> None) -- without any sys.exit halt.
+                self.orchestrator.run_evolutionary_loop()
 
-        mock_exit.assert_called_once()
+        self.assertEqual(mock_generate.call_count, 5)
+        mock_exit.assert_not_called()
 
 
 class TestMutationCycleIntegration(unittest.TestCase):

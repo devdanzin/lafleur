@@ -329,44 +329,22 @@ class LafleurOrchestrator:
         needed = self.min_corpus_files - current_corpus_size
 
         if needed > 0:
+            # Seed generation is native (in-process; see lafleur.jit_seeds), so it is
+            # always available -- no external fusil executable is required and there is
+            # no empty-corpus halt.
             print(
-                f"[*] Corpus size ({current_corpus_size}) is less than minimum ({self.min_corpus_files}). Need to generate {needed} more file(s)."
+                f"[*] Corpus size ({current_corpus_size}) is less than minimum "
+                f"({self.min_corpus_files}). Generating {needed} more seed file(s) natively..."
             )
-
-            if not self.corpus_manager.fusil_path_is_valid:
-                print("[!] WARNING: Cannot generate new seed files.", file=sys.stderr)
-                if self.fusil_path:
-                    print(
-                        f"    Reason: Provided --fusil-path '{self.fusil_path}' is not a valid executable file.",
-                        file=sys.stderr,
-                    )
-                else:
-                    print(
-                        "    Reason: The --fusil-path argument was not provided.", file=sys.stderr
-                    )
-
-                if current_corpus_size > 0:
-                    print(
-                        f"[*] Proceeding with the {current_corpus_size} existing file(s). To enforce the minimum, please provide a valid path.",
-                        file=sys.stderr,
-                    )
-                else:
-                    print(
-                        "[!!!] CRITICAL: The corpus is empty and no valid seeder is available. Halting.",
-                        file=sys.stderr,
-                    )
-                    sys.exit(1)  # Unrecoverable state
-            else:
-                # Seeder is available, generate the needed files
-                print("[*] Starting corpus generation phase...")
-                for _ in range(needed):
-                    self.corpus_manager.generate_new_seed(
-                        self.scoring_manager.analyze_run,
-                        self.scoring_manager._build_lineage_profile,
-                    )
-                print(
-                    f"[+] Corpus generation complete. New size: {len(self.coverage_manager.state['per_file_coverage'])}."
+            for _ in range(needed):
+                self.corpus_manager.generate_new_seed(
+                    self.scoring_manager.analyze_run,
+                    self.scoring_manager._build_lineage_profile,
                 )
+            print(
+                f"[+] Corpus generation complete. New size: "
+                f"{len(self.coverage_manager.state['per_file_coverage'])}."
+            )
 
         print("[+] Starting Deep Fuzzer Evolutionary Loop. Press Ctrl+C to stop.")
         try:
@@ -1039,7 +1017,8 @@ def main() -> None:
         "--fusil-path",
         type=Path,
         default=None,
-        help="The absolute path to the classic fusil executable (fusil-python-threaded).",
+        help="Deprecated and unused: seed generation is now native (see lafleur.jit_seeds). "
+        "Accepted for backward compatibility.",
     )
     parser.add_argument(
         "--min-corpus-files",

@@ -107,6 +107,7 @@ All notable changes to this project should be documented in this file.
 
 ### Enhanced
 
+- Native JIT seeding is now reachable without `--fusil-path`: `run_evolutionary_loop` no longer gates corpus bootstrapping on `fusil_path_is_valid` and no longer halts an empty corpus when no fusil executable is provided — it always bootstraps in-process via `generate_new_seed`. `--fusil-path` is now a deprecated, accepted-but-unused option, by @devdanzin.
 - Updated CLAUDE.md: renamed stale `coverage_parser.py` reference to `coverage.py`, added 6 missing modules (`analysis.py`, `health.py`, `learning.py`, `metadata.py`, `types.py`, `uop_names.py`) to the project structure, by @devdanzin.
 - Guarded `psutil.Process().memory_info()` call in telemetry (`artifacts.py`) with try/except to prevent crashes on edge-case process states, by @devdanzin.
 - Standardized CLI path arguments to `type=Path` in `orchestrator.py`, `jit_tuner.py`, `triage.py`, and `report.py`, removing redundant `Path()` wrapping at call sites, by @devdanzin.

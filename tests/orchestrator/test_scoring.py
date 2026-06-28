@@ -386,6 +386,46 @@ class TestAnalyzeRunMutationInfo(unittest.TestCase):
         self.assertNotIn("jit_stats", caller_mutation_info)
 
 
+class TestAnalyzeRunKilledRun(unittest.TestCase):
+    """analyze_run rejects runs killed by SIGKILL/SIGTERM (timeout/OOM artifacts)."""
+
+    def setUp(self):
+        self.coverage_manager = MagicMock()
+        self.coverage_manager.state = {"per_file_coverage": {}}
+        self.artifact_manager = MagicMock()
+        self.artifact_manager.check_for_crash.return_value = False
+        self.corpus_manager = MagicMock()
+        self.corpus_manager.known_hashes = set()
+        self.scoring_manager = ScoringManager(
+            coverage_manager=self.coverage_manager,
+            artifact_manager=self.artifact_manager,
+            corpus_manager=self.corpus_manager,
+            get_core_code_func=lambda code: code,
+            run_stats={"divergences_found": 0},
+        )
+
+    @patch("lafleur.scoring.parse_log_for_edge_coverage")
+    def test_killed_run_is_not_added(self, mock_parse_coverage):
+        for rc in (-9, -15):  # SIGKILL, SIGTERM
+            with self.subTest(returncode=rc):
+                exec_result = MagicMock()
+                exec_result.is_divergence = False
+                exec_result.log_path.read_text.return_value = "truncated log"
+                exec_result.returncode = rc
+                result = self.scoring_manager.analyze_run(
+                    exec_result=exec_result,
+                    parent_lineage_profile={},
+                    parent_id=None,
+                    mutation_info={},
+                    mutation_seed=0,
+                    parent_file_size=0,
+                    parent_lineage_edge_count=0,
+                )
+                self.assertEqual(result.status, "NO_CHANGE")
+        # Rejected before any coverage parsing of the truncated log.
+        mock_parse_coverage.assert_not_called()
+
+
 class TestPrepareNewCoverageResult(unittest.TestCase):
     """Test the extracted _prepare_new_coverage_result method."""
 

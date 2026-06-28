@@ -465,7 +465,7 @@ class CorpusManager:
             f"{BOILERPLATE_END_MARKER}\n"
             f"{core_code}\n"
         )
-        print(f"[*] Generating new seed natively (uop-targeted, seed={seed_int})")
+        print(f"[*] Generating new seed natively (seed={seed_int})")
         try:
             tmp_source.write_text(full_source, encoding="utf-8")
         except OSError as e:

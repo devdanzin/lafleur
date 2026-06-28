@@ -513,6 +513,18 @@ def generate_uop_targeted_pattern(uop_names: list[str], rng: random.Random) -> t
     return setup_code, body_code
 
 
+def _harness_marker(label: str) -> str:
+    """A ``[fN]`` marker line so lafleur's coverage parser records the seed's coverage.
+
+    ``parse_log_for_edge_coverage`` ignores every uop until a ``[fN]`` marker
+    (``HARNESS_MARKER_REGEX``) sets the current harness id, so each seed must print
+    one (to stderr, which lafleur merges into the run log) before its hot loop runs.
+    The label is also a human-readable note of what the seed targets. ``sys`` is
+    provided by the prepended boilerplate at run time.
+    """
+    return f'print("[f1] JIT seed: {label}", file=sys.stderr)\n'
+
+
 def generate_uop_seed(
     rng: random.Random,
     *,
@@ -528,6 +540,7 @@ def generate_uop_seed(
     loop_var = f"_loop_{prefix}"
     return (
         f"# JIT seed: targeted uops {uops}\n"
+        f"{_harness_marker('uop')}"
         f"{setup_code}\n\n"
         f"def {harness}():\n"
         f"{indent(body_code, '    ')}\n\n"
@@ -618,6 +631,7 @@ def generate_bug_pattern_seed(
     harness = f"jit_harness_{prefix}"
     return (
         f"# JIT seed: bug pattern {name!r}\n"
+        f"{_harness_marker('bug_pattern ' + name)}"
         f"def {harness}():\n"
         f"    try:\n"
         f"{indent(inner, '        ')}\n"
@@ -637,7 +651,13 @@ def generate_bug_pattern_seed(
 # variables + the loop variable, so runs stay clean (the uop/bug-pattern families
 # already cover type chaos); the JIT value here is structural / data-flow variety.
 
-_SYNTH_BINOPS = (ast.Add, ast.Sub, ast.Mult, ast.BitAnd, ast.BitOr, ast.BitXor, ast.LShift)
+# NOTE: deliberately excludes Mult and LShift. With feedback (e.g. `x *= x` or
+# `x <<= x`, which the grammar can emit since an assignment/aug-assignment target
+# may also be an operand) those grow ints exponentially in the hot loop -> multi-GB
+# memory and very slow runs. Add/Sub/bitwise keep values bounded (<= ~2**300, a few
+# bytes) even under feedback. The uop and bug-pattern families cover mult/shift uops
+# with fixed (non-feedback) operands.
+_SYNTH_BINOPS = (ast.Add, ast.Sub, ast.BitAnd, ast.BitOr, ast.BitXor)
 _SYNTH_CMPOPS = (ast.Lt, ast.Gt, ast.Eq, ast.NotEq, ast.LtE, ast.GtE)
 _SYNTH_CONSTS = (0, 1, 2, 3, 7, 255, -1, 1000)
 _SYNTH_MAX_DEPTH = 3
@@ -781,6 +801,7 @@ def generate_synthesize_seed(
     harness = f"synth_harness_{prefix}"
     return (
         f"# JIT seed: synthesized pattern\n"
+        f"{_harness_marker('synthesize')}"
         f"def {harness}():\n"
         f"{indent(code, '    ')}\n\n"
         f"{harness}()\n"

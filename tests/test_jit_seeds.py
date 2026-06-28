@@ -4,6 +4,7 @@ Unit tests for lafleur/jit_seeds.py (native JIT seed generation).
 
 import ast
 import random
+import re
 import unittest
 
 from lafleur import jit_seeds
@@ -160,9 +161,10 @@ class TestBugPatternSeeds(unittest.TestCase):
                 ast.parse(full)
 
     def test_harness_wrapped_and_called(self):
+        # Harness is named uop_harness_* so the mutators actually mutate it (#869).
         code = generate_bug_pattern_seed(random.Random(1), name="decref_escapes", prefix="p1")
-        self.assertIn("def jit_harness_p1():", code)
-        self.assertIn("jit_harness_p1()", code)
+        self.assertIn("def uop_harness_p1():", code)
+        self.assertIn("uop_harness_p1()", code)
 
     def test_deterministic_for_same_rng_seed(self):
         a = generate_bug_pattern_seed(random.Random(5), name="isinstance_patch")
@@ -192,10 +194,11 @@ class TestSynthesizeSeeds(unittest.TestCase):
                 ast.parse(full)
 
     def test_harness_and_hot_loop(self):
+        # Harness is named uop_harness_* so the mutators actually mutate it (#869).
         code = generate_synthesize_seed(random.Random(2), loop_iterations=321, prefix="s1")
-        self.assertIn("def synth_harness_s1():", code)
+        self.assertIn("def uop_harness_s1():", code)
         self.assertIn("range(321)", code)
-        self.assertIn("synth_harness_s1()", code)
+        self.assertIn("uop_harness_s1()", code)
 
     def test_deterministic_for_same_rng_seed(self):
         a = generate_synthesize_seed(random.Random(99))
@@ -214,17 +217,19 @@ class TestSynthesizeSeeds(unittest.TestCase):
 class TestFamilyDispatch(unittest.TestCase):
     """generate_jit_seed dispatches across families and always yields valid Python."""
 
-    _HARNESS_MARKER = {
-        "uop_harness_": "uop",
-        "jit_harness_": "bug_pattern",
-        "synth_harness_": "synthesize",
+    # All families now share the `uop_harness_*` name (so the mutators pick them up,
+    # #869), so identify the family by its `# JIT seed: …` comment header instead.
+    _HEADER_MARKER = {
+        "# JIT seed: targeted uops": "uop",
+        "# JIT seed: bug pattern": "bug_pattern",
+        "# JIT seed: synthesized pattern": "synthesize",
     }
 
     def _family_of(self, code: str) -> str:
-        for marker, family in self._HARNESS_MARKER.items():
+        for marker, family in self._HEADER_MARKER.items():
             if marker in code:
                 return family
-        raise AssertionError(f"no known harness marker in seed:\n{code[:200]}")
+        raise AssertionError(f"no known header marker in seed:\n{code[:200]}")
 
     def test_explicit_families_parse(self):
         for family in ("uop", "bug_pattern", "synthesize"):
@@ -247,6 +252,21 @@ class TestFamilyDispatch(unittest.TestCase):
             ast.parse(code)
             seen.add(self._family_of(code))
         self.assertEqual(seen, {"uop", "bug_pattern", "synthesize"})
+
+    def test_all_families_define_a_uop_harness(self):
+        # The mutators, _get_nodes_from_parent, and minimize.py all key on a function
+        # named uop_harness_f<N>; if any family uses a different name its seeds are never
+        # mutated (#869). Guard every family against that regression.
+        for family in ("uop", "bug_pattern", "synthesize"):
+            for s in range(10):
+                code = generate_jit_seed(random.Random(s), family=family)
+                tree = ast.parse(code)
+                harness_names = [n.name for n in tree.body if isinstance(n, ast.FunctionDef)]
+                with self.subTest(family=family, seed=s):
+                    self.assertTrue(
+                        any(re.fullmatch(r"uop_harness_f\d+", n) for n in harness_names),
+                        f"{family} seed has no uop_harness_f<N> function: {harness_names}",
+                    )
 
 
 if __name__ == "__main__":

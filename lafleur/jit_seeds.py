@@ -612,7 +612,7 @@ def generate_bug_pattern_seed(
     *,
     name: str | None = None,
     loop_iterations: int = 300,
-    prefix: str = "p1",
+    prefix: str = "f1",
 ) -> str:
     """Generate a seed from a curated JIT bug pattern (the ``core_code``).
 
@@ -628,7 +628,10 @@ def generate_bug_pattern_seed(
     body_code = dedent(pattern.get("body_code", "")).format(**sub)
     inner = f"{setup_code}\n{body_code}".strip("\n")
 
-    harness = f"jit_harness_{prefix}"
+    # Named `uop_harness_*` (not `jit_harness_*`) so the mutators, _get_nodes_from_parent,
+    # and minimize.py — which all key on `uop_harness`/`uop_harness_f\d+` — actually pick it
+    # up; otherwise bug-pattern parents are skipped and never mutated (#869).
+    harness = f"uop_harness_{prefix}"
     return (
         f"# JIT seed: bug pattern {name!r}\n"
         f"{_harness_marker('bug_pattern ' + name)}"
@@ -754,7 +757,7 @@ def generate_synthesize_seed(
     rng: random.Random,
     *,
     loop_iterations: int = 300,
-    prefix: str = "s1",
+    prefix: str = "f1",
 ) -> str:
     """Generate a structurally-diverse synthesized seed (the ``core_code``).
 
@@ -798,7 +801,9 @@ def generate_synthesize_seed(
     ast.fix_missing_locations(module)
     code = ast.unparse(module)  # guaranteed-valid top-level statements
 
-    harness = f"synth_harness_{prefix}"
+    # Named `uop_harness_*` (see generate_bug_pattern_seed) so the mutators actually
+    # mutate synthesize parents instead of skipping them (#869).
+    harness = f"uop_harness_{prefix}"
     return (
         f"# JIT seed: synthesized pattern\n"
         f"{_harness_marker('synthesize')}"
@@ -838,10 +843,10 @@ def generate_jit_seed(
         )
     if family == "bug_pattern":
         return generate_bug_pattern_seed(
-            rng, loop_iterations=loop_iterations, prefix=prefix or "p1"
+            rng, loop_iterations=loop_iterations, prefix=prefix or "f1"
         )
     if family == "synthesize":
-        return generate_synthesize_seed(rng, loop_iterations=loop_iterations, prefix=prefix or "s1")
+        return generate_synthesize_seed(rng, loop_iterations=loop_iterations, prefix=prefix or "f1")
     raise ValueError(f"unknown seed family: {family!r}")
 
 

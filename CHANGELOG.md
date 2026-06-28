@@ -6,6 +6,7 @@ All notable changes to this project should be documented in this file.
 
 ### Added
 
+- A curated bug-pattern seed family (`lafleur/jit_bug_patterns.py` + `lafleur/jit_seeds.py`): ports fusil's 18 hand-written `BUG_PATTERNS` JIT-bug templates (decref-escapes, isinstance-patch, type-version polymorphism, managed-dict attack, ...) as a second native seed family, each filled with self-contained values and wrapped in a harness. `generate_jit_seed` now dispatches across families (`uop`, `bug_pattern`) so the corpus gets both. The 2 module-coupled patterns are excluded (they call into a fuzzed target module lafleur seeds don't have), by @devdanzin.
 - Native JIT seed generation (`lafleur/jit_seeds.py`): `CorpusManager.generate_new_seed` now synthesizes uop-targeted hot-loop seeds in-process — porting fusil's `UOP_RECIPES` table plus a trimmed simple-value generator, and reusing lafleur's own evil-object generators (`mutators.utils.gen_*`) — instead of shelling out to the classic fusil executable. This removes the fragile external dependency for seeding, fixes the silent degradation to plain values (fusil's `lafleur.mutator` import had bit-rotted), and produces richer seeds, by @devdanzin.
 - Targeted testing CLI options: `--mutators` to filter the mutator pool and `--strategy` to force a specific mutation strategy, by @devdanzin.
 - Diagnostic introspection CLI options: `--keep-children` to retain all generated scripts, `--dry-run` for mutation-only mode, and `--list-mutators` to discover available mutators, by @devdanzin.

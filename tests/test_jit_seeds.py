@@ -202,6 +202,14 @@ class TestSynthesizeSeeds(unittest.TestCase):
         b = generate_synthesize_seed(random.Random(99))
         self.assertEqual(a, b)
 
+    def test_no_unbounded_arithmetic(self):
+        # Mult/LShift with feedback (x*=x, x<<=x) blow ints up to GBs in the hot loop;
+        # the grammar must never emit them.
+        for s in range(60):
+            tree = ast.parse(generate_synthesize_seed(random.Random(s)))
+            for node in ast.walk(tree):
+                self.assertNotIsInstance(node, (ast.Mult, ast.LShift))
+
 
 class TestFamilyDispatch(unittest.TestCase):
     """generate_jit_seed dispatches across families and always yields valid Python."""
@@ -223,6 +231,14 @@ class TestFamilyDispatch(unittest.TestCase):
             for s in range(8):
                 with self.subTest(family=family, seed=s):
                     ast.parse(generate_jit_seed(random.Random(s), family=family))
+
+    def test_all_families_emit_harness_marker(self):
+        # Without a [fN] marker, lafleur's coverage parser records 0 uops/edges
+        # (parse_log_for_edge_coverage skips everything until current_harness_id is set).
+        for family in ("uop", "bug_pattern", "synthesize"):
+            for s in range(10):
+                with self.subTest(family=family, seed=s):
+                    self.assertIn("[f1]", generate_jit_seed(random.Random(s), family=family))
 
     def test_default_dispatch_covers_all_families(self):
         seen = set()

@@ -656,6 +656,13 @@ class ScoringManager:
                 fingerprint=self.artifact_manager.last_crash_fingerprint,
             )
 
+        # A run killed by SIGKILL/SIGTERM (timeout / OOM / external kill) is a resource
+        # artifact, not a valid corpus member: its log is truncated and it should never
+        # be added. check_for_crash already declined to treat -9/-15 as a crash; make
+        # sure we also don't add it as new coverage.
+        if exec_result.returncode in (-9, -15):
+            return NoChangeResult(status="NO_CHANGE")
+
         child_coverage = parse_log_for_edge_coverage(exec_result.log_path, self.coverage_manager)
 
         coverage_info = self.find_new_coverage(child_coverage, parent_lineage_profile, parent_id)

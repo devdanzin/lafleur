@@ -86,6 +86,9 @@ All notable changes to this project should be documented in this file.
 
 ### Fixed
 
+- Native JIT seeds now emit a `[fN]` harness marker so coverage is recorded: `parse_log_for_edge_coverage` ignores every uop until a marker sets the current harness id, so without it generated seeds (and all their children) showed 0 edges/UOPs and were judged uninteresting, by @devdanzin.
+- The `synthesize` seed family no longer emits `Mult`/`LShift`, which under feedback (`x *= x`, `x <<= x`) grew ints to multiple GB and made seeds extremely slow; `Add`/`Sub`/bitwise keep values bounded, by @devdanzin.
+- `analyze_run` no longer adds runs killed by SIGKILL/SIGTERM (`-9`/`-15`, i.e. timeout/OOM artifacts) to the corpus — it returns `NoChangeResult` instead of parsing the truncated log and keeping the seed, by @devdanzin.
 - `test_analysis` JSON round-trip test now compares the serialized `crash_type` against `CrashType.C_ASSERTION.value` rather than `str(CrashType.C_ASSERTION)` (`to_dict()` serializes the `(str, Enum)` as its value, so the assertion was comparing the wrong side and failing on Python 3.11+), by @devdanzin.
 - `triage.py` timestamp parsing now produces UTC-aware datetimes instead of naive ones, consistent with the rest of the codebase, by @devdanzin.
 - Added module docstring to `analysis.py` describing crash fingerprinting and classification, by @devdanzin.

@@ -241,7 +241,8 @@ SUMMARY: AddressSanitizer: stack-buffer-overflow
         serialized = json.dumps(d)
         loaded = json.loads(serialized)
         self.assertEqual(loaded["type"], "ASSERT")
-        self.assertEqual(loaded["crash_type"], str(CrashType.C_ASSERTION))
+        # to_dict() (asdict + json) serializes the (str, Enum) as its value, not str(enum).
+        self.assertEqual(loaded["crash_type"], CrashType.C_ASSERTION.value)
         self.assertEqual(loaded["returncode"], -6)
         self.assertEqual(loaded["signal_name"], "SIGABRT")
         self.assertEqual(loaded["fingerprint"], "ASSERT:file.c:10:cond")

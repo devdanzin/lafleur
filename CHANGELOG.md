@@ -86,6 +86,7 @@ All notable changes to this project should be documented in this file.
 
 ### Fixed
 
+- `test_analysis` JSON round-trip test now compares the serialized `crash_type` against `CrashType.C_ASSERTION.value` rather than `str(CrashType.C_ASSERTION)` (`to_dict()` serializes the `(str, Enum)` as its value, so the assertion was comparing the wrong side and failing on Python 3.11+), by @devdanzin.
 - `triage.py` timestamp parsing now produces UTC-aware datetimes instead of naive ones, consistent with the rest of the codebase, by @devdanzin.
 - Added module docstring to `analysis.py` describing crash fingerprinting and classification, by @devdanzin.
 - Added missing `REPORTED` and `FIXED` choices to `lafleur-triage list --status`, matching the full set of valid triage statuses, by @devdanzin.

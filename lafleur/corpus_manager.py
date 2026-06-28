@@ -20,7 +20,7 @@ from typing import TYPE_CHECKING, Any, Callable
 from lafleur.coverage import CoverageManager, save_coverage_state
 from lafleur.health import FILE_SIZE_WARNING_THRESHOLD
 from lafleur.jit_seeds import generate_jit_seed
-from lafleur.mutation_controller import BOILERPLATE_END_MARKER, BOILERPLATE_START_MARKER
+from lafleur.mutation_controller import BOILERPLATE_END_MARKER, DEFAULT_BOILERPLATE
 from lafleur.types import (
     CorpusFileMetadata,
     HarnessCoverage,
@@ -455,9 +455,10 @@ class CorpusManager:
 
         boilerplate = self.get_boilerplate().rstrip()
         if not boilerplate:
-            # Minimal self-contained boilerplate for a cold start (empty corpus): the
-            # native core only needs `sys` and `fuzzer_rng`.
-            boilerplate = f"{BOILERPLATE_START_MARKER}\nimport sys"
+            # Self-contained boilerplate for a cold start (empty corpus). The native core
+            # needs `sys` (the [fN] marker + evil objects), `gc`, and `collect` (some bug
+            # patterns call `collect()`); `fuzzer_rng` is added just below. See #867.
+            boilerplate = DEFAULT_BOILERPLATE
         full_source = (
             f"{boilerplate}\n"
             f"import random\n"

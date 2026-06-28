@@ -43,6 +43,15 @@ RANDOM = random.Random()
 BOILERPLATE_START_MARKER = "# FUSIL_BOILERPLATE_START"
 BOILERPLATE_END_MARKER = "# FUSIL_BOILERPLATE_END"
 
+# Boilerplate used when a parent file carries no FUSIL_BOILERPLATE markers — which is
+# the normal case, because corpus files are stored core-only (add_new_file strips the
+# boilerplate). The native seed cores reference ``sys`` (the [fN] coverage marker prints
+# to ``sys.stderr`` and the evil objects use ``sys``), ``gc``, and ``collect`` (some bug
+# patterns call ``collect()``). Without these imports the core raises ``NameError`` on its
+# very first line — before the harness/hot loop run — which silently zeroes the child's JIT
+# coverage and makes every mutated child score 0.0 (see issue #867).
+DEFAULT_BOILERPLATE = f"{BOILERPLATE_START_MARKER}\nimport sys\nimport gc\nfrom gc import collect"
+
 MutationStrategy = Callable[..., tuple[ast.AST, MutationInfo]]
 
 
@@ -90,8 +99,14 @@ class MutationController:
         self.health_monitor: HealthMonitor | None = None
 
     def get_boilerplate(self) -> str:
-        """Return the cached boilerplate code."""
-        return self.boilerplate_code or ""
+        """Return the cached boilerplate code, or a safe default.
+
+        Falls back to :data:`DEFAULT_BOILERPLATE` when nothing has been cached (or the
+        cached value is empty), so assembled scripts always import ``sys``/``gc``/
+        ``collect``. Without this, children built from core-only corpus parents lack
+        ``import sys`` and crash on the ``[fN]`` marker before warming the JIT (#867).
+        """
+        return self.boilerplate_code or DEFAULT_BOILERPLATE
 
     def _extract_and_cache_boilerplate(self, source_code: str) -> None:
         """Parse a source file to find, extract, and cache the boilerplate code."""
@@ -102,12 +117,14 @@ class MutationController:
             self.boilerplate_code = source_code[start_index:end_index]
             print("[+] Boilerplate code extracted and cached.")
         except ValueError:
+            # Corpus files are stored core-only, so this is the normal path. Fall back to
+            # a valid boilerplate (imports sys/gc/collect) rather than an empty string —
+            # otherwise children crash on the [fN] marker before the harness runs (#867).
             print(
-                "[!] Warning: Could not find boilerplate markers in the initial seed file.",
+                "[!] No boilerplate markers found (core-only file); using default boilerplate.",
                 file=sys.stderr,
             )
-            # Fallback to using an empty boilerplate
-            self.boilerplate_code = ""
+            self.boilerplate_code = DEFAULT_BOILERPLATE
 
     def _get_core_code(self, source_code: str) -> str:
         """Strip the boilerplate from a source file to get the dynamic core."""
@@ -516,7 +533,15 @@ class MutationController:
 
             boilerplate = self.get_boilerplate()
             mutated_core_code = ast.unparse(child_core_tree)
-            return f"{boilerplate}\n{gc_tuning_code}{rng_setup_code}\n{mutated_core_code}"
+            # Close the boilerplate region with the END marker (mirroring how seeds are
+            # assembled) so that an interesting child's core extracts cleanly via
+            # _get_core_code instead of carrying the boilerplate + RNG setup into the corpus.
+            return (
+                f"{boilerplate}\n"
+                f"{gc_tuning_code}{rng_setup_code}\n"
+                f"{BOILERPLATE_END_MARKER}\n"
+                f"{mutated_core_code}"
+            )
         except RecursionError:
             print(
                 "  [!] Warning: Skipping mutation due to RecursionError during ast.unparse.",

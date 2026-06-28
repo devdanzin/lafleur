@@ -12,7 +12,11 @@ from collections import defaultdict
 from textwrap import dedent
 from unittest.mock import MagicMock, patch
 
-from lafleur.mutation_controller import MutationController
+from lafleur.mutation_controller import (
+    BOILERPLATE_END_MARKER,
+    DEFAULT_BOILERPLATE,
+    MutationController,
+)
 from lafleur.types import DivergenceResult
 
 
@@ -1124,6 +1128,89 @@ class TestForcedStrategy(unittest.TestCase):
             self.controller.apply_mutation_strategy(self.dummy_tree, seed=42)
 
         mock_rng.choices.assert_called_once()
+
+
+class TestBoilerplateHandling(unittest.TestCase):
+    """Boilerplate fallback so children always import sys/gc/collect (issue #867)."""
+
+    def _bare_controller(self) -> MutationController:
+        controller = MutationController.__new__(MutationController)
+        controller.boilerplate_code = None
+        controller.differential_testing = False
+        controller.health_monitor = None
+        return controller
+
+    def test_default_boilerplate_imports_required_names(self):
+        # The native seed cores reference all three; missing any aborts the core
+        # before the harness runs, zeroing coverage.
+        self.assertIn("import sys", DEFAULT_BOILERPLATE)
+        self.assertIn("import gc", DEFAULT_BOILERPLATE)
+        self.assertIn("from gc import collect", DEFAULT_BOILERPLATE)
+
+    def test_get_boilerplate_falls_back_when_unset_or_empty(self):
+        controller = self._bare_controller()
+        # None -> default
+        self.assertIn("import sys", controller.get_boilerplate())
+        # "" -> default (the regression: empty boilerplate omitted import sys)
+        controller.boilerplate_code = ""
+        self.assertIn("import sys", controller.get_boilerplate())
+        # A real cached boilerplate is returned verbatim.
+        controller.boilerplate_code = "# FUSIL_BOILERPLATE_START\nimport sys\nimport os"
+        self.assertEqual(
+            controller.get_boilerplate(), "# FUSIL_BOILERPLATE_START\nimport sys\nimport os"
+        )
+
+    def test_extract_from_core_only_file_caches_valid_default(self):
+        # Corpus files are core-only (no markers) -> must fall back to a boilerplate
+        # that imports sys, not "".
+        controller = self._bare_controller()
+        with patch("sys.stderr", new=io.StringIO()):
+            controller._extract_and_cache_boilerplate("x = 1\nprint('hi')\n")
+        self.assertIn("import sys", controller.boilerplate_code)
+        self.assertIn("from gc import collect", controller.boilerplate_code)
+
+    def test_child_assembled_from_core_only_parent_imports_sys(self):
+        # End-to-end regression guard: a child built from a core-only parent must be
+        # runnable — i.e. import sys before the [fN] marker — and round-trip cleanly.
+        controller = self._bare_controller()
+        # Simulate a core-only corpus parent: extraction fails -> default cached.
+        with patch("sys.stderr", new=io.StringIO()):
+            controller._extract_and_cache_boilerplate("# core only, no markers\n")
+
+        core_src = dedent(
+            """
+            print('[f1] JIT seed: uop', file=sys.stderr)
+            x = 1
+
+            def uop_harness_f1():
+                x == x
+
+            for _loop_f1 in range(300):
+                try:
+                    uop_harness_f1()
+                except Exception:
+                    break
+            """
+        )
+        parent_core_tree = ast.parse(core_src)
+        mutated_harness = next(n for n in parent_core_tree.body if isinstance(n, ast.FunctionDef))
+
+        with patch("lafleur.mutation_controller.RANDOM") as mock_rng:
+            mock_rng.random.return_value = 1.0  # skip GC-pressure injection
+            child = controller.prepare_child_script(parent_core_tree, mutated_harness, 42)
+
+        self.assertIsNotNone(child)
+        assert child is not None
+        # Must import sys before the marker, and parse as valid Python.
+        self.assertIn("import sys", child)
+        self.assertLess(child.index("import sys"), child.index("[f1]"))
+        ast.parse(child)
+        # The END marker lets the core be re-extracted cleanly (no boilerplate in corpus).
+        self.assertIn(BOILERPLATE_END_MARKER, child)
+        core = controller._get_core_code(child)
+        self.assertIn("[f1]", core)
+        self.assertIn("def uop_harness_f1", core)
+        self.assertNotIn("import sys", core)
 
 
 if __name__ == "__main__":

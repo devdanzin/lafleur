@@ -541,12 +541,17 @@ class CoroutineStateCorruptor(ast.NodeTransformer):
             """)
             ).body
 
-            # 4. Inject the entire scenario
-            # Ensure imports are present
-            node.body.insert(0, ast.parse("import sys").body[0])
+            # 4. Inject the entire scenario.
+            # Inject `import asyncio` at the top (the coroutine uses asyncio.run /
+            # asyncio.sleep). Do NOT inject `import sys`: it is already available at
+            # module scope via the boilerplate, and a function-local `import sys`
+            # would make `sys` local to the whole harness — every [fN]/[EVIL] marker
+            # (`print(..., file=sys.stderr)`) executing before it then raises
+            # UnboundLocalError, zeroing the child's coverage (see #877). The nested
+            # corruptor's `sys._getframe` resolves against the module-level `sys`.
             node.body.insert(0, ast.parse("import asyncio").body[0])
 
-            injection_point = random.randint(2, len(node.body))
+            injection_point = random.randint(1, len(node.body))
             full_injection = [corruptor_ast, coroutine_ast] + trigger_ast
             node.body[injection_point:injection_point] = full_injection
             ast.fix_missing_locations(node)

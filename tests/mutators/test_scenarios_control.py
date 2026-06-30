@@ -620,8 +620,14 @@ class TestCoroutineStateCorruptor(unittest.TestCase):
         self.assertIn("async def evil_coro_async_3000():", result)
         self.assertIn("await asyncio.sleep(0)", result)
 
-    def test_imports_asyncio_and_sys(self):
-        """Test that asyncio and sys are imported."""
+    def test_injects_asyncio_but_not_sys(self):
+        """asyncio is injected (the coroutine needs it); sys is NOT.
+
+        A function-local `import sys` would shadow the module-global `sys` and
+        make every sys.stderr coverage marker that runs before it raise
+        UnboundLocalError (see #877). sys is always available at module scope via
+        the boilerplate, so it must not be injected into the harness body.
+        """
         code = dedent("""
             def uop_harness_test():
                 x = 1
@@ -634,9 +640,10 @@ class TestCoroutineStateCorruptor(unittest.TestCase):
                 mutated = mutator.visit(tree)
 
         result = ast.unparse(mutated)
-        # Should import both modules
         self.assertIn("import asyncio", result)
-        self.assertIn("import sys", result)
+        self.assertNotIn("import sys", result)
+        # The nested corruptor still references the module-level sys.
+        self.assertIn("sys._getframe", result)
 
     def test_has_warmup_loop(self):
         """Test that warmup loop is present to specialize type."""

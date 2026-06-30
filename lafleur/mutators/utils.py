@@ -21,8 +21,14 @@ class FuzzerSetupNormalizer(ast.NodeTransformer):
     """
 
     def visit_Import(self, node: ast.Import) -> ast.AST | None:
-        # Remove 'import gc' and 'import random' statements
-        node.names = [alias for alias in node.names if alias.name not in ("gc", "random")]
+        # Remove 'import gc', 'import random', and 'import sys' statements.
+        # gc/random/sys are all provided at module scope by the boilerplate, so a
+        # copy inside the core (especially inside the harness function, where some
+        # scenarios injected `import sys`) is redundant. A function-local `import sys`
+        # is actively harmful: it shadows the global, making every sys.stderr coverage
+        # marker that runs before it raise UnboundLocalError. Stripping it here heals
+        # corpus files that already carry the injected import (see #877).
+        node.names = [alias for alias in node.names if alias.name not in ("gc", "random", "sys")]
         return node if node.names else None
 
     def visit_Assign(self, node: ast.Assign) -> ast.AST | None:

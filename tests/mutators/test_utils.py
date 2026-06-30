@@ -6,6 +6,7 @@ lafleur/mutators/utils.py
 """
 
 import ast
+import sys
 import unittest
 from textwrap import dedent
 from unittest.mock import patch
@@ -220,6 +221,52 @@ class TestFuzzerSetupNormalizer(unittest.TestCase):
         # Should have removed gc and random imports
         self.assertEqual(len(mutated.body), 1)
         self.assertEqual(mutated.body[0].names[0].name, "os")
+
+    def test_fuzzer_setup_normalizer_strips_sys_import(self):
+        """`import sys` is stripped (it is provided at module scope by boilerplate)."""
+        code = dedent("""
+            import sys
+            import os
+        """)
+        tree = ast.parse(code)
+
+        normalizer = FuzzerSetupNormalizer()
+        mutated = normalizer.visit(tree)
+
+        self.assertEqual(len(mutated.body), 1)
+        self.assertEqual(mutated.body[0].names[0].name, "os")
+
+    def test_normalizer_heals_function_local_import_sys(self):
+        """A function-local `import sys` that shadows the global is stripped (#877).
+
+        The harness uses `sys` before a function-local `import sys`, which makes
+        `sys` local for the whole function — so it raises UnboundLocalError before
+        normalization, but runs cleanly (against the module-global `sys`) after.
+        """
+        code = dedent("""
+            def uop_harness_test():
+                first = sys.maxsize   # uses sys before the local import below
+                import sys
+                return first
+        """)
+
+        # Sanity check: as-written, the function-local import shadows the global
+        # and the early use raises UnboundLocalError. This is the bug we heal.
+        original = ast.parse(code)
+        ns_before = {"sys": sys}
+        exec(compile(original, "<orig>", "exec"), ns_before)
+        with self.assertRaises(UnboundLocalError):
+            ns_before["uop_harness_test"]()
+
+        # After normalization the function-local `import sys` is gone...
+        healed = FuzzerSetupNormalizer().visit(ast.parse(code))
+        ast.fix_missing_locations(healed)
+        self.assertNotIn("import sys", ast.unparse(healed))
+
+        # ...and the harness runs without UnboundLocalError against the module sys.
+        ns_after = {"sys": sys}
+        exec(compile(healed, "<healed>", "exec"), ns_after)
+        self.assertEqual(ns_after["uop_harness_test"](), sys.maxsize)
 
     def test_fuzzer_setup_normalizer_assign(self):
         """Test FuzzerSetupNormalizer removing fuzzer_rng assignment."""

@@ -508,13 +508,35 @@ class ScoringManager:
         Returns:
             True if the child is considered interesting.
         """
+        return self.evaluate_interestingness(coverage_info, ctx)[0]
+
+    def evaluate_interestingness(
+        self,
+        coverage_info: NewCoverageInfo,
+        ctx: ScoringContext,
+    ) -> tuple[bool, float | None]:
+        """Decide interestingness and return the numeric score alongside it.
+
+        The score lets callers distinguish a stone-cold child (score 0.0 — no
+        coverage, timing, or JIT-vitals signal) from a warm near-miss (a
+        positive score that still fell below the keep threshold).
+
+        Args:
+            coverage_info: NewCoverageInfo with coverage counts.
+            ctx: ScoringContext bundling parent/child metadata and timing.
+
+        Returns:
+            A tuple of (is_interesting, score). ``score`` is ``None`` for the
+            seed path, where interestingness is decided by coverage presence
+            rather than the numeric scorer.
+        """
         if ctx.parent_id is None:
             is_seed = "seed" in ctx.mutation_info.get("strategy", "")
             if coverage_info.is_interesting() or is_seed:
-                return True
+                return True, None
             else:
                 print("  [~] Seed file produced no JIT coverage. Skipping.", file=sys.stderr)
-                return False
+                return False, None
 
         # For normal mutations, use the scoring logic.
         scorer = InterestingnessScorer(
@@ -548,10 +570,10 @@ class ScoringManager:
                 )
             else:
                 print(f"  [+] Child is interesting with score: {score:.2f}", file=sys.stderr)
-            return True
+            return True, score
 
         print(f"  [+] Child IS NOT interesting with score: {score:.2f}", file=sys.stderr)
-        return False
+        return False, score
 
     def _update_global_coverage(self, child_coverage: dict[str, Any]) -> None:
         """Commit the coverage from a new, interesting child to the global state."""
@@ -688,7 +710,7 @@ class ScoringManager:
             jit_stats=jit_stats,
             parent_jit_stats=parent_jit_stats,
         )
-        is_interesting = self.score_and_decide_interestingness(coverage_info, scoring_ctx)
+        is_interesting, score = self.evaluate_interestingness(coverage_info, scoring_ctx)
 
         if is_interesting:
             return self._prepare_new_coverage_result(
@@ -701,7 +723,7 @@ class ScoringManager:
                 mutation_seed,
             )
 
-        return NoChangeResult(status="NO_CHANGE")
+        return NoChangeResult(status="NO_CHANGE", score=score)
 
     def _prepare_new_coverage_result(
         self,

@@ -116,6 +116,7 @@ All notable changes to this project should be documented in this file.
 
 ### Enhanced
 
+- Stone-cold parents are now retired and deprioritized faster. Previously every non-find counted the same toward the blunt `CORPUS_STERILITY_LIMIT` (599), so a parent whose mutations always scored exactly `0.0` (no new coverage, timing, or JIT-vitals signal — no gradient to climb) was treated identically to one producing warm near-misses. The child's numeric interestingness score now flows onto `NoChangeResult`, the scheduler tracks a per-parent `consecutive_zero_score` streak (reset by any warm child or find), a new `COLD_STERILITY_LIMIT` (100) retires gradient-free parents early, and `CorpusScheduler` applies a graduated coldness penalty so cold parents are selected less often before retirement, by @devdanzin.
 - Native JIT seeding is now reachable without `--fusil-path`: `run_evolutionary_loop` no longer gates corpus bootstrapping on `fusil_path_is_valid` and no longer halts an empty corpus when no fusil executable is provided — it always bootstraps in-process via `generate_new_seed`. `--fusil-path` is now a deprecated, accepted-but-unused option, by @devdanzin.
 - Updated CLAUDE.md: renamed stale `coverage_parser.py` reference to `coverage.py`, added 6 missing modules (`analysis.py`, `health.py`, `learning.py`, `metadata.py`, `types.py`, `uop_names.py`) to the project structure, by @devdanzin.
 - Guarded `psutil.Process().memory_info()` call in telemetry (`artifacts.py`) with try/except to prevent crashes on edge-case process states, by @devdanzin.

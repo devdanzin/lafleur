@@ -16,6 +16,7 @@ from unittest.mock import MagicMock, patch
 
 from lafleur.mutation_controller import MutationController
 from lafleur.orchestrator import (
+    COLD_STERILITY_LIMIT,
     DEEPENING_STERILITY_LIMIT,
     FlowControl,
     LafleurOrchestrator,
@@ -1039,6 +1040,93 @@ class TestHandleAnalysisDataFlowControl(unittest.TestCase):
         data = NoChangeResult(status="NO_CHANGE")
         self.orchestrator._handle_analysis_data(data, 0, parent_metadata, None)
         self.assertEqual(parent_metadata["total_mutations_against"], 1)
+
+    def test_cold_streak_increments_on_zero_score(self):
+        """A child scoring exactly 0.0 extends the consecutive-zero streak."""
+        parent_metadata = {"consecutive_zero_score": 4}
+        data = NoChangeResult(status="NO_CHANGE", score=0.0)
+        self.orchestrator._handle_analysis_data(data, 0, parent_metadata, None)
+        self.assertEqual(parent_metadata["consecutive_zero_score"], 5)
+
+    def test_negative_score_counts_as_cold(self):
+        """A child with a negative (density-penalized) score is still cold."""
+        parent_metadata = {"consecutive_zero_score": 0}
+        data = NoChangeResult(status="NO_CHANGE", score=-3.0)
+        self.orchestrator._handle_analysis_data(data, 0, parent_metadata, None)
+        self.assertEqual(parent_metadata["consecutive_zero_score"], 1)
+
+    def test_cold_streak_resets_on_warm_score(self):
+        """A warm near-miss (score > 0) resets the consecutive-zero streak."""
+        parent_metadata = {"consecutive_zero_score": 50}
+        data = NoChangeResult(status="NO_CHANGE", score=7.5)
+        self.orchestrator._handle_analysis_data(data, 0, parent_metadata, None)
+        self.assertEqual(parent_metadata["consecutive_zero_score"], 0)
+
+    def test_cold_streak_untouched_on_none_score(self):
+        """A non-measurement (score None: duplicate/killed) leaves the streak alone."""
+        parent_metadata = {"consecutive_zero_score": 50}
+        data = NoChangeResult(status="NO_CHANGE", score=None)
+        self.orchestrator._handle_analysis_data(data, 0, parent_metadata, None)
+        self.assertEqual(parent_metadata["consecutive_zero_score"], 50)
+
+    def test_cold_limit_retires_parent_early(self):
+        """Exceeding COLD_STERILITY_LIMIT marks the parent sterile before 599."""
+        parent_metadata = {
+            "consecutive_zero_score": COLD_STERILITY_LIMIT,
+            "mutations_since_last_find": 5,  # nowhere near CORPUS_STERILITY_LIMIT
+        }
+        data = NoChangeResult(status="NO_CHANGE", score=0.0)
+        with patch("sys.stderr", new_callable=io.StringIO):
+            self.orchestrator._handle_analysis_data(data, 0, parent_metadata, "cold.py")
+        self.assertTrue(parent_metadata["is_sterile"])
+        self.orchestrator.health_monitor.record_corpus_sterility.assert_called_once()
+
+    def test_cold_limit_event_fires_only_once(self):
+        """A parent already sterile does not re-fire the sterility event."""
+        parent_metadata = {
+            "consecutive_zero_score": COLD_STERILITY_LIMIT + 10,
+            "mutations_since_last_find": 5,
+            "is_sterile": True,
+        }
+        data = NoChangeResult(status="NO_CHANGE", score=0.0)
+        with patch("sys.stderr", new_callable=io.StringIO):
+            self.orchestrator._handle_analysis_data(data, 0, parent_metadata, "cold.py")
+        self.orchestrator.health_monitor.record_corpus_sterility.assert_not_called()
+
+    def test_warm_parent_not_retired_at_cold_limit(self):
+        """A warm child keeps a near-limit parent alive (streak resets, no retirement)."""
+        parent_metadata = {
+            "consecutive_zero_score": COLD_STERILITY_LIMIT,
+            "mutations_since_last_find": 5,
+        }
+        data = NoChangeResult(status="NO_CHANGE", score=12.0)
+        self.orchestrator._handle_analysis_data(data, 0, parent_metadata, "warm.py")
+        self.assertEqual(parent_metadata["consecutive_zero_score"], 0)
+        self.assertFalse(parent_metadata.get("is_sterile", False))
+        self.orchestrator.health_monitor.record_corpus_sterility.assert_not_called()
+
+
+class TestRecordNewFind(unittest.TestCase):
+    """Test that _record_new_find resets per-parent stagnation counters."""
+
+    def setUp(self):
+        self.orchestrator = LafleurOrchestrator.__new__(LafleurOrchestrator)
+        self.orchestrator.run_stats = {}
+        self.orchestrator.mutations_since_last_find = 12
+
+    def test_resets_cold_streak_and_stagnation_on_find(self):
+        """A find zeroes mutations_since_last_find and consecutive_zero_score."""
+        ctx = MagicMock()
+        ctx.parent_metadata = {
+            "consecutive_zero_score": 40,
+            "mutations_since_last_find": 7,
+            "total_finds": 2,
+        }
+        self.orchestrator._record_new_find(ctx)
+        self.assertEqual(ctx.parent_metadata["consecutive_zero_score"], 0)
+        self.assertEqual(ctx.parent_metadata["mutations_since_last_find"], 0)
+        self.assertEqual(ctx.parent_metadata["total_finds"], 3)
+        self.assertEqual(self.orchestrator.mutations_since_last_find, 0)
 
 
 class TestPrepareParentContext(unittest.TestCase):

@@ -108,6 +108,61 @@ class TestCorpusScheduler(unittest.TestCase):
         actual_ratio = scores["sterile.py"] / scores["fertile.py"]
         self.assertAlmostEqual(actual_ratio, expected_ratio, places=1)
 
+    def test_cold_streak_penalty(self):
+        """A high consecutive-zero-score streak deprioritizes a file."""
+        import copy
+
+        base_metadata = {
+            "baseline_coverage": {
+                "f1": {"edges": [0], "uops": [], "rare_events": []},
+            },
+            "execution_time_ms": 50,
+            "file_size_bytes": 500,
+            "total_finds": 0,
+            "lineage_depth": 1,
+        }
+
+        # Warm file: streak below the penalty threshold (no penalty).
+        warm_metadata = copy.deepcopy(base_metadata)
+        warm_metadata["consecutive_zero_score"] = CorpusScheduler.COLDNESS_PENALTY_THRESHOLD
+
+        # Cold file: streak at the cold-retirement limit (floor penalty).
+        cold_metadata = copy.deepcopy(base_metadata)
+        cold_metadata["consecutive_zero_score"] = CorpusScheduler.COLDNESS_PENALTY_THRESHOLD + 200
+
+        self.state["per_file_coverage"]["warm.py"] = warm_metadata
+        self.state["per_file_coverage"]["cold.py"] = cold_metadata
+
+        scheduler = CorpusScheduler(self.coverage_manager)
+        scores = scheduler.calculate_scores()
+
+        # The cold file is deprioritized down to the floor multiplier.
+        self.assertLess(scores["cold.py"], scores["warm.py"])
+        actual_ratio = scores["cold.py"] / scores["warm.py"]
+        self.assertAlmostEqual(actual_ratio, CorpusScheduler.COLDNESS_PENALTY_FLOOR, places=2)
+
+    def test_cold_streak_below_threshold_no_penalty(self):
+        """A streak at or below the threshold is not penalized."""
+        metadata = {
+            "baseline_coverage": {"f1": {"edges": [0], "uops": [], "rare_events": []}},
+            "execution_time_ms": 50,
+            "file_size_bytes": 500,
+            "total_finds": 0,
+            "lineage_depth": 1,
+            "consecutive_zero_score": CorpusScheduler.COLDNESS_PENALTY_THRESHOLD,
+        }
+        self.state["per_file_coverage"]["file.py"] = metadata
+
+        scheduler = CorpusScheduler(self.coverage_manager)
+        with_streak = scheduler.calculate_scores()["file.py"]
+
+        # Drop the streak entirely; score must be identical (no penalty at threshold).
+        del metadata["consecutive_zero_score"]
+        scheduler.invalidate_scores()
+        without_streak = scheduler.calculate_scores()["file.py"]
+
+        self.assertEqual(with_streak, without_streak)
+
     def test_performance_penalty(self):
         """Test that slow and large files are penalized."""
         # Fast, small file

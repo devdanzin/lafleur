@@ -79,6 +79,13 @@ TIMEOUT_STAT_KEYS: dict[str, tuple[str, str]] = {
 DEEPENING_STERILITY_LIMIT = 30
 # Maximum sterile mutations for a corpus file before marking it permanently sterile.
 CORPUS_STERILITY_LIMIT = 599
+# Maximum CONSECUTIVE stone-cold mutations (children scoring exactly 0.0 — no new
+# coverage, timing, or JIT-vitals signal) before retiring a corpus file early. A
+# child scoring 0.0 offers no gradient for the evolutionary loop to climb, so an
+# unbroken streak is strong evidence the parent is exhausted and it is retired far
+# sooner than CORPUS_STERILITY_LIMIT. A single warm near-miss (score > 0) or a find
+# resets the streak, so parents that still show any signal keep the full leash.
+COLD_STERILITY_LIMIT = 100
 
 
 @dataclass
@@ -500,16 +507,41 @@ class LafleurOrchestrator:
 
             return FlowControl.BREAK, new_filename
         else:  # NoChangeResult
-            parent_metadata["mutations_since_last_find"] = (
-                parent_metadata.get("mutations_since_last_find", 0) + 1
-            )
-            if parent_metadata["mutations_since_last_find"] > CORPUS_STERILITY_LIMIT:
+            mutations_since_last_find = parent_metadata.get("mutations_since_last_find", 0) + 1
+            parent_metadata["mutations_since_last_find"] = mutations_since_last_find
+
+            # Track the stone-cold streak. A child scoring exactly 0.0 (or below)
+            # produced no gradient at all; a warm near-miss (score > 0) resets the
+            # streak. A score of None means no numeric measurement was taken
+            # (duplicate/unparseable/resource-killed child) — leave the streak
+            # untouched rather than extending it on a non-signal.
+            score = getattr(analysis_data, "score", None)
+            cold_streak = parent_metadata.get("consecutive_zero_score", 0)
+            if score is not None:
+                if score > 0.0:
+                    cold_streak = 0
+                else:
+                    cold_streak += 1
+                parent_metadata["consecutive_zero_score"] = cold_streak
+
+            # Retire the parent if it hits either limit: the long catch-all
+            # (CORPUS_STERILITY_LIMIT) or the much shorter cold-streak limit
+            # (COLD_STERILITY_LIMIT) that fast-tracks gradient-free parents.
+            hit_corpus_limit = mutations_since_last_find > CORPUS_STERILITY_LIMIT
+            hit_cold_limit = cold_streak > COLD_STERILITY_LIMIT
+            if hit_corpus_limit or hit_cold_limit:
                 if not parent_metadata.get("is_sterile", False):
                     # Fire the health event only on the False→True transition
                     parent_metadata["is_sterile"] = True
+                    if hit_cold_limit and not hit_corpus_limit:
+                        print(
+                            f"  [~] Retiring {parent_id} early: {cold_streak} consecutive "
+                            f"stone-cold (score 0.0) mutations.",
+                            file=sys.stderr,
+                        )
                     self.health_monitor.record_corpus_sterility(
                         parent_id=parent_id,
-                        mutations_since_last_find=parent_metadata["mutations_since_last_find"],
+                        mutations_since_last_find=mutations_since_last_find,
                     )
             return FlowControl.NONE, None
 
@@ -852,6 +884,7 @@ class LafleurOrchestrator:
         self.mutations_since_last_find = 0
         ctx.parent_metadata["total_finds"] = ctx.parent_metadata.get("total_finds", 0) + 1
         ctx.parent_metadata["mutations_since_last_find"] = 0
+        ctx.parent_metadata["consecutive_zero_score"] = 0
 
     def execute_mutation_and_analysis_cycle(
         self,

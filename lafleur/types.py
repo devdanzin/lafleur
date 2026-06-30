@@ -172,6 +172,7 @@ class CorpusFileMetadata(TypedDict, total=False):
 
     # --- Mutable runtime state ---
     mutations_since_last_find: int
+    consecutive_zero_score: int  # Streak of children scoring 0.0; reset by any warm child/find
     total_finds: int
     total_mutations_against: int
     is_sterile: bool
@@ -224,9 +225,18 @@ class CrashResult(AnalysisResult):
 
 @dataclass(frozen=True)
 class NoChangeResult(AnalysisResult):
-    """Returned when the child produced no new coverage."""
+    """Returned when the child produced no new coverage.
 
-    pass
+    ``score`` carries the child's numeric interestingness score so the
+    orchestrator can distinguish a stone-cold child (score 0.0 — no gradient
+    at all) from a warm near-miss (score > 0 but below the keep threshold).
+    It is ``None`` when no numeric score was measured (seed analysis, a child
+    killed by SIGKILL/SIGTERM, or an interesting child rejected as a duplicate
+    or for an unparseable core), which leaves the parent's cold streak
+    unchanged rather than extending it.
+    """
+
+    score: float | None = None
 
 
 @dataclass(frozen=True)

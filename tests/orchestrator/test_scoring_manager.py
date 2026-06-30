@@ -255,5 +255,55 @@ class TestScoreAndDecideInterestingness(unittest.TestCase):
         self.assertFalse(sm.score_and_decide_interestingness(info, ctx))
 
 
+class TestEvaluateInterestingness(unittest.TestCase):
+    """Tests for ScoringManager.evaluate_interestingness (bool + numeric score)."""
+
+    def _make_ctx(self, **overrides) -> ScoringContext:
+        defaults = {
+            "parent_id": "parent.py",
+            "mutation_info": {"strategy": "havoc", "mutator": "test"},
+            "parent_file_size": 100,
+            "parent_lineage_edge_count": 50,
+            "child_file_size": 110,
+        }
+        defaults.update(overrides)
+        return ScoringContext(**defaults)
+
+    def test_stone_cold_child_returns_zero_score(self):
+        """A child with no coverage/timing/vitals scores exactly 0.0."""
+        sm = _make_scoring_manager()
+        info = NewCoverageInfo()
+        is_interesting, score = sm.evaluate_interestingness(info, self._make_ctx())
+        self.assertFalse(is_interesting)
+        self.assertEqual(score, 0.0)
+
+    def test_warm_near_miss_returns_positive_subthreshold_score(self):
+        """A near-miss returns a positive score below the keep threshold."""
+        sm = _make_scoring_manager()
+        info = NewCoverageInfo(relative_edges=5)  # 5.0 < 10.0
+        is_interesting, score = sm.evaluate_interestingness(info, self._make_ctx())
+        self.assertFalse(is_interesting)
+        assert score is not None
+        self.assertGreater(score, 0.0)
+        self.assertLess(score, 10.0)
+
+    def test_interesting_child_returns_score_and_true(self):
+        """An interesting child returns is_interesting=True and its score."""
+        sm = _make_scoring_manager()
+        info = NewCoverageInfo(global_edges=2)  # 20.0
+        is_interesting, score = sm.evaluate_interestingness(info, self._make_ctx())
+        self.assertTrue(is_interesting)
+        self.assertEqual(score, 20.0)
+
+    def test_seed_path_returns_none_score(self):
+        """The seed path (parent_id=None) has no numeric score."""
+        sm = _make_scoring_manager()
+        info = NewCoverageInfo(global_edges=1)
+        ctx = self._make_ctx(parent_id=None, mutation_info={"strategy": "seed"})
+        is_interesting, score = sm.evaluate_interestingness(info, ctx)
+        self.assertTrue(is_interesting)
+        self.assertIsNone(score)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

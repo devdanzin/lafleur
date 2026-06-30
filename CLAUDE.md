@@ -143,7 +143,10 @@ lafleur-triage export-issues known_issues.json
     - `sniper.py` — SniperMutator for surgical Bloom filter invalidation
   - `coverage.py` — JIT trace log parsing and uop-edge coverage extraction
   - `corpus_manager.py` — Manages test case corpus and scheduling
+  - `jit_seeds.py` — Native (in-process) JIT seed generation, replacing the old fusil subprocess
+  - `jit_bug_patterns.py` — Curated JIT bug-pattern templates (ported from fusil) used by native seeding
   - `learning.py` — Adaptive mutation strategy learning (epsilon-greedy selection)
+  - `utils.py` — Shared helpers: `ExecutionResult`, `FUZZING_ENV`, run-stats and logging utilities
   - `analysis.py` — Crash fingerprinting and classification
   - `health.py` — HealthMonitor observability (adverse event logging)
   - `metadata.py` — Run metadata generation and persistence
@@ -395,7 +398,7 @@ The fuzzer requires:
 1. CPython debug build with experimental JIT: `./configure --with-pydebug --enable-experimental-jit`
 2. JIT tuning applied via `lafleur-jit-tweak`
 3. Virtual environment created with the tuned CPython build
-4. Optional: fusil for seeding (`pip install git+https://github.com/fusil-fuzzer/fusil.git`)
+4. Seeding is native and in-process (`lafleur/jit_seeds.py`); no external fusil executable is required and there is no empty-corpus halt. The classic fusil seeder (`--fusil-path`) remains optional/legacy.
 
 ## Documentation
 

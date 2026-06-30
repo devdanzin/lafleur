@@ -52,6 +52,16 @@ class CorpusScheduler:
     SIDE_EXIT_BONUS_WEIGHT = 5.0
     MIN_SCORE = 1.0
 
+    # --- Coldness penalty (graduated pre-retirement deprioritization) ---
+    # Parents whose recent mutations all score 0.0 provide no gradient to climb.
+    # Once the consecutive-zero-score streak passes COLDNESS_PENALTY_THRESHOLD, ramp
+    # the selection weight down so cycles shift to parents that still show signal,
+    # before the cold parent is retired outright (see COLD_STERILITY_LIMIT). The
+    # ramp reaches COLDNESS_PENALTY_FLOOR right around the retirement limit.
+    COLDNESS_PENALTY_THRESHOLD = 30
+    COLDNESS_PENALTY_RAMP = 0.01
+    COLDNESS_PENALTY_FLOOR = 0.3
+
     def __init__(self, coverage_state: CoverageManager):
         """Initialize the scheduler with the current coverage state."""
         self.coverage_state = coverage_state
@@ -124,6 +134,16 @@ class CorpusScheduler:
             # --- Heuristic 5: Trace quality (higher is better) ---
             score += total_trace_length * self.TRACE_LENGTH_BONUS_WEIGHT
             score += total_side_exits * self.SIDE_EXIT_BONUS_WEIGHT
+
+            # --- Heuristic 6: Coldness (graduated pre-retirement penalty) ---
+            cold_streak = metadata.get("consecutive_zero_score", 0)
+            if cold_streak > self.COLDNESS_PENALTY_THRESHOLD:
+                over = cold_streak - self.COLDNESS_PENALTY_THRESHOLD
+                cold_factor = max(
+                    self.COLDNESS_PENALTY_FLOOR,
+                    1.0 - over * self.COLDNESS_PENALTY_RAMP,
+                )
+                score *= cold_factor
 
             scores[filename] = max(self.MIN_SCORE, score)
 

@@ -55,6 +55,34 @@ class TestRunSessionErrorHandling(unittest.TestCase):
                 stats = json.loads(json_str)
                 self.assertEqual(stats["status"], "syntax_error")
 
+    def test_run_session_seeds_boilerplate_globals(self):
+        """Core-only scripts run without NameError for sys/gc/collect/fuzzer_rng (#883).
+
+        Session parents/polluters are executed core-only (no `import sys`), and their
+        first line is a `[fN]` marker printing to sys.stderr. The driver must seed the
+        boilerplate globals into the shared namespace or they die immediately.
+        """
+        core_script = self.temp_path / "core_only.py"
+        core_script.write_text(
+            "print('[f1] marker', file=sys.stderr)\n"
+            "collect()\n"
+            "gc.collect()\n"
+            "_v = fuzzer_rng.random()\n"
+        )
+
+        captured_stdout = StringIO()
+        with patch("sys.stdout", captured_stdout):
+            result = run_session([str(core_script)], no_ekg=True)
+
+        output = captured_stdout.getvalue()
+        self.assertEqual(result, 0)
+        self.assertNotIn("NameError", output)
+        self.assertIn("[DRIVER:START]", output)
+        for line in output.splitlines():
+            if line.startswith("[DRIVER:STATS]"):
+                stats = json.loads(line.replace("[DRIVER:STATS] ", ""))
+                self.assertEqual(stats["status"], "success")
+
     def test_run_session_runtime_error(self):
         """Test run_session handles RuntimeError gracefully."""
         # Create a script that raises RuntimeError

@@ -624,8 +624,10 @@ def generate_bug_pattern_seed(
     sub = _fill_bug_pattern(name, rng, loop_iterations, prefix)
 
     # Templates have inconsistent base indentation; dedent each before wrapping.
-    setup_code = dedent(pattern.get("setup_code", "")).format(**sub)
-    body_code = dedent(pattern.get("body_code", "")).format(**sub)
+    # setup_code/body_code are always str templates; str() satisfies the type checker
+    # (BUG_PATTERNS values are a str/dict union) and is a no-op at runtime.
+    setup_code = dedent(str(pattern.get("setup_code", ""))).format(**sub)
+    body_code = dedent(str(pattern.get("body_code", ""))).format(**sub)
     inner = f"{setup_code}\n{body_code}".strip("\n")
 
     # Named `uop_harness_*` (not `jit_harness_*`) so the mutators, _get_nodes_from_parent,

@@ -412,7 +412,7 @@ class VariableSwapper(ast.NodeTransformer):
     PROTECTED_NAMES = _static_protected_names.union(_exception_names)
 
     def __init__(self) -> None:
-        self.var_map = {}
+        self.var_map: dict[str, str] = {}
 
     def visit_FunctionDef(self, node: ast.FunctionDef) -> ast.FunctionDef:
         if not node.name.startswith("uop_harness"):

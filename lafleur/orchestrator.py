@@ -24,6 +24,7 @@ from datetime import datetime, timezone
 from enum import Enum, auto
 from pathlib import Path
 from textwrap import dedent
+from typing import cast
 
 from lafleur.analysis import CrashFingerprinter
 from lafleur.artifacts import ArtifactManager, TelemetryManager, TimeoutLogger
@@ -790,7 +791,10 @@ class LafleurOrchestrator:
                     child_source, child_source_path, child_log_path, ctx.parent_path
                 )
                 if stat_key:
-                    self.run_stats[stat_key] = self.run_stats.get(stat_key, 0) + 1
+                    # stat_key is dynamic (set by execute_child), so index via a plain
+                    # dict view — a TypedDict rejects non-literal keys.
+                    stats = cast("dict[str, int]", self.run_stats)
+                    stats[stat_key] = stats.get(stat_key, 0) + 1
                 if stat_key == "timeouts_found":
                     self.health_monitor.record_timeout(ctx.parent_id)
                 else:
@@ -976,7 +980,7 @@ def _format_run_header(
     orchestrator_log_path: Path,
     timestamp_iso: str,
     timeout: int,
-    start_stats: dict,
+    start_stats: RunStats,
 ) -> str:
     """Format the informative header printed at the start of a fuzzing run."""
     return dedent(f"""
@@ -1005,7 +1009,7 @@ Initial Stats:
 def _format_run_summary(
     termination_reason: str,
     run_start_time: datetime,
-    start_stats: dict,
+    start_stats: RunStats,
 ) -> str:
     """Format the summary footer printed at the end of a fuzzing run."""
     end_time = datetime.now(timezone.utc)

@@ -10,7 +10,7 @@ import sys
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, TextIO
+from typing import TYPE_CHECKING, Any, TextIO, cast
 
 if TYPE_CHECKING:
     from lafleur.types import RunStats
@@ -190,11 +190,14 @@ def load_run_stats() -> RunStats:
     try:
         with open(RUN_STATS_FILE, "r", encoding="utf-8") as f:
             stats: RunStats = json.load(f)
-            # Fill in any fields missing from older stats files
+            # Fill in any fields missing from older stats files. Iterate over a plain
+            # dict view because the keys are dynamic (a TypedDict rejects non-literal
+            # keys); this mutates the same underlying dict returned as `stats`.
             defaults = _default_run_stats()
+            plain = cast("dict[str, Any]", stats)
             for key, value in defaults.items():
                 if key != "start_time":
-                    stats.setdefault(key, value)
+                    plain.setdefault(key, value)
             return stats
     except (json.JSONDecodeError, OSError) as e:
         print(

@@ -416,7 +416,7 @@ class CorpusManager:
             self.health_monitor.record_file_size_warning(new_filename, core_size)
 
         parent_metadata: CorpusFileMetadata = (
-            self.coverage_state.state["per_file_coverage"].get(parent_id, {}) if parent_id else {}  # type: ignore[assignment]  # empty dict is valid total=False TypedDict
+            self.coverage_state.state["per_file_coverage"].get(parent_id, {}) if parent_id else {}
         )
         lineage_depth = parent_metadata.get("lineage_depth", 0) + 1
         parent_lineage_profile = parent_metadata.get("lineage_coverage_profile", {})

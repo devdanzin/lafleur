@@ -1084,15 +1084,14 @@ def generate_campaign_report(agg: CampaignAggregator) -> str:
     This is a module-level function that formats the aggregated data from
     a :class:`CampaignAggregator` into a human-readable text report.
     """
+    lines: list[str] = []
     if len(agg.instances) == 0:
-        lines: list[str] = []
         lines.append("=" * 90)
         lines.append("LAFLEUR CAMPAIGN REPORT")
         lines.append("=" * 90)
         lines.append("No valid instances found.")
         return "\n".join(lines)
 
-    lines: list[str] = []
     lines.extend(_format_campaign_header(agg))
     lines.extend(_format_leaderboard(agg))
     lines.extend(_format_fleet_health(agg))
@@ -1332,7 +1331,7 @@ def _build_crash_row(fingerprint: str, info: CrashInfo, instance_count: int, max
 
 
 def _build_crash_attribution_card(
-    fleet_crash_attribution: dict[str, Any] | None,
+    fleet_crash_attribution: CrashAttributionSummary | None,
 ) -> str:
     """Build the HTML card for crash-productive mutators."""
     if not fleet_crash_attribution:

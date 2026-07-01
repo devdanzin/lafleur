@@ -640,4 +640,5 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    # main() returns None and exits 0 on normal completion.
+    main()

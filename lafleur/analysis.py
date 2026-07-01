@@ -45,6 +45,12 @@ class CrashSignature:
         d = asdict(self)
         # Backward compat: serialized metadata.json uses "type" key
         d["type"] = d.pop("category")
+        # Serialize the enum as its plain string value. asdict() leaves crash_type
+        # as a CrashType(str, Enum) member, and json.dumps of a str-Enum subclass is
+        # version-dependent — some CPython builds emit the value ("C_ASSERTION"),
+        # others str(enum) ("CrashType.C_ASSERTION"). Pin it to .value for stable,
+        # cross-version output.
+        d["crash_type"] = self.crash_type.value
         return d
 
 

@@ -780,7 +780,9 @@ class TelemetryManager:
 
     def log_timeseries_datapoint(self) -> None:
         """Append a snapshot of the current run statistics to the time-series log."""
-        datapoint = self.run_stats.copy()
+        # Plain dict (not RunStats): this snapshot adds telemetry keys that are not
+        # part of the RunStats schema (timestamp, system_load_1min, process_rss_mb, ...).
+        datapoint: dict[str, Any] = dict(self.run_stats)
         datapoint["timestamp"] = datetime.now(timezone.utc).isoformat()
 
         # Add system resource metrics

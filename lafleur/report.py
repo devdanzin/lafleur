@@ -11,7 +11,7 @@ import sys
 from collections import defaultdict, deque
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from lafleur.campaign import (
     TimeoutSummary,
@@ -709,8 +709,14 @@ def generate_report(instance_dir: Path) -> str:
     )
     lines.extend(_format_coverage_section(stats))
     lines.extend(_format_corpus_section(corpus_stats))
-    lines.extend(_format_health_section(health_summary, total_mutations))
-    lines.extend(_format_timeout_section(timeout_summary, stats, instance_dir))
+    # The loaders return TypedDicts / a plain JSON dict; the section formatters take
+    # structurally-compatible types. Cast to bridge TypedDict<->dict (runtime no-ops).
+    lines.extend(
+        _format_health_section(cast("dict[str, Any] | None", health_summary), total_mutations)
+    )
+    lines.extend(
+        _format_timeout_section(timeout_summary, cast("RunStats | None", stats), instance_dir)
+    )
     lines.extend(_format_crash_attribution_section(instance_dir))
     lines.extend(_format_crash_digest_section(crash_groups))
     lines.append("=" * 80)

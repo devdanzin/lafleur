@@ -36,7 +36,7 @@ class LineageGraph:
     children: dict[str, list[str]]  # parent_id → list of child filenames
     parent: dict[str, str | None]  # filename → parent_id (None for seeds)
     roots: list[str]  # files with parent_id is None (seeds)
-    metadata: dict[str, dict]  # filename → full per_file_coverage entry
+    metadata: dict[str, Any]  # filename → full per_file_coverage entry (CorpusFileMetadata)
 
 
 @dataclass
@@ -2186,6 +2186,8 @@ def _print_mode_stats(
                 if not n.startswith("__") and graph.parent.get(n) is None
             ]
         )
+        # Forest mode always computes metrics; print_forest_stats dereferences them.
+        assert metrics is not None
         print_forest_stats(
             result.subgraph,
             graph,

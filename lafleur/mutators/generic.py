@@ -570,6 +570,27 @@ class BlockTransposerMutator(ast.NodeTransformer):
     MIN_STATEMENTS_FOR_TRANSPOSE = 6
     BLOCK_SIZE = 3
 
+    @staticmethod
+    def _collect_names(stmts: list[ast.stmt]) -> tuple[set[str], set[str]]:
+        """Return (bound, loaded) name sets for a list of statements.
+
+        Over-approximates by walking into nested scopes — that only makes the
+        independence check below more conservative (it skips a few safe moves),
+        never less safe.
+        """
+        bound: set[str] = set()
+        loaded: set[str] = set()
+        for stmt in stmts:
+            for n in ast.walk(stmt):
+                if isinstance(n, ast.Name):
+                    (bound if isinstance(n.ctx, ast.Store) else loaded).add(n.id)
+                elif isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                    bound.add(n.name)
+                elif isinstance(n, (ast.Import, ast.ImportFrom)):
+                    for alias in n.names:
+                        bound.add((alias.asname or alias.name).split(".")[0])
+        return bound, loaded
+
     def visit_FunctionDef(self, node: ast.FunctionDef) -> ast.FunctionDef:
         self.generic_visit(node)
 
@@ -582,6 +603,18 @@ class BlockTransposerMutator(ast.NodeTransformer):
             # We ensure the block doesn't exceed the list bounds.
             start_index = random.randint(0, body_len - self.BLOCK_SIZE)
             block = node.body[start_index : start_index + self.BLOCK_SIZE]
+
+            # Only move a block that is INDEPENDENT of the rest of the body: if the
+            # block binds a name the rest loads (or loads a name the rest binds),
+            # reordering can place a use before its definition and raise
+            # UnboundLocalError at runtime, killing the child (0.0 score, see #879).
+            # An independent block moves as a unit with its internal order intact and
+            # shares no names with the rest, so it can go anywhere safely.
+            rest = node.body[:start_index] + node.body[start_index + self.BLOCK_SIZE :]
+            block_binds, block_loads = self._collect_names(block)
+            rest_binds, rest_loads = self._collect_names(rest)
+            if (block_binds & rest_loads) or (block_loads & rest_binds):
+                return node
 
             # 2. Remove the block from its original position.
             del node.body[start_index : start_index + self.BLOCK_SIZE]

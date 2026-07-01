@@ -640,7 +640,13 @@ def generate_bug_pattern_seed(
         f"{indent(inner, '        ')}\n"
         f"    except Exception:\n"
         f"        pass\n\n"
-        f"{harness}()\n"
+        # Wrap the invocation too: mutators inject code outside the harness's inner
+        # try/except (and can corrupt that except clause), so a bare call lets
+        # ordinary breakage escape to module level and exit the process 1 (#879).
+        f"try:\n"
+        f"    {harness}()\n"
+        f"except Exception:\n"
+        f"    pass\n"
     )
 
 
@@ -809,7 +815,12 @@ def generate_synthesize_seed(
         f"{_harness_marker('synthesize')}"
         f"def {harness}():\n"
         f"{indent(code, '    ')}\n\n"
-        f"{harness}()\n"
+        # Wrap the invocation so ordinary mutation breakage (use-before-def,
+        # type/index errors) is caught instead of escaping and exiting 1 (#879).
+        f"try:\n"
+        f"    {harness}()\n"
+        f"except Exception:\n"
+        f"    pass\n"
     )
 
 

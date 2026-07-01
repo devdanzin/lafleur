@@ -37,6 +37,30 @@ _OBJECT_KINDS = {
 _KNOWN_KINDS = set(jit_seeds._SIMPLE_GENERATORS) | _OBJECT_KINDS | {"new_variable", "any"}
 
 
+def _top_level_call_is_wrapped(code: str, harness: str) -> bool:
+    """True if the top-level ``harness()`` call is inside a try/except, not bare."""
+    tree = ast.parse(code)
+    wrapped = False
+    for stmt in tree.body:
+        if (
+            isinstance(stmt, ast.Expr)
+            and isinstance(stmt.value, ast.Call)
+            and isinstance(stmt.value.func, ast.Name)
+            and stmt.value.func.id == harness
+        ):
+            return False  # a bare top-level call
+        if isinstance(stmt, ast.Try):
+            for inner in stmt.body:
+                if (
+                    isinstance(inner, ast.Expr)
+                    and isinstance(inner.value, ast.Call)
+                    and isinstance(inner.value.func, ast.Name)
+                    and inner.value.func.id == harness
+                ):
+                    wrapped = True
+    return wrapped
+
+
 class TestRecipeTableIntegrity(unittest.TestCase):
     """The UOP_RECIPES table is well-formed and self-consistent."""
 
@@ -166,6 +190,11 @@ class TestBugPatternSeeds(unittest.TestCase):
         self.assertIn("def uop_harness_p1():", code)
         self.assertIn("uop_harness_p1()", code)
 
+    def test_invocation_is_wrapped_in_try_except(self):
+        """The bare harness invocation is wrapped so escaping breakage is caught (#879)."""
+        code = generate_bug_pattern_seed(random.Random(1), name="decref_escapes", prefix="p1")
+        self.assertTrue(_top_level_call_is_wrapped(code, "uop_harness_p1"))
+
     def test_deterministic_for_same_rng_seed(self):
         a = generate_bug_pattern_seed(random.Random(5), name="isinstance_patch")
         b = generate_bug_pattern_seed(random.Random(5), name="isinstance_patch")
@@ -199,6 +228,11 @@ class TestSynthesizeSeeds(unittest.TestCase):
         self.assertIn("def uop_harness_s1():", code)
         self.assertIn("range(321)", code)
         self.assertIn("uop_harness_s1()", code)
+
+    def test_invocation_is_wrapped_in_try_except(self):
+        """The bare harness invocation is wrapped so escaping breakage is caught (#879)."""
+        code = generate_synthesize_seed(random.Random(2), prefix="s1")
+        self.assertTrue(_top_level_call_is_wrapped(code, "uop_harness_s1"))
 
     def test_deterministic_for_same_rng_seed(self):
         a = generate_synthesize_seed(random.Random(99))

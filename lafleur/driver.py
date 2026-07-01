@@ -18,7 +18,9 @@ Output Protocol:
 import argparse
 import collections.abc
 import ctypes
+import gc
 import json
+import random
 import sys
 import traceback
 from pathlib import Path
@@ -482,11 +484,22 @@ def run_session(files: list[str], *, no_ekg: bool = False) -> int:
     Returns:
         Exit code (0 for success, 1 for errors).
     """
-    # Shared globals dict for all scripts
-    # Initialize with builtins and __name__
+    # Shared globals dict for all scripts.
+    # Seed the runtime dependencies that the (stripped) fuzzer boilerplate normally
+    # supplies. Corpus files are stored core-only, so session parents/polluters are
+    # executed WITHOUT `import sys`/`gc`/`fuzzer_rng` — and their first line is the
+    # `[fN]` marker `print(..., file=sys.stderr)`. Without these, every core-only
+    # script raises `NameError` before the child (which carries the boilerplate) runs
+    # and defines them in the shared namespace (see #883). The child's own boilerplate
+    # re-imports sys and overwrites `fuzzer_rng` with its seeded RNG when it runs.
     shared_globals: dict = {
         "__name__": "__main__",
         "__builtins__": __builtins__,
+        "sys": sys,
+        "gc": gc,
+        "collect": gc.collect,
+        "random": random,
+        "fuzzer_rng": random.Random(),
     }
 
     errors_occurred = False

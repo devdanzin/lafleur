@@ -590,6 +590,65 @@ class TestBlockTransposerMutator(unittest.TestCase):
         # Check that statements were moved
         self.assertIsInstance(mutated, ast.Module)
 
+    def test_collect_names_bound_and_loaded(self):
+        """_collect_names reports bound (assign/def/class/import) and loaded names."""
+        stmts = ast.parse("x = y + 1\nimport os\ndef foo():\n    pass\nclass C:\n    pass").body
+        bound, loaded = BlockTransposerMutator._collect_names(stmts)
+        self.assertLessEqual({"x", "os", "foo", "C"}, bound)
+        self.assertIn("y", loaded)
+
+    def test_skips_transpose_with_cross_dependency(self):
+        """A block that loads a name the rest binds is NOT moved (use-before-def risk)."""
+        code = dedent("""
+            def uop_harness_test():
+                shared = 1
+                p = 2
+                q = 3
+                r = shared + 1
+                s = 4
+                t = 5
+        """)
+        tree = ast.parse(code)
+        original = ast.unparse(tree)
+
+        # start=3 selects [r = shared + 1, s = 4, t = 5]; that block loads `shared`,
+        # which the rest binds — moving it could place a use before its definition.
+        with patch("random.random", return_value=0.01):
+            with patch("random.randint", side_effect=[3]):
+                mutator = BlockTransposerMutator()
+                mutated = mutator.visit(tree)
+
+        self.assertEqual(original, ast.unparse(mutated))
+
+    def test_guard_prevents_use_before_def_at_runtime(self):
+        """The guard keeps a transposed harness runnable (no UnboundLocalError).
+
+        The block defines `Widget`, which the rest of the body uses, so moving it
+        could place the use before the definition. The guard skips the move, the
+        body is unchanged, and the function still runs cleanly.
+        """
+        code = dedent("""
+            def uop_harness_test():
+                class Widget:
+                    pass
+                a = 1
+                b = 2
+                c = 3
+                d = 4
+                w = Widget()
+        """)
+        tree = ast.parse(code)
+        original = ast.unparse(tree)
+
+        with patch("random.random", return_value=0.01):
+            with patch("random.randint", side_effect=[0]):  # block = [class Widget, a, b]
+                mutated = BlockTransposerMutator().visit(tree)
+
+        self.assertEqual(original, ast.unparse(mutated))  # skipped
+        ns: dict = {}
+        exec(compile(mutated, "<t>", "exec"), ns)
+        ns["uop_harness_test"]()  # must not raise UnboundLocalError
+
     def test_skips_functions_with_too_few_statements(self):
         """Test that functions with <6 statements are not transposed."""
         code = dedent("""

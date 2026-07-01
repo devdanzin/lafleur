@@ -20,6 +20,44 @@ class FuzzerSetupNormalizer(ast.NodeTransformer):
     to prevent it from accumulating across mutation cycles.
     """
 
+    def visit_Module(self, node: ast.Module) -> ast.Module:
+        """Wrap any bare top-level ``uop_harness_*()`` call in try/except.
+
+        Only the ``uop`` seed family wrapped its harness invocation; the
+        bug_pattern and synthesize families emitted a bare module-level call, so
+        ordinary mutation breakage (use-before-def, type/index errors) escaped to
+        module level and exited the process 1. Wrapping it here catches those and
+        heals existing corpus lineages that carry a bare call (see #879). Calls
+        already inside a loop/try (the uop family) are not top-level Expr calls,
+        so they are left untouched.
+        """
+        self.generic_visit(node)
+        new_body: list[ast.stmt] = []
+        for stmt in node.body:
+            if (
+                isinstance(stmt, ast.Expr)
+                and isinstance(stmt.value, ast.Call)
+                and isinstance(stmt.value.func, ast.Name)
+                and stmt.value.func.id.startswith("uop_harness")
+            ):
+                wrapped = ast.Try(
+                    body=[stmt],
+                    handlers=[
+                        ast.ExceptHandler(
+                            type=ast.Name(id="Exception", ctx=ast.Load()),
+                            name=None,
+                            body=[ast.Pass()],
+                        )
+                    ],
+                    orelse=[],
+                    finalbody=[],
+                )
+                new_body.append(wrapped)
+            else:
+                new_body.append(stmt)
+        node.body = new_body
+        return node
+
     def visit_Import(self, node: ast.Import) -> ast.AST | None:
         # Remove 'import gc', 'import random', and 'import sys' statements.
         # gc/random/sys are all provided at module scope by the boilerplate, so a

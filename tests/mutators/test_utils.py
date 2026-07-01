@@ -268,6 +268,40 @@ class TestFuzzerSetupNormalizer(unittest.TestCase):
         exec(compile(healed, "<healed>", "exec"), ns_after)
         self.assertEqual(ns_after["uop_harness_test"](), sys.maxsize)
 
+    def test_normalizer_wraps_bare_harness_call(self):
+        """A bare top-level `uop_harness_*()` call is wrapped in try/except (#879)."""
+        code = dedent("""
+            def uop_harness_f1():
+                raise ValueError("boom")
+            uop_harness_f1()
+        """)
+        tree = ast.parse(code)
+        healed = FuzzerSetupNormalizer().visit(tree)
+        ast.fix_missing_locations(healed)
+
+        # The last top-level statement is now a Try wrapping the call, not a bare call.
+        self.assertIsInstance(healed.body[-1], ast.Try)
+        # The wrapped harness (which raises) no longer propagates out of the module.
+        exec(compile(healed, "<t>", "exec"), {})
+
+    def test_normalizer_leaves_uop_loop_call_untouched(self):
+        """The uop family's `for: try: harness() except: break` is not re-wrapped."""
+        code = dedent("""
+            def uop_harness_f1():
+                pass
+            for _loop in range(3):
+                try:
+                    uop_harness_f1()
+                except Exception:
+                    break
+        """)
+        tree = ast.parse(code)
+        before = ast.dump(tree)
+        healed = FuzzerSetupNormalizer().visit(tree)
+        # The harness call is inside the for/try (not a top-level Expr call), so the
+        # module-level structure is unchanged.
+        self.assertEqual(before, ast.dump(healed))
+
     def test_fuzzer_setup_normalizer_assign(self):
         """Test FuzzerSetupNormalizer removing fuzzer_rng assignment."""
         code = dedent("""
